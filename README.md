@@ -49,3 +49,18 @@ http://localhost:3000
 ### 선택: OpenAI
 
 `.env.local`에 `OPENAI_API_KEY`를 설정하면 요약·팩트체크 가이드 품질이 향상됩니다. 없으면 규칙 기반으로 동작합니다.
+
+## 배포 (GitHub + Vercel)
+
+```bash
+# 1) GitHub 원격 저장소 연결 후 푸시
+git remote add origin https://github.com/<USER>/youtube-factcheck.git
+git push -u origin master
+
+# 2) Vercel 배포 (프로젝트명 예: builder)
+npx vercel login
+npx vercel --prod --name builder
+```
+
+Vercel 서버리스에서는 영상 데이터가 `/tmp`에 저장되어 **재배포·재시작 시 초기될 수 있습니다**.
+
