@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
  * 유튜브 페이지에서 실행 → 자막을 클립보드에 복사.
  * Chrome은 주소창 javascript: 붙여넣기를 막음 → 북마크 또는 수동 Ctrl+A/C.
  */
-const BOOKMARKLET_BODY = `(async()=>{try{function getTracks(){const a=window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;if(a?.length)return a;const scripts=[...document.querySelectorAll('script')];for(const s of scripts){const t=s.textContent||'';const i=t.indexOf('ytInitialPlayerResponse');if(i<0)continue;const eq=t.indexOf('=',i);if(eq<0)continue;let p=eq+1;while(p<t.length&&/\\s/.test(t[p]))p++;if(t[p]!=='{')continue;let depth=0,inStr=false,esc=false;for(let j=p;j<t.length;j++){const ch=t[j];if(inStr){if(esc)esc=false;else if(ch==='\\\\')esc=true;else if(ch==='"')inStr=false;continue;}if(ch==='"'){inStr=true;continue;}if(ch==='{')depth++;else if(ch==='}'){depth--;if(depth===0){try{const obj=JSON.parse(t.slice(p,j+1));const tr=obj?.captions?.playerCaptionsTracklistRenderer?.captionTracks;if(tr?.length)return tr;}catch(e){}break;}}}}return null;}const tracks=getTracks();if(!tracks||!tracks.length){const segs=[...document.querySelectorAll('ytd-transcript-segment-renderer yt-formatted-string, ytd-transcript-segment-renderer .segment-text')].map(n=>(n.textContent||'').trim()).filter(Boolean);if(segs.length){const text=[...new Set(segs)].join('\\n');await navigator.clipboard.writeText(text);alert('패널에서 자막 '+segs.length+'줄을 복사했습니다.\\nFactCheck에 붙여넣으세요.');return;}alert('자막을 찾지 못했습니다.\\n1) ⋯ → 스크립트 표시\\n2) 이 북마크를 다시 클릭');return;}const ko=tracks.find(t=>(t.languageCode||'').startsWith('ko'));const manual=tracks.find(t=>t.kind!=='asr');const pick=ko||manual||tracks[0];const base=String(pick.baseUrl).replace(/\\\\u0026/g,'&').replace(/&amp;/g,'&');async function fromJson3(url){const u=url+(url.includes('?')?'&':'?')+'fmt=json3';const r=await fetch(u);if(!r.ok)return'';const j=await r.json();return(j.events||[]).flatMap(e=>e.segs||[]).map(s=>s.utf8||'').join(' ').replace(/\\s+/g,' ').trim();}async function fromXml(url){const r=await fetch(url);if(!r.ok)return'';const xml=await r.text();const d=document.createElement('div');d.innerHTML=xml;return[...d.querySelectorAll('text')].map(t=>t.textContent||'').join(' ').replace(/\\s+/g,' ').trim();}let text=await fromJson3(base);if(!text||text.length<20)text=await fromXml(base);if(!text||text.length<20){alert('자막 텍스트를 읽지 못했습니다.');return;}await navigator.clipboard.writeText(text);alert('자막 '+text.length+'자를 복사했습니다.\\nFactCheck 탭으로 돌아와 붙여넣으세요.');}catch(e){alert('복사 실패: '+(e&&e.message?e.message:e));}})();`;
+const BOOKMARKLET_BODY = `void(async()=>{try{alert('자막 복사 시작…');const sleep=ms=>new Promise(r=>setTimeout(r,ms));async function openPanel(){const items=[...document.querySelectorAll('button, tp-yt-paper-item, yt-list-item-view-model, span')];const btn=items.find(el=>/스크립트 표시|Show transcript|스크립트/i.test((el.textContent||'')+(el.getAttribute('aria-label')||'')));if(btn){btn.click();await sleep(1500);}}function scrape(){return[...document.querySelectorAll('ytd-transcript-segment-renderer yt-formatted-string, ytd-transcript-segment-renderer .segment-text, #segments-container yt-formatted-string')].map(n=>(n.textContent||'').trim()).filter(Boolean);}let lines=scrape();if(!lines.length){await openPanel();lines=scrape();}if(lines.length){const text=[...new Set(lines)].join('\\n');await navigator.clipboard.writeText(text);alert('자막 '+lines.length+'줄을 복사했습니다.\\nFactCheck에 Ctrl+V 하세요.');return;}const tracks=window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;if(!tracks||!tracks.length){alert('자막을 못 찾았습니다.\\n⋯ → 스크립트 표시를 연 뒤 다시 눌러 주세요.\\n그래도 안 되면 Ctrl+A → Ctrl+C 로 수동 복사하세요.');return;}const pick=tracks.find(t=>(t.languageCode||'').startsWith('ko'))||tracks.find(t=>t.kind!=='asr')||tracks[0];let url=String(pick.baseUrl).split('\\u0026').join('&').split('&amp;').join('&');if(!/[?&]fmt=/.test(url))url+=(url.includes('?')?'&':'?')+'fmt=json3';const res=await fetch(url);const data=await res.json();const text=(data.events||[]).flatMap(e=>e.segs||[]).map(s=>s.utf8||'').join(' ').replace(/\\s+/g,' ').trim();if(!text||text.length<20){alert('자막 텍스트가 비었습니다. ⋯→스크립트 표시 후 Ctrl+A→Ctrl+C 하세요.');return;}await navigator.clipboard.writeText(text);alert('자막 '+text.length+'자를 복사했습니다.\\nFactCheck에 Ctrl+V 하세요.');}catch(e){alert('실패: '+(e&&e.message?e.message:e)+'\\n수동: ⋯→스크립트 표시→Ctrl+A→Ctrl+C');}})();`;
 
 export const YOUTUBE_SCRIPT_BOOKMARKLET = `javascript:${BOOKMARKLET_BODY}`;
 
@@ -128,6 +128,38 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
 
       {step === "bookmark" && (
         <div className="space-y-4 text-sm text-ink-800 leading-relaxed">
+          <div className="rounded-lg border border-verify-false/40 bg-red-50 px-3 py-2.5 text-xs sm:text-sm text-ink-800">
+            <p className="font-medium text-ink-900 mb-1">
+              북마크를 눌렀는데 복사가 안 될 때
+            </p>
+            <ol className="list-decimal pl-4 space-y-1">
+              <li>
+                즐겨찾기의 <strong>YT 스크립트 복사</strong>를{" "}
+                <strong>우클릭 → 수정</strong>
+              </li>
+              <li>
+                <strong>URL</strong> 칸이{" "}
+                <code className="bg-white px-1 rounded border text-[11px]">
+                  javascript:
+                </code>
+                로 시작하는지 확인
+              </li>
+              <li>
+                <code className="bg-white px-1 rounded border text-[11px]">
+                  https://
+                </code>
+                로 시작하면 잘못된 북마크입니다 → 아래{" "}
+                <strong>북마크 코드 복사</strong> 후 URL을 통째로 바꿔 저장
+              </li>
+              <li>
+                유튜브에서 다시 클릭했을 때{" "}
+                <strong>알림 창이 떠야</strong> 정상입니다. 알림이 없고 검색
+                화면만 나오면 Chrome이 실행을 막은 것입니다 →{" "}
+                <strong>가장 쉬움</strong> 탭의 수동 복사를 쓰세요.
+              </li>
+            </ol>
+          </div>
+
           <div className="rounded-lg border border-accent/30 bg-accent-muted/40 p-3 text-xs sm:text-sm">
             <p className="font-medium text-ink-900 mb-1">
               Ctrl+Shift+B 가 안 될 때 (즐겨찾기 표시줄 켜기)
@@ -143,11 +175,6 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
                 <strong>즐겨찾기 표시줄 표시</strong> 클릭
               </li>
             </ol>
-            <p className="mt-2 text-ink-600">
-              Edge: ⋯ → 즐겨찾기 → 즐겨찾기 표시줄 표시
-              <br />
-              주소창 아래, 탭 바로 밑에 가로 줄이 생기면 성공입니다.
-            </p>
           </div>
 
           <p className="font-medium text-ink-900">
@@ -158,7 +185,6 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
             아래 즐겨찾기 줄까지 끌어다 놓으세요.
           </p>
 
-          {/* 눈에 띄는 드래그 타깃 */}
           <a
             href={YOUTUBE_SCRIPT_BOOKMARKLET}
             onClick={(e) => {
@@ -175,34 +201,28 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
             YT 스크립트 복사 ← 여기를 드래그
           </a>
 
-          <p className="font-medium text-ink-900">방법 2 — 드래그가 안 되면 (수동 추가)</p>
+          <p className="font-medium text-ink-900">
+            방법 2 — URL 직접 넣기 (복사가 안 될 때 권장)
+          </p>
           <ol className="list-decimal pl-5 space-y-2">
             <li>
-              아래 <strong>북마크 코드 복사</strong> 버튼을 누릅니다.
+              아래 <strong>북마크 코드 복사</strong>를 누릅니다.
             </li>
             <li>
-              Chrome 주소창 오른쪽 <strong>☆ (별)</strong> 클릭 → 이름에{" "}
-              <code className="bg-ink-100 px-1 rounded">YT 스크립트 복사</code>{" "}
-              입력 → 저장 위치는 <strong>즐겨찾기 표시줄</strong>
+              기존 <strong>YT 스크립트 복사</strong> 북마크를{" "}
+              <strong>우클릭 → 수정</strong> (없으면 ☆로 새로 만든 뒤 수정)
             </li>
             <li>
-              저장된 북마크를 <strong>우클릭 → 수정</strong>
-            </li>
-            <li>
-              <strong>URL</strong> 칸을 모두 지우고,{" "}
+              <strong>URL</strong> 칸을 전부 지우고{" "}
               <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-              <kbd className="rounded bg-ink-100 px-1">V</kbd> 로 붙여넣기 →
-              저장
+              <kbd className="rounded bg-ink-100 px-1">V</kbd> → 저장
             </li>
             <li>
-              유튜브 영상 탭에서 즐겨찾기 줄의{" "}
-              <strong>YT 스크립트 복사</strong>를 클릭
+              URL 맨 앞이 반드시{" "}
+              <code className="bg-ink-100 px-1 rounded">javascript:</code> 인지
+              다시 확인
             </li>
-            <li>
-              FactCheck 붙여넣기 칸에{" "}
-              <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-              <kbd className="rounded bg-ink-100 px-1">V</kbd>
-            </li>
+            <li>유튜브 영상 페이지에서 북마크를 다시 클릭</li>
           </ol>
 
           <button
