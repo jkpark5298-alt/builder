@@ -71,12 +71,29 @@ export async function fetchTranscript(
   };
 }
 
-/** 요약 시작 전: 스크립트 존재 여부만 빠르게 확인 */
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+/** 요약 시작 전: 스크립트 존재 여부 확인 (목록 감지 우선 — 본문 다운로드 실패해도 있으면 있다고 표시) */
 export async function probeTranscriptAvailability(videoId: string): Promise<{
   available: boolean;
   source: TranscriptSource | "unknown";
   message: string;
 }> {
+  // 1) 자막 트랙 목록 먼저 (Vercel 등에서 본문 차단돼도 목록은 되는 경우가 많음)
+  const listed = await listCaptionTracks(videoId);
+  if (listed.length > 0) {
+    const hasManual = listed.some((t) => t.kind !== "asr");
+    return {
+      available: true,
+      source: hasManual ? "youtube" : "youtube_auto",
+      message: hasManual
+        ? "자막 트랙을 확인했습니다. 스크립트 기준으로 요약합니다."
+        : "자동생성 자막 트랙을 확인했습니다. 텍스트로 변환해 요약합니다.",
+    };
+  }
+
+  // 2) 목록이 없어도 텍스트 API로 한 번 더
   const manual = await tryYoutubeTranscriptLib(videoId);
   if (manual) {
     return {
@@ -96,7 +113,6 @@ export async function probeTranscriptAvailability(videoId: string): Promise<{
     };
   }
 
-  // yt-dlp는 느릴 수 있어 probe에서는 존재만 가볍게 확인
   const hasYtDlp = await isYtDlpAvailable();
   if (hasYtDlp) {
     return {
@@ -111,8 +127,107 @@ export async function probeTranscriptAvailability(videoId: string): Promise<{
     available: false,
     source: "none",
     message:
-      "스크립트(자막)를 찾을 수 없습니다. 요약 품질이 떨어질 수 있습니다. 아래 ‘스크립트 붙여넣기’에 자막/대본을 넣거나, 설명·챕터만으로 계속 진행할 수 있습니다.",
+      "지금 서버에서 자막을 확인하지 못했습니다. (유튜브에 자막이 있어도 차단될 수 있습니다) 스크립트를 붙여넣거나, 설명·챕터만으로 계속할 수 있습니다.",
   };
+}
+
+/** 자막 트랙 목록만 조회 (본문 불필요) */
+async function listCaptionTracks(
+  videoId: string
+): Promise<Array<{ baseUrl: string; lang?: string; kind?: string }>> {
+  const fromPlayer = await getTracksFromInnertube(videoId);
+  if (fromPlayer.length) return fromPlayer;
+
+  try {
+    const html = await fetchWatchHtml(videoId);
+    const player = extractJsonObject(html, "ytInitialPlayerResponse");
+    const tracks = findCaptionTracks(player);
+    if (tracks.length) return tracks;
+  } catch {
+    /* ignore */
+  }
+
+  const fromList = await getTracksFromTimedTextList(videoId);
+  return fromList;
+}
+
+async function getTracksFromInnertube(
+  videoId: string
+): Promise<Array<{ baseUrl: string; lang?: string; kind?: string }>> {
+  const clients = [
+    { clientName: "ANDROID", clientVersion: "20.10.38" },
+    { clientName: "WEB", clientVersion: "2.20250320.01.00" },
+    { clientName: "IOS", clientVersion: "20.10.4" },
+  ];
+
+  for (const client of clients) {
+    try {
+      const res = await fetch(
+        "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": UA,
+            "Accept-Language": "ko-KR,ko;q=0.9",
+          },
+          body: JSON.stringify({
+            context: {
+              client: {
+                ...client,
+                hl: "ko",
+                gl: "KR",
+              },
+            },
+            videoId,
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+          next: { revalidate: 0 },
+        }
+      );
+      if (!res.ok) continue;
+      const data = (await res.json()) as Record<string, unknown>;
+      const tracks = findCaptionTracks(data);
+      if (tracks.length) return tracks;
+    } catch {
+      /* next client */
+    }
+  }
+  return [];
+}
+
+async function getTracksFromTimedTextList(
+  videoId: string
+): Promise<Array<{ baseUrl: string; lang?: string; kind?: string }>> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/api/timedtext?type=list&v=${videoId}`,
+      {
+        headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" },
+        next: { revalidate: 0 },
+      }
+    );
+    if (!res.ok) return [];
+    const xml = await res.text();
+    const tracks: Array<{ baseUrl: string; lang?: string; kind?: string }> = [];
+    const re = /<track\b([^>]+)>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml))) {
+      const attrs = m[1];
+      const lang = /lang_code="([^"]+)"/i.exec(attrs)?.[1];
+      if (!lang) continue;
+      const kind = /kind="([^"]*)"/i.exec(attrs)?.[1] || "";
+      const baseUrl =
+        kind === "asr"
+          ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&kind=asr&fmt=json3`
+          : `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
+      tracks.push({ baseUrl, lang, kind: kind || undefined });
+    }
+    return tracks;
+  } catch {
+    return [];
+  }
 }
 
 async function tryYoutubeTranscriptLib(videoId: string): Promise<string | null> {
@@ -133,22 +248,29 @@ async function tryYoutubeTranscriptLib(videoId: string): Promise<string | null> 
 async function tryTimedTextAndCaptionTracks(
   videoId: string
 ): Promise<string | null> {
-  try {
-    const html = await fetchWatchHtml(videoId);
-    const player = extractJsonObject(html, "ytInitialPlayerResponse");
-    const tracks = findCaptionTracks(player);
-    // Prefer ko manual, then ko asr, then any asr, then any
-    const ordered = [...tracks].sort((a, b) => scoreTrack(b) - scoreTrack(a));
-    for (const track of ordered.slice(0, 6)) {
-      const text = await fetchCaptionTrackText(track.baseUrl);
-      if (text && text.length > 40) return text;
+  // Innertube → watch HTML → timedtext list 순
+  let tracks = await getTracksFromInnertube(videoId);
+  if (!tracks.length) {
+    try {
+      const html = await fetchWatchHtml(videoId);
+      const player = extractJsonObject(html, "ytInitialPlayerResponse");
+      tracks = findCaptionTracks(player);
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
+  }
+  if (!tracks.length) {
+    tracks = await getTracksFromTimedTextList(videoId);
   }
 
-  // Direct timedtext endpoints
-  const langs = ["ko", "en", "ja"];
+  const ordered = [...tracks].sort((a, b) => scoreTrack(b) - scoreTrack(a));
+  for (const track of ordered.slice(0, 10)) {
+    const text = await fetchCaptionTrackText(track.baseUrl);
+    if (text && text.length > 40) return text;
+  }
+
+  // Direct timedtext endpoints (언어·형식 확장)
+  const langs = ["ko", "ko-KR", "en", "en-US", "ja", "zh-Hans", "zh-Hant"];
   for (const lang of langs) {
     for (const kind of ["", "asr"]) {
       const url =
@@ -168,9 +290,10 @@ async function tryTimedTextAndCaptionTracks(
 
 function scoreTrack(t: { lang?: string; kind?: string; name?: string }): number {
   let s = 0;
-  if (t.lang === "ko") s += 10;
-  if (t.lang === "en") s += 4;
-  if (t.kind !== "asr") s += 5; // manual better
+  const lang = (t.lang || "").toLowerCase();
+  if (lang === "ko" || lang.startsWith("ko-")) s += 10;
+  if (lang === "en" || lang.startsWith("en-")) s += 4;
+  if (t.kind !== "asr") s += 5;
   if (t.kind === "asr") s += 2;
   return s;
 }
@@ -211,9 +334,8 @@ function findCaptionTracks(
 async function fetchWatchHtml(videoId: string): Promise<string> {
   const res = await fetch(`https://www.youtube.com/watch?v=${videoId}&hl=ko`, {
     headers: {
-      "Accept-Language": "ko-KR,ko;q=0.9",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+      "User-Agent": UA,
     },
     next: { revalidate: 0 },
   });
@@ -223,13 +345,20 @@ async function fetchWatchHtml(videoId: string): Promise<string> {
 
 async function fetchCaptionTrackText(baseUrl: string): Promise<string | null> {
   let url = baseUrl;
-  if (!url.includes("fmt=")) {
+  // baseUrl에 이미 fmt가 있어도 json3 우선
+  if (!/[?&]fmt=/.test(url)) {
     url += (url.includes("?") ? "&" : "?") + "fmt=json3";
+  } else if (!/[?&]fmt=json3/.test(url)) {
+    url = url.replace(/([?&]fmt=)[^&]*/i, "$1json3");
   }
+  // 일부 트랙은 & 인코딩 필요
+  url = url.replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+
   const res = await fetch(url, {
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+      "User-Agent": UA,
+      "Accept-Language": "ko-KR,ko;q=0.9",
+      Referer: "https://www.youtube.com/",
     },
     next: { revalidate: 0 },
   });

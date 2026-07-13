@@ -139,7 +139,13 @@ export function UrlPasteForm() {
           >
             <div className="flex gap-2 items-start">
               <AlertTriangle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
-              <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
+              <div className="space-y-1">
+                <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
+                <p className="text-xs text-ink-600">
+                  유튜브에 자막이 보이는데도 이 안내가 뜨면, 아래 「계속」을 눌러
+                  주세요. 분석 단계에서 자막을 다시 가져옵니다.
+                </p>
+              </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <button
@@ -148,7 +154,7 @@ export function UrlPasteForm() {
                 onClick={() => startAnalyze(true)}
                 className="min-h-11 rounded-xl bg-ink-900 text-white text-sm px-4 font-medium hover:bg-accent disabled:opacity-60"
               >
-                설명·챕터만으로 요약 계속
+                그래도 분석 계속 (자막 재시도)
               </button>
               <button
                 type="button"
