@@ -10,11 +10,10 @@ export function UrlPasteForm() {
   const [creatorNotes, setCreatorNotes] = useState("");
   const [pastedScript, setPastedScript] = useState("");
   const [loading, setLoading] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scriptWarn, setScriptWarn] = useState<string | null>(null);
 
-  async function startAnalyze(forceWithoutScript: boolean) {
+  async function startAnalyze(_forceWithoutScript: boolean) {
     setError(null);
     setLoading(true);
     try {
@@ -35,7 +34,6 @@ export function UrlPasteForm() {
       setError(err instanceof Error ? err.message : "처리 실패");
     } finally {
       setLoading(false);
-      setChecking(false);
     }
   }
 
@@ -44,36 +42,17 @@ export function UrlPasteForm() {
     setError(null);
     setScriptWarn(null);
 
-    // 붙여넣은 스크립트가 있으면 바로 진행
-    if (pastedScript.trim().length > 80) {
-      await startAnalyze(false);
-      return;
+    // Vercel 등 클라우드 IP는 유튜브 자막 API가 막히는 경우가 많아
+    // 사전검사로 중단하지 않고, 분석 단계에서 자막을 다시 시도합니다.
+    if (!pastedScript.trim()) {
+      setScriptWarn(
+        "클라우드 서버에서는 유튜브가 자막 조회를 막을 수 있습니다. 분석 중 다시 시도하고, 안 되면 설명·챕터로 진행합니다. 자막이 보이면 아래 붙여넣기가 가장 확실합니다."
+      );
     }
-
-    setChecking(true);
-    try {
-      const probeRes = await fetch("/api/videos/check-script", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtubeUrl: url }),
-      });
-      const probe = await probeRes.json();
-      if (!probeRes.ok) throw new Error(probe.error || "자막 확인 실패");
-
-      if (!probe.available) {
-        setScriptWarn(probe.message);
-        setChecking(false);
-        return;
-      }
-
-      await startAnalyze(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "확인 실패");
-      setChecking(false);
-    }
+    await startAnalyze(false);
   }
 
-  const busy = loading || checking;
+  const busy = loading;
 
   return (
     <form
@@ -100,8 +79,9 @@ export function UrlPasteForm() {
             YouTube FactCheck
           </h1>
           <p className="text-ink-600 max-w-2xl text-[15px] sm:text-base leading-relaxed">
-            스크립트(자막)가 있으면 그걸로 요약합니다. 없으면 자동생성 자막을
-            텍스트로 변환해 보고, 그래도 없으면 <strong>요약 시작 전에 알려드립니다</strong>.
+            스크립트(자막)가 있으면 그걸로 요약합니다. 배포 서버에서 유튜브
+            자막이 막히면 설명·챕터로 진행하니, 중요하면 자막 텍스트를
+            붙여넣으세요.
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3">
@@ -124,7 +104,7 @@ export function UrlPasteForm() {
             {busy ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                {checking ? "자막 확인 중…" : "분석 중…"}
+                분석 중…
               </>
             ) : (
               "요약 · 검증 시작"
@@ -139,41 +119,25 @@ export function UrlPasteForm() {
           >
             <div className="flex gap-2 items-start">
               <AlertTriangle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
-                <p className="text-xs text-ink-600">
-                  유튜브에 자막이 보이는데도 이 안내가 뜨면, 아래 「계속」을 눌러
-                  주세요. 분석 단계에서 자막을 다시 가져옵니다.
-                </p>
-              </div>
+              <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
             </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => startAnalyze(true)}
-                className="min-h-11 rounded-xl bg-ink-900 text-white text-sm px-4 font-medium hover:bg-accent disabled:opacity-60"
-              >
-                그래도 분석 계속 (자막 재시도)
-              </button>
-              <button
-                type="button"
-                onClick={() => setScriptWarn(null)}
-                className="min-h-11 rounded-xl border border-ink-200 bg-white text-sm px-4"
-              >
-                스크립트 붙여넣고 다시
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setScriptWarn(null)}
+              className="min-h-10 rounded-lg border border-ink-200 bg-white text-sm px-3"
+            >
+              안내 닫기
+            </button>
           </div>
         )}
 
         <label className="block text-sm text-ink-600">
-          스크립트(자막) 텍스트 붙여넣기 — 자막이 없을 때 권장
+          스크립트(자막) 텍스트 붙여넣기 — Vercel에서 자막이 안 잡힐 때 권장
           <textarea
             value={pastedScript}
             onChange={(e) => setPastedScript(e.target.value)}
             rows={4}
-            placeholder="유튜브 자막/대본을 여기에 붙여넣으면 이 텍스트로 요약합니다."
+            placeholder="유튜브 자막(⋯ → 스크립트 표시)을 복사해 붙여넣으면 이 텍스트로 요약합니다."
             className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm sm:text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
           />
         </label>

@@ -155,9 +155,28 @@ async function getTracksFromInnertube(
   videoId: string
 ): Promise<Array<{ baseUrl: string; lang?: string; kind?: string }>> {
   const clients = [
-    { clientName: "ANDROID", clientVersion: "20.10.38" },
-    { clientName: "WEB", clientVersion: "2.20250320.01.00" },
-    { clientName: "IOS", clientVersion: "20.10.4" },
+    {
+      clientName: "ANDROID",
+      clientVersion: "20.10.38",
+      userAgent:
+        "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip",
+    },
+    {
+      clientName: "IOS",
+      clientVersion: "20.10.4",
+      userAgent:
+        "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 17_4 like Mac OS X)",
+    },
+    {
+      clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+      clientVersion: "2.0",
+      userAgent: UA,
+    },
+    {
+      clientName: "WEB",
+      clientVersion: "2.20250320.01.00",
+      userAgent: UA,
+    },
   ];
 
   for (const client of clients) {
@@ -168,13 +187,16 @@ async function getTracksFromInnertube(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "User-Agent": UA,
+            "User-Agent": client.userAgent,
             "Accept-Language": "ko-KR,ko;q=0.9",
+            Origin: "https://www.youtube.com",
+            Referer: `https://www.youtube.com/watch?v=${videoId}`,
           },
           body: JSON.stringify({
             context: {
               client: {
-                ...client,
+                clientName: client.clientName,
+                clientVersion: client.clientVersion,
                 hl: "ko",
                 gl: "KR",
               },

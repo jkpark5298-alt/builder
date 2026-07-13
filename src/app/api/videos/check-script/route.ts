@@ -4,6 +4,7 @@ import { extractVideoId } from "@/lib/youtube";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** 요약 시작 전 스크립트(자막) 존재 여부 확인 */
 export async function POST(req: Request) {
