@@ -3,9 +3,16 @@
 import { Loader2, ClipboardPaste } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { ScriptCopyHelper } from "./ScriptCopyHelper";
 
 /** 배포 서버에서 자막을 못 가져왔을 때: 붙여넣고 재요약 */
-export function PasteScriptPanel({ videoId }: { videoId: string }) {
+export function PasteScriptPanel({
+  videoId,
+  youtubeUrl,
+}: {
+  videoId: string;
+  youtubeUrl: string;
+}) {
   const router = useRouter();
   const [script, setScript] = useState("");
   const [loading, setLoading] = useState(false);
@@ -48,16 +55,18 @@ export function PasteScriptPanel({ videoId }: { videoId: string }) {
             자막이 없는 게 아닙니다 — 서버에서 유튜브 자막을 못 가져왔습니다
           </p>
           <p className="text-xs text-ink-600 mt-1 leading-relaxed">
-            유튜브에서 ⋯ → <strong>스크립트 표시</strong> → 전체 복사한 뒤 아래에
-            붙여넣고 재요약하세요.
+            아래 도우미로 스크립트를 복사한 뒤 붙여넣고 재요약하세요.
           </p>
         </div>
       </div>
+
+      <ScriptCopyHelper youtubeUrl={youtubeUrl} />
+
       <textarea
         value={script}
         onChange={(e) => setScript(e.target.value)}
         rows={6}
-        placeholder="유튜브 스크립트(자막) 전체를 여기에 붙여넣기…"
+        placeholder="여기에 스크립트 붙여넣기 (Ctrl+V)…"
         className="w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
       />
       {error && (

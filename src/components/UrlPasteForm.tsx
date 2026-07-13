@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { AlertTriangle, Loader2, Link2 } from "lucide-react";
+import { ScriptCopyHelper } from "./ScriptCopyHelper";
 
 export function UrlPasteForm() {
   const router = useRouter();
@@ -134,6 +135,9 @@ export function UrlPasteForm() {
 
         <label className="block text-sm text-ink-600">
           스크립트(자막) 텍스트 붙여넣기 — Vercel에서 자막 API가 막힐 때 권장
+          <div className="mt-1.5 mb-2">
+            <ScriptCopyHelper youtubeUrl={url || undefined} compact />
+          </div>
           <textarea
             value={pastedScript}
             onChange={(e) => setPastedScript(e.target.value)}

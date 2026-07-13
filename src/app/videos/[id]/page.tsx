@@ -103,9 +103,12 @@ export default async function VideoDetailPage({
               {video.scriptNotice}
             </div>
           )}
-          {(video.transcriptSource === "creator_meta" ||
+            {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") && (
-            <PasteScriptPanel videoId={video.id} />
+            <PasteScriptPanel
+              videoId={video.id}
+              youtubeUrl={video.youtubeUrl}
+            />
           )}
           <div className="flex flex-wrap gap-2">
             <ReprocessButton videoId={video.id} />
@@ -145,7 +148,10 @@ export default async function VideoDetailPage({
           </div>
           {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") && (
-            <PasteScriptPanel videoId={video.id} />
+            <PasteScriptPanel
+              videoId={video.id}
+              youtubeUrl={video.youtubeUrl}
+            />
           )}
         </div>
       </section>
