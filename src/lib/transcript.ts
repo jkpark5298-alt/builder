@@ -55,11 +55,13 @@ export async function fetchTranscript(
 
   // 4) 제작자 설명·챕터만
   if (meta && (meta.description || meta.chapters.length)) {
+    const vercelBlocked = Boolean(process.env.VERCEL);
     return {
       text: buildCreatorSourceText(meta),
       source: "creator_meta",
-      notice:
-        "스크립트(자막)를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약을 위해 자막/스크립트 붙여넣기를 권장합니다.",
+      notice: vercelBlocked
+        ? "배포 서버에서는 유튜브가 자막 API를 차단해 스크립트를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약은 자막 붙여넣기를 권장합니다."
+        : "스크립트(자막)를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약을 위해 자막/스크립트 붙여넣기를 권장합니다.",
     };
   }
 
@@ -74,12 +76,18 @@ export async function fetchTranscript(
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-/** 요약 시작 전: 스크립트 존재 여부 확인 (목록 감지 우선 — 본문 다운로드 실패해도 있으면 있다고 표시) */
-export async function probeTranscriptAvailability(videoId: string): Promise<{
+export type TranscriptProbeResult = {
   available: boolean;
+  /** 유튜브 클라우드 IP 차단 등으로 ‘없음’이 아니라 ‘확인 불가’인 경우 */
+  blocked?: boolean;
   source: TranscriptSource | "unknown";
   message: string;
-}> {
+};
+
+/** 요약 시작 전: 스크립트 존재 여부 확인 (목록 감지 우선 — 본문 다운로드 실패해도 있으면 있다고 표시) */
+export async function probeTranscriptAvailability(
+  videoId: string
+): Promise<TranscriptProbeResult> {
   // 1) 자막 트랙 목록 먼저 (Vercel 등에서 본문 차단돼도 목록은 되는 경우가 많음)
   const listed = await listCaptionTracks(videoId);
   if (listed.length > 0) {
@@ -123,11 +131,22 @@ export async function probeTranscriptAvailability(videoId: string): Promise<{
     };
   }
 
+  // Vercel/클라우드: 유튜브가 데이터센터 IP의 자막 API를 막는 경우가 많음 (로컬에선 됨)
+  if (process.env.VERCEL) {
+    return {
+      available: false,
+      blocked: true,
+      source: "none",
+      message:
+        "유튜브에 자막이 있어도, 이 배포 서버(IP)에서는 유튜브가 자막 API를 차단해 확인할 수 없습니다. 아래 ‘스크립트 붙여넣기’에 자막을 넣으면 그걸로 요약합니다.",
+    };
+  }
+
   return {
     available: false,
     source: "none",
     message:
-      "지금 서버에서 자막을 확인하지 못했습니다. (유튜브에 자막이 있어도 차단될 수 있습니다) 스크립트를 붙여넣거나, 설명·챕터만으로 계속할 수 있습니다.",
+      "자막(스크립트)를 찾지 못했습니다. 스크립트를 붙여넣거나, 설명·챕터만으로 계속할 수 있습니다.",
   };
 }
 

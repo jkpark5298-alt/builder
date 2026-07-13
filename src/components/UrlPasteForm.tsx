@@ -42,13 +42,17 @@ export function UrlPasteForm() {
     setError(null);
     setScriptWarn(null);
 
-    // Vercel 등 클라우드 IP는 유튜브 자막 API가 막히는 경우가 많아
-    // 사전검사로 중단하지 않고, 분석 단계에서 자막을 다시 시도합니다.
-    if (!pastedScript.trim()) {
-      setScriptWarn(
-        "클라우드 서버에서는 유튜브가 자막 조회를 막을 수 있습니다. 분석 중 다시 시도하고, 안 되면 설명·챕터로 진행합니다. 자막이 보이면 아래 붙여넣기가 가장 확실합니다."
-      );
+    // 붙여넣은 스크립트가 있으면 바로 진행
+    if (pastedScript.trim().length > 80) {
+      await startAnalyze(false);
+      return;
     }
+
+    // Vercel 등에서는 사전검사 자체가 실패·지연되므로 막지 않고 바로 분석.
+    // (유튜브가 클라우드 IP의 자막 API를 차단함 — 자막이 없는 게 아님)
+    setScriptWarn(
+      "배포 서버에서는 유튜브 자막 API가 차단될 수 있습니다. 분석은 계속 진행하며, 안 되면 설명·챕터로 요약합니다. 정확도가 중요하면 아래 붙여넣기를 쓰세요."
+    );
     await startAnalyze(false);
   }
 
@@ -114,25 +118,22 @@ export function UrlPasteForm() {
 
         {scriptWarn && (
           <div
-            className="rounded-xl border border-accent/40 bg-accent-muted/60 p-4 space-y-3"
-            role="alert"
+            className="rounded-xl border border-accent/40 bg-accent-muted/60 p-4 space-y-2"
+            role="status"
           >
             <div className="flex gap-2 items-start">
               <AlertTriangle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
               <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setScriptWarn(null)}
-              className="min-h-10 rounded-lg border border-ink-200 bg-white text-sm px-3"
-            >
-              안내 닫기
-            </button>
+            <p className="text-xs text-ink-600 pl-7">
+              정확한 요약이 필요하면 유튜브 ⋯ → 스크립트 표시 → 복사 후 아래에
+              붙여넣으세요. 분석은 이미 진행됩니다.
+            </p>
           </div>
         )}
 
         <label className="block text-sm text-ink-600">
-          스크립트(자막) 텍스트 붙여넣기 — Vercel에서 자막이 안 잡힐 때 권장
+          스크립트(자막) 텍스트 붙여넣기 — Vercel에서 자막 API가 막힐 때 권장
           <textarea
             value={pastedScript}
             onChange={(e) => setPastedScript(e.target.value)}
