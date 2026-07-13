@@ -28,6 +28,16 @@ export async function fetchTranscript(
   videoId: string,
   meta?: YoutubeMeta
 ): Promise<TranscriptResult> {
+  // 0) 외부 자막 API (SUPADATA_API_KEY) — Vercel IP 차단 우회용
+  const viaApi = await trySupadataTranscript(videoId);
+  if (viaApi) {
+    return {
+      text: viaApi,
+      source: "youtube_auto",
+      notice: "외부 자막 API로 스크립트를 가져와 요약합니다.",
+    };
+  }
+
   // 1) 수동/공식 자막 (youtube-transcript)
   const manual = await tryYoutubeTranscriptLib(videoId);
   if (manual) return { text: manual, source: "youtube" };
@@ -60,7 +70,7 @@ export async function fetchTranscript(
       text: buildCreatorSourceText(meta),
       source: "creator_meta",
       notice: vercelBlocked
-        ? "배포 서버에서는 유튜브가 자막 API를 차단해 스크립트를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약은 자막 붙여넣기를 권장합니다."
+        ? "배포 서버에서는 유튜브가 자막 API를 차단해 스크립트를 가져오지 못했습니다. 아래 ‘스크립트 붙여넣기’로 재요약하세요."
         : "스크립트(자막)를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약을 위해 자막/스크립트 붙여넣기를 권장합니다.",
     };
   }
@@ -71,6 +81,40 @@ export async function fetchTranscript(
     notice:
       "스크립트(자막)가 없습니다. 요약 전에 자막 텍스트를 붙여넣거나, 유튜브에서 자막을 켠 뒤 다시 시도해 주세요.",
   };
+}
+
+async function trySupadataTranscript(videoId: string): Promise<string | null> {
+  const key = process.env.SUPADATA_API_KEY?.trim();
+  if (!key) return null;
+  try {
+    const url = new URL("https://api.supadata.ai/v1/transcript");
+    url.searchParams.set("url", `https://www.youtube.com/watch?v=${videoId}`);
+    url.searchParams.set("text", "true");
+    url.searchParams.set("lang", "ko");
+    url.searchParams.set("mode", "native");
+    const res = await fetch(url, {
+      headers: { "x-api-key": key },
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      content?: string | Array<{ text?: string }>;
+    };
+    if (typeof data.content === "string" && data.content.length > 40) {
+      return data.content.replace(/\s+/g, " ").trim();
+    }
+    if (Array.isArray(data.content)) {
+      const text = data.content
+        .map((c) => c.text ?? "")
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text.length > 40) return text;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 const UA =

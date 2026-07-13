@@ -198,17 +198,22 @@ export async function finalizeReport(
   return next;
 }
 
-export async function reprocessFromId(id: string): Promise<VideoRecord> {
+export async function reprocessFromId(
+  id: string,
+  pastedScriptOverride?: string
+): Promise<VideoRecord> {
   const existing = await getVideo(id);
   if (!existing) throw new Error("영상을 찾을 수 없습니다.");
 
   const pastedScript =
-    existing.transcript &&
-    existing.transcript.length > 80 &&
-    existing.transcriptSource !== "none" &&
-    existing.transcriptSource !== "creator_meta"
-      ? existing.transcript
-      : undefined;
+    pastedScriptOverride?.trim() && pastedScriptOverride.trim().length > 80
+      ? pastedScriptOverride.trim()
+      : existing.transcript &&
+          existing.transcript.length > 80 &&
+          existing.transcriptSource !== "none" &&
+          existing.transcriptSource !== "creator_meta"
+        ? existing.transcript
+        : undefined;
 
   await deleteVideo(id);
   return createAndProcessVideo(

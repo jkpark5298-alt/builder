@@ -3,6 +3,7 @@ import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { FactCheckPanel } from "@/components/FactCheckPanel";
+import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReportTypePicker } from "@/components/ReportTypePicker";
 import { factCheckProgress } from "@/lib/factcheck";
@@ -102,6 +103,10 @@ export default async function VideoDetailPage({
               {video.scriptNotice}
             </div>
           )}
+          {(video.transcriptSource === "creator_meta" ||
+            video.transcriptSource === "none") && (
+            <PasteScriptPanel videoId={video.id} />
+          )}
           <div className="flex flex-wrap gap-2">
             <ReprocessButton videoId={video.id} />
           </div>
@@ -138,6 +143,10 @@ export default async function VideoDetailPage({
           <div className="text-ink-800 leading-relaxed whitespace-pre-wrap text-[15px]">
             {video.overview}
           </div>
+          {(video.transcriptSource === "creator_meta" ||
+            video.transcriptSource === "none") && (
+            <PasteScriptPanel videoId={video.id} />
+          )}
         </div>
       </section>
 
