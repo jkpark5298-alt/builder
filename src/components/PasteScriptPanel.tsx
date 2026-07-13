@@ -52,10 +52,11 @@ export function PasteScriptPanel({
         <ClipboardPaste className="h-5 w-5 text-accent shrink-0 mt-0.5" />
         <div>
           <p className="text-sm font-medium text-ink-900">
-            자막이 없는 게 아닙니다 — 서버에서 유튜브 자막을 못 가져왔습니다
+            스크립트를 붙여넣어 재요약하세요
           </p>
           <p className="text-xs text-ink-600 mt-1 leading-relaxed">
-            아래 도우미로 스크립트를 복사한 뒤 붙여넣고 재요약하세요.
+            Vercel에서는 유튜브 자막을 자동으로 가져오지 않습니다. 아래 도우미로
+            복사한 뒤 붙여넣으면 요약·팩트체크가 정상 진행됩니다.
           </p>
         </div>
       </div>

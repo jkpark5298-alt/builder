@@ -49,11 +49,12 @@ export function UrlPasteForm() {
       return;
     }
 
-    // Vercel 등에서는 사전검사 자체가 실패·지연되므로 막지 않고 바로 분석.
-    // (유튜브가 클라우드 IP의 자막 API를 차단함 — 자막이 없는 게 아님)
-    setScriptWarn(
-      "배포 서버에서는 유튜브 자막 API가 차단될 수 있습니다. 분석은 계속 진행하며, 안 되면 설명·챕터로 요약합니다. 정확도가 중요하면 아래 붙여넣기를 쓰세요."
-    );
+    // 스크립트 없이 시작하면 안내만 하고 진행 (복사·붙여넣기가 권장 경로)
+    if (!pastedScript.trim()) {
+      setScriptWarn(
+        "스크립트 없이 시작하면 요약 품질이 떨어질 수 있습니다. 가능하면 아래 도우미로 자막을 복사해 붙여넣은 뒤 다시 시작해 주세요."
+      );
+    }
     await startAnalyze(false);
   }
 
@@ -84,9 +85,9 @@ export function UrlPasteForm() {
             YouTube FactCheck
           </h1>
           <p className="text-ink-600 max-w-2xl text-[15px] sm:text-base leading-relaxed">
-            스크립트(자막)가 있으면 그걸로 요약합니다. 배포 서버에서 유튜브
-            자막이 막히면 설명·챕터로 진행하니, 중요하면 자막 텍스트를
-            붙여넣으세요.
+            유튜브 주소 + <strong>스크립트(자막) 붙여넣기</strong>로
+            요약·팩트체크합니다. (배포 서버에서는 유튜브 자막을 자동으로 못
+            가져오므로, 아래 도우미로 복사해 붙여넣으세요.)
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3">
@@ -126,26 +127,25 @@ export function UrlPasteForm() {
               <AlertTriangle className="h-5 w-5 text-accent shrink-0 mt-0.5" />
               <p className="text-sm text-ink-800 leading-relaxed">{scriptWarn}</p>
             </div>
-            <p className="text-xs text-ink-600 pl-7">
-              정확한 요약이 필요하면 유튜브 ⋯ → 스크립트 표시 → 복사 후 아래에
-              붙여넣으세요. 분석은 이미 진행됩니다.
-            </p>
           </div>
         )}
 
-        <label className="block text-sm text-ink-600">
-          스크립트(자막) 텍스트 붙여넣기 — Vercel에서 자막 API가 막힐 때 권장
-          <div className="mt-1.5 mb-2">
-            <ScriptCopyHelper youtubeUrl={url || undefined} compact />
-          </div>
-          <textarea
-            value={pastedScript}
-            onChange={(e) => setPastedScript(e.target.value)}
-            rows={4}
-            placeholder="유튜브 자막(⋯ → 스크립트 표시)을 복사해 붙여넣으면 이 텍스트로 요약합니다."
-            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm sm:text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          />
-        </label>
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-ink-800">
+            권장 순서: 주소 입력 → 스크립트 복사·붙여넣기 → 시작
+          </p>
+          <ScriptCopyHelper youtubeUrl={url || undefined} />
+          <label className="block text-sm text-ink-600">
+            스크립트(자막) 붙여넣기
+            <textarea
+              value={pastedScript}
+              onChange={(e) => setPastedScript(e.target.value)}
+              rows={5}
+              placeholder="도우미로 복사한 스크립트를 여기에 Ctrl+V …"
+              className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm sm:text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+            />
+          </label>
+        </div>
 
         <label className="block text-sm text-ink-600">
           제작자 설명·챕터 (선택)
