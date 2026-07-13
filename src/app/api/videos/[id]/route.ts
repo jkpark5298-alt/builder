@@ -13,7 +13,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const video = getVideo(id);
+  const video = await getVideo(id);
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
@@ -22,14 +22,14 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const ok = deleteVideo(id);
+  const ok = await deleteVideo(id);
   if (!ok) return NextResponse.json({ error: "없음" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const video = getVideo(id);
+  const video = await getVideo(id);
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
@@ -99,7 +99,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    next = finalizeReport(next, body.reportType ?? next.reportType);
+    next = await finalizeReport(next, body.reportType ?? next.reportType);
     return NextResponse.json({
       video: next,
       progress: factCheckProgress(next),
@@ -112,7 +112,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     next.updatedAt = new Date().toISOString();
   }
 
-  upsertVideo(next);
+  await upsertVideo(next);
   return NextResponse.json({
     video: next,
     progress: factCheckProgress(next),

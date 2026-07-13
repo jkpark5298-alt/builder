@@ -11,7 +11,7 @@ export default async function HomePage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const { q } = await searchParams;
-  const videos = searchVideos(q ?? "");
+  const videos = await searchVideos(q ?? "");
 
   return (
     <div className="space-y-10">

@@ -8,7 +8,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const video = getVideo(id);
+  const video = await getVideo(id);
   if (!video?.infographic) {
     return NextResponse.json({ error: "인포그래픽 없음" }, { status: 404 });
   }
@@ -22,7 +22,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 export async function POST(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const video = getVideo(id);
+  const video = await getVideo(id);
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
@@ -37,6 +37,6 @@ export async function POST(req: Request, ctx: Ctx) {
       new Set([...video.tags, body.channel === "kakao" ? "shared-kakao" : "shared-email"])
     ),
   };
-  upsertVideo(updated);
+  await upsertVideo(updated);
   return NextResponse.json({ video: updated, channel: body.channel ?? "email" });
 }

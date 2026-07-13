@@ -16,7 +16,7 @@ export default async function VideoDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const video = getVideo(id);
+  const video = await getVideo(id);
   if (!video) notFound();
 
   const awaiting = video.status === "awaiting_factcheck";

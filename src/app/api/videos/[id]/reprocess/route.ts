@@ -10,7 +10,7 @@ type Ctx = { params: Promise<{ id: string }> };
 /** Re-fetch YouTube meta + re-summarize + auto fact-check draft. */
 export async function POST(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
-  const existing = getVideo(id);
+  const existing = await getVideo(id);
   if (!existing) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }

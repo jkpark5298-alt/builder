@@ -1,13 +1,17 @@
 import fs from "fs";
 import path from "path";
+import { del, get, list, put } from "@vercel/blob";
 import type { ReportType, VideoRecord } from "./types";
 
-const DATA_DIR = process.env.VERCEL
-  ? path.join("/tmp", "youtube-factcheck-data")
-  : path.join(process.cwd(), "data");
+const DATA_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "videos.json");
+const BLOB_PREFIX = "videos/";
 
-function ensureDb() {
+function useBlob(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
+}
+
+function ensureLocalDb() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
@@ -41,43 +45,131 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
   };
 }
 
-export function readAllVideos(): VideoRecord[] {
-  ensureDb();
+function readLocalVideos(): VideoRecord[] {
+  ensureLocalDb();
   const raw = fs.readFileSync(DB_FILE, "utf-8");
   const parsed = JSON.parse(raw) as { videos: VideoRecord[] };
   return (parsed.videos ?? []).map(normalizeVideo);
 }
 
-export function writeAllVideos(videos: VideoRecord[]) {
-  ensureDb();
+function writeLocalVideos(videos: VideoRecord[]) {
+  ensureLocalDb();
   fs.writeFileSync(DB_FILE, JSON.stringify({ videos }, null, 2), "utf-8");
 }
 
-export function getVideo(id: string): VideoRecord | undefined {
-  return readAllVideos().find((v) => v.id === id);
+function blobPath(id: string) {
+  return `${BLOB_PREFIX}${id}.json`;
 }
 
-export function upsertVideo(video: VideoRecord): VideoRecord {
-  const videos = readAllVideos();
+async function streamToJson<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
+  const text = await new Response(stream).text();
+  return JSON.parse(text) as T;
+}
+
+async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
+  try {
+    const result = await get(blobPath(id), {
+      access: "private",
+      useCache: false,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      return undefined;
+    }
+    const raw = await streamToJson<VideoRecord>(result.stream);
+    return normalizeVideo(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeBlobVideo(video: VideoRecord): Promise<void> {
+  await put(blobPath(video.id), JSON.stringify(video), {
+    access: "private",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json",
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+  });
+}
+
+async function deleteBlobVideo(id: string): Promise<boolean> {
+  try {
+    await del(blobPath(id), { token: process.env.BLOB_READ_WRITE_TOKEN });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function listBlobVideos(): Promise<VideoRecord[]> {
+  const out: VideoRecord[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await list({
+      prefix: BLOB_PREFIX,
+      cursor,
+      limit: 100,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    for (const blob of page.blobs) {
+      if (!blob.pathname.endsWith(".json")) continue;
+      const id = blob.pathname
+        .slice(BLOB_PREFIX.length)
+        .replace(/\.json$/i, "");
+      const video = await readBlobVideo(id);
+      if (video) out.push(video);
+    }
+    cursor = page.hasMore ? page.cursor : undefined;
+  } while (cursor);
+
+  return out.sort(
+    (a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+export async function readAllVideos(): Promise<VideoRecord[]> {
+  if (useBlob()) return listBlobVideos();
+  return readLocalVideos();
+}
+
+export async function getVideo(id: string): Promise<VideoRecord | undefined> {
+  if (useBlob()) return readBlobVideo(id);
+  return readLocalVideos().find((v) => v.id === id);
+}
+
+export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
+  if (useBlob()) {
+    await writeBlobVideo(video);
+    return video;
+  }
+  const videos = readLocalVideos();
   const idx = videos.findIndex((v) => v.id === video.id);
   if (idx >= 0) videos[idx] = video;
   else videos.unshift(video);
-  writeAllVideos(videos);
+  writeLocalVideos(videos);
   return video;
 }
 
-export function deleteVideo(id: string): boolean {
-  const videos = readAllVideos();
+export async function deleteVideo(id: string): Promise<boolean> {
+  if (useBlob()) {
+    const existing = await readBlobVideo(id);
+    if (!existing) return false;
+    return deleteBlobVideo(id);
+  }
+  const videos = readLocalVideos();
   const next = videos.filter((v) => v.id !== id);
   if (next.length === videos.length) return false;
-  writeAllVideos(next);
+  writeLocalVideos(next);
   return true;
 }
 
-export function searchVideos(query: string): VideoRecord[] {
+export async function searchVideos(query: string): Promise<VideoRecord[]> {
   const q = query.trim().toLowerCase();
-  if (!q) return readAllVideos();
-  return readAllVideos().filter((v) => {
+  const all = await readAllVideos();
+  if (!q) return all;
+  return all.filter((v) => {
     const hay = [
       v.title,
       v.channel,

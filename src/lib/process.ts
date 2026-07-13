@@ -47,7 +47,7 @@ export async function createAndProcessVideo(
     createdAt: now,
     updatedAt: now,
   };
-  upsertVideo(record);
+  await upsertVideo(record);
 
   try {
     record = {
@@ -55,7 +55,7 @@ export async function createAndProcessVideo(
       status: "fetching",
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
 
     let meta = await fetchYoutubeMeta(record.youtubeUrl, videoId);
 
@@ -106,7 +106,7 @@ export async function createAndProcessVideo(
       ].filter(Boolean),
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
 
     // 1) 요약
     record = {
@@ -114,7 +114,7 @@ export async function createAndProcessVideo(
       status: "summarizing",
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
 
     const summary = await summarizeContent(
       { ...meta, transcriptSource: source, videoId },
@@ -129,7 +129,7 @@ export async function createAndProcessVideo(
       tags: Array.from(new Set([...record.tags, `type-${summary.reportType}`])),
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
 
     // 2) 자동 팩트체크 → 수동 수정 대기
     record = {
@@ -137,7 +137,7 @@ export async function createAndProcessVideo(
       status: "fact_checking",
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
 
     const factChecks = await autoFactCheck(summary.items, {
       ...meta,
@@ -160,7 +160,7 @@ export async function createAndProcessVideo(
       ),
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
     return record;
   } catch (e) {
     const message = e instanceof Error ? e.message : "처리 실패";
@@ -170,16 +170,16 @@ export async function createAndProcessVideo(
       errorMessage: message,
       updatedAt: new Date().toISOString(),
     };
-    upsertVideo(record);
+    await upsertVideo(record);
     throw e;
   }
 }
 
 /** 3) 요약+팩트체크 → 유형별 보고서 + 인포그래픽 */
-export function finalizeReport(
+export async function finalizeReport(
   video: VideoRecord,
   reportType?: ReportType
-): VideoRecord {
+): Promise<VideoRecord> {
   const typed = {
     ...video,
     reportType: reportType ?? video.reportType,
@@ -194,12 +194,12 @@ export function finalizeReport(
     status: "ready",
     updatedAt: new Date().toISOString(),
   };
-  upsertVideo(next);
+  await upsertVideo(next);
   return next;
 }
 
 export async function reprocessFromId(id: string): Promise<VideoRecord> {
-  const existing = getVideo(id);
+  const existing = await getVideo(id);
   if (!existing) throw new Error("영상을 찾을 수 없습니다.");
 
   const pastedScript =
@@ -210,7 +210,7 @@ export async function reprocessFromId(id: string): Promise<VideoRecord> {
       ? existing.transcript
       : undefined;
 
-  deleteVideo(id);
+  await deleteVideo(id);
   return createAndProcessVideo(
     existing.youtubeUrl,
     existing.description?.trim() || undefined,

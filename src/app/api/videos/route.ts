@@ -9,7 +9,7 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q") ?? "";
-  const videos = q ? searchVideos(q) : readAllVideos();
+  const videos = q ? await searchVideos(q) : await readAllVideos();
   return NextResponse.json({ videos });
 }
 
