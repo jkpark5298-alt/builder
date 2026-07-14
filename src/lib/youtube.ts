@@ -52,6 +52,16 @@ export function thumbnailUrl(videoId: string) {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
 
+/** 고화질 우선 — 인포그래픽용 (존재하지 않으면 다음으로) */
+export function youtubeThumbCandidates(videoId: string): string[] {
+  return [
+    `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+  ];
+}
+
 const META_FETCH_MS = 12_000;
 
 function fetchSignal(ms: number = META_FETCH_MS): AbortSignal {

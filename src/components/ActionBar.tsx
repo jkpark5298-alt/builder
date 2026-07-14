@@ -109,16 +109,8 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   }
 
   function downloadSvg() {
-    if (!video.infographic) return;
-    const blob = new Blob([video.infographic.svgMarkup], {
-      type: "image/svg+xml;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `infographic-${video.videoId}.svg`;
-    a.click();
-    URL.revokeObjectURL(url);
+    if (!ready) return;
+    window.location.href = `/api/videos/${video.id}/infographic?download=1`;
   }
 
   async function remove() {

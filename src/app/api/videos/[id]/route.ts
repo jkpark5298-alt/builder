@@ -131,7 +131,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
     if (next.status === "ready") {
       next.report = buildTypedReport(next);
-      next.infographic = buildInfographic(next);
+      next.infographic = await buildInfographic(next);
     }
   }
 
@@ -253,7 +253,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
   if (body.rebuild && next.status === "ready") {
     next.report = buildTypedReport(next);
-    next.infographic = buildInfographic(next);
+    next.infographic = await buildInfographic(next);
     next.updatedAt = new Date().toISOString();
   }
 

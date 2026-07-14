@@ -295,15 +295,14 @@ export default async function VideoDetailPage({
               4. 인포그래픽 · 저장 · 공유
             </h2>
             {video.infographic ? (
-              <div
-                className="overflow-x-auto rounded-xl border border-ink-100 bg-ink-50 [&_svg]:w-full [&_svg]:h-auto [&_svg]:min-w-[280px]"
-                dangerouslySetInnerHTML={{
-                  __html: video.infographic.svgMarkup.replace(
-                    /^<\?xml[^>]*>\s*/i,
-                    ""
-                  ),
-                }}
-              />
+              <div className="overflow-x-auto rounded-xl border border-ink-100 bg-ink-50">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`}
+                  alt="인포그래픽"
+                  className="w-full h-auto min-w-[280px]"
+                />
+              </div>
             ) : (
               <p className="text-ink-500 text-sm">아직 생성되지 않았습니다.</p>
             )}

@@ -4,6 +4,7 @@ import { getVideo } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -23,7 +24,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     );
   }
 
-  const bytes = buildReportPdf(video);
+  const bytes = await buildReportPdf(video);
   const filename = `factcheck-${video.videoId}.pdf`;
   return new NextResponse(Buffer.from(bytes), {
     headers: {

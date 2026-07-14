@@ -212,7 +212,7 @@ export async function finalizeReport(
   };
   const report = buildTypedReport(typed);
   const withReport = { ...typed, report };
-  const infographic = buildInfographic(withReport);
+  const infographic = await buildInfographic(withReport);
   const next: VideoRecord = {
     ...withReport,
     infographic,

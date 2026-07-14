@@ -1,21 +1,42 @@
 import { NextResponse } from "next/server";
+import { buildInfographic } from "@/lib/infographic";
 import { getVideo, upsertVideo } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const video = await getVideo(id);
-  if (!video?.infographic) {
+  if (!video) {
+    return NextResponse.json({ error: "없음" }, { status: 404 });
+  }
+  if (video.status !== "ready" && !video.infographic) {
     return NextResponse.json({ error: "인포그래픽 없음" }, { status: 404 });
   }
-  return new NextResponse(video.infographic.svgMarkup, {
+
+  // 유튜브 썸네일 포함 최신 인포그래픽으로 재생성
+  const infographic = await buildInfographic(video);
+  if (
+    !video.infographic?.svgMarkup.includes("<image") ||
+    video.infographic.svgMarkup !== infographic.svgMarkup
+  ) {
+    await upsertVideo({
+      ...video,
+      infographic,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  const download = new URL(req.url).searchParams.get("download") === "1";
+  return new NextResponse(infographic.svgMarkup, {
     headers: {
       "Content-Type": "image/svg+xml; charset=utf-8",
-      "Content-Disposition": `inline; filename="infographic-${video.videoId}.svg"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="infographic-${video.videoId}.svg"`,
+      "Cache-Control": "no-store",
     },
   });
 }
@@ -28,13 +49,28 @@ export async function POST(req: Request, ctx: Ctx) {
   }
   const body = (await req.json().catch(() => ({}))) as {
     channel?: "email" | "kakao";
+    rebuild?: boolean;
   };
+
+  let next = video;
+  if (body.rebuild) {
+    const infographic = await buildInfographic(video);
+    next = {
+      ...video,
+      infographic,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   const updated = {
-    ...video,
+    ...next,
     sharedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     tags: Array.from(
-      new Set([...video.tags, body.channel === "kakao" ? "shared-kakao" : "shared-email"])
+      new Set([
+        ...next.tags,
+        body.channel === "kakao" ? "shared-kakao" : "shared-email",
+      ])
     ),
   };
   await upsertVideo(updated);
