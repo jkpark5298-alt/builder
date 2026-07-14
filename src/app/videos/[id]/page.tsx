@@ -1,4 +1,3 @@
-import { notFound } from "next/navigation";
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
@@ -6,6 +5,7 @@ import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
+import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
@@ -19,7 +19,9 @@ export default async function VideoDetailPage({
 }) {
   const { id } = await params;
   const video = await getVideo(id);
-  if (!video) notFound();
+  if (!video) {
+    return <VideoNotFoundRecovery id={id} />;
+  }
 
   const awaiting = video.status === "awaiting_factcheck";
   const ready = video.status === "ready";

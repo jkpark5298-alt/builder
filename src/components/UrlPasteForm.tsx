@@ -5,9 +5,11 @@ import { AlertTriangle, Loader2, Link2 } from "lucide-react";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { extractVideoId } from "@/lib/youtube";
 import { ScriptCopyHelper } from "./ScriptCopyHelper";
+import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
 
 const STORAGE_KEY = "yfc-form-v1";
 const POST_TIMEOUT_MS = 20_000;
+const POST_SCRIPT_TIMEOUT_MS = 90_000;
 
 type SavedForm = {
   url: string;
@@ -68,13 +70,16 @@ export function UrlPasteForm() {
     setLoading(true);
     setStatus(
       withScript
-        ? "스크립트 접수됨. 요약·검증 화면으로 이동합니다…"
+        ? "스크립트로 요약·검증 중… (최대 1~2분, 화면을 끄지 마세요)"
         : "요청 접수 중… 자막 자동 수집을 시도합니다."
     );
     feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => controller.abort(),
+      withScript ? POST_SCRIPT_TIMEOUT_MS : POST_TIMEOUT_MS
+    );
 
     try {
       const res = await fetch("/api/videos", {
@@ -113,12 +118,15 @@ export function UrlPasteForm() {
         throw new Error("영상 ID를 받지 못했습니다. 다시 시도해 주세요.");
       }
 
-      setStatus("이동 중… 잠시만 기다려 주세요.");
+      cacheVideoSnapshot(data.video);
+      setStatus("완료. 팩트체크 화면으로 이동합니다…");
       goToVideo(data.video.id);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError(
-          "접수 시간이 초과됐습니다. Wi‑Fi/데이터를 확인한 뒤 다시 시도해 주세요."
+          withScript
+            ? "요약에 시간이 오래 걸렸습니다. Wi‑Fi를 확인하고 다시 눌러 주세요. (스크립트는 화면에 남아 있습니다)"
+            : "접수 시간이 초과됐습니다. Wi‑Fi/데이터를 확인한 뒤 다시 시도해 주세요."
         );
       } else {
         const message = err instanceof Error ? err.message : "처리 실패";

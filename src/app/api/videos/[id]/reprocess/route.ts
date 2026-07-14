@@ -4,7 +4,7 @@ import {
   runVideoPipeline,
 } from "@/lib/process";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
-import { deleteVideo, getVideo } from "@/lib/store";
+import { deleteVideo, getVideo, storageMode } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,17 +36,30 @@ export async function POST(req: Request, ctx: Ctx) {
     const youtubeUrl = existing.youtubeUrl;
 
     await deleteVideo(id);
-    const video = await createVideoJob(youtubeUrl);
+    const job = await createVideoJob(youtubeUrl);
+
+    if (pastedScript) {
+      const video = await runVideoPipeline(job.id, creatorNotes, pastedScript);
+      return NextResponse.json({
+        video,
+        processing: false,
+        storage: storageMode(),
+      });
+    }
 
     after(async () => {
       try {
-        await runVideoPipeline(video.id, creatorNotes, pastedScript);
+        await runVideoPipeline(job.id, creatorNotes, undefined);
       } catch {
         /* saved in pipeline */
       }
     });
 
-    return NextResponse.json({ video, processing: true });
+    return NextResponse.json({
+      video: job,
+      processing: true,
+      storage: storageMode(),
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "재분석 실패";
     return NextResponse.json({ error: message }, { status: 400 });

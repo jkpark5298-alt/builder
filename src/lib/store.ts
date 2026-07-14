@@ -4,8 +4,8 @@ import { del, get, list, put } from "@vercel/blob";
 import type { ReportType, VideoRecord } from "./types";
 
 /**
- * Vercel `/var/task` 는 읽기 전용 → mkdir ENOENT/EROFS 발생.
- * 서버리스에서는 `/tmp` 만 쓰기 가능.
+ * Vercel `/var/task` 는 읽기 전용.
+ * 공유 저장소(Blob) 없을 때만 `/tmp` 사용 — 인스턴스마다 달라 404 원인.
  */
 function resolveDataDir(): string {
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
@@ -19,8 +19,17 @@ const DB_FILE = path.join(DATA_DIR, "videos.json");
 const BLOB_PREFIX = "videos/";
 
 function useBlob(): boolean {
-  // 토큰 없으면 Blob API 호출 불가 (BLOB_STORE_ID만으로는 부족)
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
+      process.env.BLOB_STORE_ID?.trim() ||
+      // Vercel 런타임 OIDC + 연결된 Blob 스토어
+      (process.env.VERCEL && process.env.VERCEL_OIDC_TOKEN)
+  );
+}
+
+function blobTokenOpts(): { token?: string } {
+  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
+  return token ? { token } : {};
 }
 
 function ensureLocalDb() {
@@ -34,7 +43,7 @@ function ensureLocalDb() {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(
-      `저장소를 열 수 없습니다 (${DATA_DIR}). Vercel에서는 BLOB_READ_WRITE_TOKEN을 설정하거나 /tmp를 사용해야 합니다. ${msg}`
+      `로컬 저장소를 열 수 없습니다 (${DATA_DIR}). ${msg}`
     );
   }
 }
@@ -85,34 +94,53 @@ async function streamToJson<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+/** public/private 스토어 모두 호환 */
 async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
-  try {
-    const result = await get(blobPath(id), {
-      access: "private",
-      useCache: false,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-    if (!result?.stream) return undefined;
-    const raw = await streamToJson<VideoRecord>(result.stream);
-    return normalizeVideo(raw);
-  } catch {
-    return undefined;
+  const opts = blobTokenOpts();
+  for (const access of ["private", "public"] as const) {
+    try {
+      const result = await get(blobPath(id), {
+        access,
+        useCache: false,
+        ...opts,
+      });
+      if (!result?.stream) continue;
+      const raw = await streamToJson<VideoRecord>(result.stream);
+      return normalizeVideo(raw);
+    } catch (e) {
+      console.warn(`[store] blob get(${access}) failed for ${id}`, e);
+    }
   }
+  return undefined;
 }
 
 async function writeBlobVideo(video: VideoRecord): Promise<void> {
-  await put(blobPath(video.id), JSON.stringify(video), {
-    access: "private",
+  const body = JSON.stringify(video);
+  const base = {
     addRandomSuffix: false,
     allowOverwrite: true,
-    contentType: "application/json",
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-  });
+    contentType: "application/json" as const,
+    ...blobTokenOpts(),
+  };
+
+  let lastError: unknown;
+  for (const access of ["private", "public"] as const) {
+    try {
+      await put(blobPath(video.id), body, { ...base, access });
+      return;
+    } catch (e) {
+      lastError = e;
+      console.warn(`[store] blob put(${access}) failed`, e);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Vercel Blob에 저장하지 못했습니다. BLOB_READ_WRITE_TOKEN을 확인하세요.");
 }
 
 async function deleteBlobVideo(id: string): Promise<boolean> {
   try {
-    await del(blobPath(id), { token: process.env.BLOB_READ_WRITE_TOKEN });
+    await del(blobPath(id), blobTokenOpts());
     return true;
   } catch {
     return false;
@@ -128,7 +156,7 @@ async function listBlobVideos(): Promise<VideoRecord[]> {
         prefix: BLOB_PREFIX,
         cursor,
         limit: 100,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
+        ...blobTokenOpts(),
       });
       for (const blob of page.blobs) {
         if (!blob.pathname.endsWith(".json")) continue;
@@ -151,6 +179,10 @@ async function listBlobVideos(): Promise<VideoRecord[]> {
   }
 }
 
+export function storageMode(): "blob" | "local" {
+  return useBlob() ? "blob" : "local";
+}
+
 export async function readAllVideos(): Promise<VideoRecord[]> {
   try {
     if (useBlob()) return await listBlobVideos();
@@ -170,6 +202,12 @@ export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
   if (useBlob()) {
     await writeBlobVideo(video);
     return video;
+  }
+  // Vercel에서 Blob 없이 /tmp만 쓰면 다른 인스턴스에서 404
+  if (process.env.VERCEL) {
+    throw new Error(
+      "배포 환경에 BLOB_READ_WRITE_TOKEN(또는 Blob 스토어)이 필요합니다. Vercel Storage에서 Blob을 연결하세요."
+    );
   }
   const videos = readLocalVideos();
   const idx = videos.findIndex((v) => v.id === video.id);
