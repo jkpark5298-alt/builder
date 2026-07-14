@@ -8,9 +8,11 @@ import { REPORT_TYPE_LABELS, REPORT_TYPE_STRUCTURE } from "@/lib/types";
 export function ReportTypePicker({
   video,
   compact = false,
+  onVideoUpdate,
 }: {
   video: VideoRecord;
   compact?: boolean;
+  onVideoUpdate?: (video: VideoRecord) => void;
 }) {
   const router = useRouter();
   const [type, setType] = useState<ReportType>(video.reportType);
@@ -20,7 +22,7 @@ export function ReportTypePicker({
     setType(next);
     setSaving(true);
     try {
-      await fetch(`/api/videos/${video.id}`, {
+      const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -28,6 +30,9 @@ export function ReportTypePicker({
           rebuild: video.status === "ready",
         }),
       });
+      const data = (await res.json()) as { video?: VideoRecord };
+      if (data.video) onVideoUpdate?.(data.video);
+      else onVideoUpdate?.({ ...video, reportType: next });
       router.refresh();
     } finally {
       setSaving(false);

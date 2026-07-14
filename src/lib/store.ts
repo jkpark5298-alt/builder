@@ -34,6 +34,9 @@ const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, "videos.json");
 const BLOB_PREFIX = "videos/";
 
+/** put/get access 고정 — public으로 쓰고 private로 읽으면 '저장 안 됨'처럼 보임 */
+let preferredBlobAccess: "public" | "private" | null = null;
+
 function blobToken(): string | undefined {
   return readEnv("BLOB_READ_WRITE_TOKEN");
 }
@@ -126,7 +129,11 @@ function blobAuthHint(): string {
 
 async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
   const auth = blobCommandOpts();
-  for (const access of ["public", "private"] as const) {
+  const order: Array<"public" | "private"> = preferredBlobAccess
+    ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
+    : ["public", "private"];
+
+  for (const access of order) {
     try {
       const result = await get(blobPath(id), {
         access,
@@ -135,6 +142,7 @@ async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
       });
       if (!result?.stream) continue;
       const raw = await streamToJson<VideoRecord>(result.stream);
+      preferredBlobAccess = access;
       return normalizeVideo(raw);
     } catch (e) {
       console.warn(`[store] blob get(${access}) failed for ${id}`, e);
@@ -146,9 +154,7 @@ async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
 async function writeBlobVideo(video: VideoRecord): Promise<void> {
   const auth = blobCommandOpts();
   if (!auth.token && !auth.storeId && !readEnv("VERCEL_OIDC_TOKEN")) {
-    throw new Error(
-      `Vercel Blob 자격 증명이 없습니다. ${blobAuthHint()}`
-    );
+    throw new Error(`Vercel Blob 자격 증명이 없습니다. ${blobAuthHint()}`);
   }
 
   const body = JSON.stringify(video);
@@ -159,22 +165,38 @@ async function writeBlobVideo(video: VideoRecord): Promise<void> {
     ...auth,
   };
 
+  const order: Array<"public" | "private"> = preferredBlobAccess
+    ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
+    : ["public", "private"];
+
   let lastError: unknown;
-  for (const access of ["public", "private"] as const) {
+  let writtenAccess: "public" | "private" | null = null;
+
+  for (const access of order) {
     try {
       await put(blobPath(video.id), body, { ...base, access });
-      return;
+      writtenAccess = access;
+      preferredBlobAccess = access;
+      break;
     } catch (e) {
       lastError = e;
       console.warn(`[store] blob put(${access}) failed`, e);
     }
   }
 
-  const detail =
-    lastError instanceof Error ? lastError.message : String(lastError ?? "");
-  throw new Error(
-    `Vercel Blob 저장 실패: ${detail || "알 수 없는 오류"}. ${blobAuthHint()}`
-  );
+  if (!writtenAccess) {
+    const detail =
+      lastError instanceof Error ? lastError.message : String(lastError ?? "");
+    throw new Error(
+      `Vercel Blob 저장 실패: ${detail || "알 수 없는 오류"}. ${blobAuthHint()}`
+    );
+  }
+
+  // 저장 직후 확인 — 캐시/불일치 시 한 번 더 기록
+  const verified = await readBlobVideo(video.id);
+  if (!verified || verified.updatedAt !== video.updatedAt) {
+    await put(blobPath(video.id), body, { ...base, access: writtenAccess });
+  }
 }
 
 async function deleteBlobVideo(id: string): Promise<boolean> {

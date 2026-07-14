@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -8,7 +8,9 @@ import {
   ChevronRight,
   Copy,
   FileText,
+  Pencil,
   Save,
+  Trash2,
 } from "lucide-react";
 import type {
   FactCheckResult,
@@ -31,24 +33,41 @@ function promptOf(item: SummaryItem, fc?: FactCheckResult): string {
 
 export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
   const router = useRouter();
+  /** API 응답으로 즉시 갱신 — refresh 지연/캐시로 두 번 저장하는 문제 방지 */
+  const [localVideo, setLocalVideo] = useState(video);
+
+  useEffect(() => {
+    const serverTs = new Date(video.updatedAt).getTime();
+    const localTs = new Date(localVideo.updatedAt).getTime();
+    const serverNewer = serverTs > localTs;
+    const serverMoreChecks =
+      video.updatedAt === localVideo.updatedAt &&
+      video.factChecks.length > localVideo.factChecks.length;
+    if (serverNewer || serverMoreChecks) {
+      setLocalVideo(video);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only when server props change
+  }, [video.updatedAt, video.factChecks]);
+
   const required = useMemo(
-    () => video.items.filter((i) => i.needsFactCheck),
-    [video.items]
+    () => localVideo.items.filter((i) => i.needsFactCheck),
+    [localVideo.items]
   );
-  const progress = factCheckProgress(video);
+  const progress = factCheckProgress(localVideo);
   const firstOpen = Math.max(
     0,
-    required.findIndex((i) => !isItemChecked(i.id, video.factChecks))
+    required.findIndex((i) => !isItemChecked(i.id, localVideo.factChecks))
   );
   const [step, setStep] = useState(firstOpen === -1 ? 0 : firstOpen);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const current = required[step];
   const fcMap = useMemo(
-    () => new Map(video.factChecks.map((f) => [f.itemId, f])),
-    [video.factChecks]
+    () => new Map(localVideo.factChecks.map((f) => [f.itemId, f])),
+    [localVideo.factChecks]
   );
 
   async function saveItem(
@@ -58,8 +77,9 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
   ) {
     setSaving(true);
     setError(null);
+    setSavedFlash(false);
     try {
-      const res = await fetch(`/api/videos/${video.id}`, {
+      const res = await fetch(`/api/videos/${localVideo.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -72,8 +92,35 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           },
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
       if (!res.ok) throw new Error(data.error || "저장 실패");
+
+      if (data.video) {
+        setLocalVideo(data.video);
+      } else {
+        const fc: FactCheckResult = {
+          itemId,
+          mode: "manual",
+          verdict,
+          explanation: answer.trim(),
+          sources: [],
+          checkedAt: new Date().toISOString(),
+        };
+        setLocalVideo((prev) => ({
+          ...prev,
+          factChecks: [
+            ...prev.factChecks.filter((f) => f.itemId !== itemId),
+            fc,
+          ],
+          updatedAt: new Date().toISOString(),
+        }));
+      }
+
+      setSavedFlash(true);
+      window.setTimeout(() => setSavedFlash(false), 1500);
       router.refresh();
       return true;
     } catch (e) {
@@ -88,22 +135,96 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     setCompleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/videos/${video.id}`, {
+      const res = await fetch(`/api/videos/${localVideo.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           completeManual: true,
-          reportType: video.reportType,
+          reportType: localVideo.reportType,
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
       if (!res.ok) throw new Error(data.error || "보고서 생성 실패");
-      router.push("/#completed");
+      if (data.video) setLocalVideo(data.video);
+      router.push("/#reports");
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "보고서 생성 실패");
     } finally {
       setCompleting(false);
+    }
+  }
+
+  async function updateTarget(
+    itemId: string,
+    patch: { statement: string; detail: string }
+  ) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${localVideo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updateItem: {
+            itemId,
+            statement: patch.statement,
+            detail: patch.detail.trim() ? patch.detail : null,
+          },
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "대상 수정 실패");
+      if (data.video) setLocalVideo(data.video);
+      router.refresh();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "대상 수정 실패");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTarget(itemId: string) {
+    if (
+      !window.confirm(
+        "이 팩트체크 대상을 삭제할까요? 저장된 답변도 함께 삭제됩니다."
+      )
+    ) {
+      return false;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${localVideo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deleteItem: { itemId } }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "대상 삭제 실패");
+      if (data.video) {
+        setLocalVideo(data.video);
+        const left = data.video.items.filter((i) => i.needsFactCheck).length;
+        setStep((s) => Math.min(s, Math.max(0, left - 1)));
+      }
+      router.refresh();
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "대상 삭제 실패");
+      return false;
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -160,7 +281,11 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         </p>
 
         <div className="mt-4">
-          <ReportTypePicker video={video} compact />
+          <ReportTypePicker
+            video={localVideo}
+            compact
+            onVideoUpdate={setLocalVideo}
+          />
         </div>
 
         <div className="mt-4">
@@ -185,7 +310,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           </div>
           <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
             {required.map((item, i) => {
-              const done = isItemChecked(item.id, video.factChecks);
+              const done = isItemChecked(item.id, localVideo.factChecks);
               return (
                 <button
                   key={item.id}
@@ -211,18 +336,29 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       {current && (
         <StepEditor
           key={current.id}
-          videoId={video.id}
+          videoId={localVideo.id}
           item={current}
           index={step}
           total={required.length}
-          imageFallback={video.thumbnailUrl}
+          imageFallback={localVideo.thumbnailUrl}
           fc={fcMap.get(current.id)}
           saving={saving}
+          onVideoUpdate={setLocalVideo}
+          onUpdateTarget={(statement, detail) =>
+            updateTarget(current.id, { statement, detail })
+          }
+          onDeleteTarget={() => deleteTarget(current.id)}
           onSave={async (answer, verdict) => {
             const ok = await saveItem(current.id, answer, verdict);
             if (ok && step < required.length - 1) setStep(step + 1);
           }}
         />
+      )}
+
+      {savedFlash && (
+        <p className="px-4 sm:px-5 text-sm text-verify-true" role="status">
+          저장됐습니다.
+        </p>
       )}
 
       {error && (
@@ -282,7 +418,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         <p className="text-xs text-ink-500 text-center sm:text-left">
           {progress.complete
             ? "팩트체크가 끝났습니다. 보고서를 만들면 «보고서 저장» 완료로 이동합니다."
-            : "항목을 저장하면 «임시 저장»에 남습니다. 전부 마치면 «보고서 저장»으로 이동합니다."}
+            : "「이 항목 저장하고 다음」을 누르면 바로 저장됩니다. 한 번이면 충분합니다."}
         </p>
       </div>
     </section>
@@ -297,6 +433,9 @@ function StepEditor({
   imageFallback,
   fc,
   saving,
+  onVideoUpdate,
+  onUpdateTarget,
+  onDeleteTarget,
   onSave,
 }: {
   videoId: string;
@@ -306,6 +445,9 @@ function StepEditor({
   imageFallback: string;
   fc?: FactCheckResult;
   saving: boolean;
+  onVideoUpdate: (video: VideoRecord) => void;
+  onUpdateTarget: (statement: string, detail: string) => Promise<boolean>;
+  onDeleteTarget: () => Promise<boolean>;
   onSave: (answer: string, verdict: FactCheckVerdict) => Promise<void>;
 }) {
   const router = useRouter();
@@ -321,6 +463,9 @@ function StepEditor({
   const [copied, setCopied] = useState(false);
   const [imageUrl, setImageUrl] = useState(item.imageUrl || "");
   const [imageBusy, setImageBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editStatement, setEditStatement] = useState(item.statement);
+  const [editDetail, setEditDetail] = useState(item.detail || "");
 
   async function onPickImage(file: File | null) {
     if (!file) return;
@@ -343,8 +488,13 @@ function StepEditor({
           itemImage: { itemId: item.id, imageUrl: dataUrl },
         }),
       });
-      if (!res.ok) throw new Error("이미지 저장 실패");
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
       setImageUrl(dataUrl);
+      if (data.video) onVideoUpdate(data.video);
       router.refresh();
     } catch {
       alert("이미지 저장에 실패했습니다. 다시 시도해 주세요.");
@@ -356,14 +506,16 @@ function StepEditor({
   async function removeImage() {
     setImageBusy(true);
     try {
-      await fetch(`/api/videos/${videoId}`, {
+      const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           itemImage: { itemId: item.id, imageUrl: null },
         }),
       });
+      const data = (await res.json()) as { video?: VideoRecord };
       setImageUrl("");
+      if (data.video) onVideoUpdate(data.video);
       router.refresh();
     } finally {
       setImageBusy(false);
@@ -380,11 +532,46 @@ function StepEditor({
     }
   }
 
+  async function saveTargetEdit() {
+    if (editStatement.trim().length < 4) {
+      alert("팩트체크 대상 주장을 조금 더 구체적으로 적어 주세요.");
+      return;
+    }
+    const ok = await onUpdateTarget(editStatement.trim(), editDetail);
+    if (ok) setEditing(false);
+  }
+
   return (
     <div className="p-4 sm:p-5 space-y-4">
-      <p className="text-xs font-medium text-ink-500">
-        항목 {index + 1} / {total} · 팩트체크 정리
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-ink-500">
+          항목 {index + 1} / {total} · 팩트체크 정리
+        </p>
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            disabled={saving || editing}
+            onClick={() => {
+              setEditStatement(item.statement);
+              setEditDetail(item.detail || "");
+              setEditing(true);
+            }}
+            className="inline-flex items-center gap-1 min-h-9 rounded-lg border border-ink-200 bg-white px-2.5 text-xs font-medium text-ink-700 hover:border-accent disabled:opacity-40"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            대상 수정
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void onDeleteTarget()}
+            className="inline-flex items-center gap-1 min-h-9 rounded-lg border border-verify-false/30 bg-white px-2.5 text-xs font-medium text-verify-false hover:bg-verify-false/10 disabled:opacity-40"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            삭제
+          </button>
+        </div>
+      </div>
 
       <div className="overflow-hidden rounded-xl border border-ink-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -418,24 +605,77 @@ function StepEditor({
               이미지 제거
             </button>
           )}
-          <span className="text-xs text-ink-500">아이폰·PC 모두 사진 앨범 선택 가능</span>
+          <span className="text-xs text-ink-500">
+            아이폰·PC 모두 사진 앨범 선택 가능
+          </span>
         </div>
         <div className="p-3 sm:p-4 bg-ink-50/80 space-y-3">
-          <div>
-            <p className="text-xs text-accent font-medium mb-1">팩트체크 대상</p>
-            <p className="text-base sm:text-lg font-medium text-ink-900 leading-snug">
-              {item.statement}
-            </p>
-          </div>
-          {item.detail && (
-            <div className="rounded-lg border border-ink-200 bg-white px-3 py-2.5">
-              <p className="text-xs text-ink-500 font-medium mb-1">
-                왜 확인해야 하나
-              </p>
-              <p className="text-sm text-ink-700 leading-relaxed">
-                {item.detail}
-              </p>
+          {editing ? (
+            <div className="space-y-3">
+              <label className="block text-xs text-accent font-medium">
+                팩트체크 대상 수정
+                <textarea
+                  value={editStatement}
+                  onChange={(e) => setEditStatement(e.target.value)}
+                  rows={3}
+                  className="mt-1.5 w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-base text-ink-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  placeholder="검증할 주장·문장"
+                />
+              </label>
+              <label className="block text-xs text-ink-500 font-medium">
+                왜 확인해야 하나 (선택)
+                <textarea
+                  value={editDetail}
+                  onChange={(e) => setEditDetail(e.target.value)}
+                  rows={2}
+                  className="mt-1.5 w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-700 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  placeholder="검증 포인트·맥락"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void saveTargetEdit()}
+                  className="min-h-10 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white hover:bg-accent disabled:opacity-50"
+                >
+                  {saving ? "저장 중…" : "대상 저장"}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setEditing(false);
+                    setEditStatement(item.statement);
+                    setEditDetail(item.detail || "");
+                  }}
+                  className="min-h-10 rounded-lg border border-ink-200 bg-white px-4 text-sm text-ink-600"
+                >
+                  취소
+                </button>
+              </div>
             </div>
+          ) : (
+            <>
+              <div>
+                <p className="text-xs text-accent font-medium mb-1">
+                  팩트체크 대상
+                </p>
+                <p className="text-base sm:text-lg font-medium text-ink-900 leading-snug">
+                  {item.statement}
+                </p>
+              </div>
+              {item.detail && (
+                <div className="rounded-lg border border-ink-200 bg-white px-3 py-2.5">
+                  <p className="text-xs text-ink-500 font-medium mb-1">
+                    왜 확인해야 하나
+                  </p>
+                  <p className="text-sm text-ink-700 leading-relaxed">
+                    {item.detail}
+                  </p>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -506,7 +746,7 @@ function StepEditor({
 
       <button
         type="button"
-        disabled={saving || answer.trim().length < 20}
+        disabled={saving || editing || answer.trim().length < 20}
         onClick={() => onSave(answer, verdict)}
         className="w-full min-h-12 rounded-xl bg-ink-900 text-white font-medium hover:bg-accent disabled:opacity-50 transition-colors"
       >
