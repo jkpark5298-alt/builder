@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Copy,
   FileText,
+  Save,
 } from "lucide-react";
 import type {
   FactCheckResult,
@@ -97,13 +98,22 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "보고서 생성 실패");
+      router.push("/#completed");
       router.refresh();
-      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "보고서 생성 실패");
     } finally {
       setCompleting(false);
     }
+  }
+
+  function saveDraftAndLeave() {
+    if (progress.complete) {
+      router.push("/#reports");
+    } else {
+      router.push("/#drafts");
+    }
+    router.refresh();
   }
 
   if (required.length === 0) {
@@ -112,14 +122,23 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         <p className="text-ink-700">
           검증이 필요한 주장이 없습니다. 바로 보고서를 만들 수 있습니다.
         </p>
-        <button
-          type="button"
-          onClick={completeAndGenerate}
-          disabled={completing}
-          className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60"
-        >
-          {completing ? "생성 중…" : "PDF 보고서 · 인포그래픽 생성"}
-        </button>
+        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+          <button
+            type="button"
+            onClick={saveDraftAndLeave}
+            className="w-full sm:w-auto min-h-12 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 py-3 font-medium hover:bg-accent-muted"
+          >
+            보고서 작성 목록으로
+          </button>
+          <button
+            type="button"
+            onClick={completeAndGenerate}
+            disabled={completing}
+            className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60"
+          >
+            {completing ? "생성 중…" : "보고서 작성 → PDF·인포그래픽"}
+          </button>
+        </div>
       </div>
     );
   }
@@ -211,40 +230,59 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         </p>
       )}
 
-      <div className="sticky bottom-0 sm:static border-t border-ink-200 bg-white/95 backdrop-blur px-4 sm:px-5 py-3 flex flex-col sm:flex-row gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="flex gap-2 flex-1">
+      <div className="sticky bottom-0 sm:static border-t border-ink-200 bg-white/95 backdrop-blur px-4 sm:px-5 py-3 flex flex-col gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex gap-2 flex-1">
+            <button
+              type="button"
+              disabled={step === 0}
+              onClick={() => setStep((s) => Math.max(0, s - 1))}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              이전
+            </button>
+            <button
+              type="button"
+              disabled={step >= required.length - 1}
+              onClick={() =>
+                setStep((s) => Math.min(required.length - 1, s + 1))
+              }
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
+            >
+              다음
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
           <button
             type="button"
-            disabled={step === 0}
-            onClick={() => setStep((s) => Math.max(0, s - 1))}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
+            onClick={saveDraftAndLeave}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 text-sm font-medium text-ink-900 hover:bg-accent-muted transition-colors"
           >
-            <ChevronLeft className="h-4 w-4" />
-            이전
+            <Save className="h-4 w-4" />
+            {progress.complete
+              ? "보고서 작성 목록으로"
+              : "임시 저장하고 목록으로"}
           </button>
           <button
             type="button"
-            disabled={step >= required.length - 1}
-            onClick={() => setStep((s) => Math.min(required.length - 1, s + 1))}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
+            disabled={!progress.complete || completing}
+            onClick={completeAndGenerate}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-accent px-5 text-white font-medium disabled:opacity-50 hover:bg-ink-900 transition-colors"
           >
-            다음
-            <ChevronRight className="h-4 w-4" />
+            <FileText className="h-4 w-4" />
+            {completing
+              ? "보고서 생성 중…"
+              : progress.complete
+                ? "보고서 작성 → PDF·인포그래픽"
+                : `미완료 ${progress.total - progress.doneCount}건`}
           </button>
         </div>
-        <button
-          type="button"
-          disabled={!progress.complete || completing}
-          onClick={completeAndGenerate}
-          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-accent px-5 text-white font-medium disabled:opacity-50 hover:bg-ink-900 transition-colors"
-        >
-          <FileText className="h-4 w-4" />
-          {completing
-            ? "보고서 생성 중…"
-            : progress.complete
-              ? "완료 → PDF·인포그래픽 생성"
-              : `미완료 ${progress.total - progress.doneCount}건`}
-        </button>
+        <p className="text-xs text-ink-500 text-center sm:text-left">
+          {progress.complete
+            ? "팩트체크가 끝났습니다. 보고서를 만들면 «완료» 목록으로 이동합니다."
+            : "항목을 저장하면 «임시 저장»에 남습니다. 전부 마치면 «보고서 작성»으로 이동합니다."}
+        </p>
       </div>
     </section>
   );

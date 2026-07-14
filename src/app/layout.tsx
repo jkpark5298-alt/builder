@@ -37,12 +37,24 @@ export default function RootLayout({
                   요약 · 팩트체크 · 보고서 · 인포그래픽
                 </p>
               </a>
-              <nav className="flex items-center gap-2 sm:gap-3 text-sm text-ink-600 shrink-0">
+              <nav className="flex items-center gap-1.5 sm:gap-2 text-sm text-ink-600 shrink-0">
                 <a
-                  href="/"
-                  className="hidden xs:inline hover:text-accent transition-colors px-2 py-2"
+                  href="/#drafts"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
-                  라이브러리
+                  임시 저장
+                </a>
+                <a
+                  href="/#reports"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  보고서 작성
+                </a>
+                <a
+                  href="/#completed"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  완료
                 </a>
                 <a
                   href="/#paste"

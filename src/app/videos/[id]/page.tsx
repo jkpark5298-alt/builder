@@ -2,11 +2,11 @@ import { notFound } from "next/navigation";
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
-import { FactCheckPanel } from "@/components/FactCheckPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
-import { ReportTypePicker } from "@/components/ReportTypePicker";
+import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { factCheckProgress } from "@/lib/factcheck";
+import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -21,21 +21,23 @@ export default async function VideoDetailPage({
   if (!video) notFound();
 
   const awaiting = video.status === "awaiting_factcheck";
+  const ready = video.status === "ready";
   const progress = factCheckProgress(video);
+  const stage = libraryStage(video);
+  const stageLabel = libraryCardLabel(video);
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-24 sm:pb-8">
-      {/* 진행 순서 */}
       <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs sm:text-sm">
         {[
           { n: "1", t: "유튜브 내용 요약", on: true },
           {
             n: "2",
             t: "팩트체크 정리",
-            on: awaiting || video.status === "ready",
+            on: awaiting || ready,
           },
-          { n: "3", t: "유형 보고서", on: video.status === "ready" },
-          { n: "4", t: "인포·공유", on: video.status === "ready" },
+          { n: "3", t: "유형 보고서", on: ready },
+          { n: "4", t: "인포·공유", on: ready },
         ].map((s) => (
           <li
             key={s.n}
@@ -45,7 +47,9 @@ export default async function VideoDetailPage({
                 : "border-ink-200 bg-white/60 text-ink-400"
             }`}
           >
-            <span className="font-medium">{s.n}. {s.t}</span>
+            <span className="font-medium">
+              {s.n}. {s.t}
+            </span>
           </li>
         ))}
       </ol>
@@ -83,19 +87,31 @@ export default async function VideoDetailPage({
               {video.transcriptSource === "pasted"
                 ? "붙여넣은 스크립트"
                 : video.transcriptSource === "youtube"
-                ? "자막"
-                : video.transcriptSource === "youtube_auto"
-                  ? "자동자막→텍스트"
-                  : video.transcriptSource === "speech_text"
-                    ? "음성→텍스트"
-                    : video.transcriptSource === "creator_meta"
-                      ? "설명·챕터만"
-                      : "없음"}
+                  ? "자막"
+                  : video.transcriptSource === "youtube_auto"
+                    ? "자동자막→텍스트"
+                    : video.transcriptSource === "speech_text"
+                      ? "음성→텍스트"
+                      : video.transcriptSource === "creator_meta"
+                        ? "설명·챕터만"
+                        : "없음"}
             </span>
-            <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-              {awaiting
-                ? `팩트체크 ${progress.doneCount}/${progress.total}`
-                : `상태: ${video.status}`}
+            <span
+              className={`rounded-md border px-2 py-1 ${
+                stage === "complete"
+                  ? "bg-verify-true/10 text-verify-true border-verify-true/20"
+                  : stage === "report_pending"
+                    ? "bg-ink-900 text-white border-ink-900"
+                    : stage === "factcheck_draft"
+                      ? "bg-accent-muted text-accent border-accent/30"
+                      : "bg-white border-ink-200"
+              }`}
+            >
+              {stage === "factcheck_draft"
+                ? `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
+                : stage === "report_pending"
+                  ? "보고서 작성 대기"
+                  : stageLabel}
             </span>
           </div>
           {video.scriptNotice && (
@@ -103,7 +119,7 @@ export default async function VideoDetailPage({
               {video.scriptNotice}
             </div>
           )}
-            {(video.transcriptSource === "creator_meta" ||
+          {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") && (
             <PasteScriptPanel
               videoId={video.id}
@@ -113,6 +129,7 @@ export default async function VideoDetailPage({
           <div className="flex flex-wrap gap-2">
             <ReprocessButton videoId={video.id} />
           </div>
+          {ready && <ReopenAsDraftButton videoId={video.id} />}
           <ActionBar video={video} />
           {awaiting && (
             <a
@@ -156,10 +173,9 @@ export default async function VideoDetailPage({
         </div>
       </section>
 
-      {/* 2. 팩트체크 정리 */}
-      {awaiting ? (
-        <ManualFactCheckWizard video={video} />
-      ) : (
+      {awaiting && <ManualFactCheckWizard video={video} />}
+
+      {ready && (
         <>
           <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden">
             <div className="bg-accent px-4 sm:px-5 py-3.5">
@@ -167,17 +183,38 @@ export default async function VideoDetailPage({
                 2. 팩트체크 정리
               </h2>
             </div>
-            <div className="p-4 sm:p-5 space-y-5">
-              <p className="text-sm text-ink-500">
-                AI 질문을 복사해 제미나이 등에 물은 뒤,{" "}
-                <strong>AI 답변·팩트체크 결과</strong>를 아래에 입력하세요.
+            <div className="p-4 sm:p-5 space-y-3">
+              <p className="text-sm text-ink-600">
+                이 항목은 <strong>완료</strong> 상태입니다. 내용을 고치려면{" "}
+                <strong>수정 필요 → 임시 저장으로</strong>를 눌러 임시 저장
+                목록으로 옮긴 뒤 다시 정리하세요.
               </p>
-              <ReportTypePicker video={video} />
-              <FactCheckPanel
-                videoId={video.id}
-                items={video.items}
-                factChecks={video.factChecks}
-              />
+              <ReopenAsDraftButton videoId={video.id} />
+              {video.factChecks.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  {video.items
+                    .filter((i) => i.needsFactCheck)
+                    .map((item) => {
+                      const fc = video.factChecks.find(
+                        (f) => f.itemId === item.id
+                      );
+                      if (!fc) return null;
+                      return (
+                        <div
+                          key={item.id}
+                          className="rounded-xl border border-ink-100 p-3 text-sm space-y-2"
+                        >
+                          <p className="font-medium text-ink-900">
+                            {item.statement}
+                          </p>
+                          <p className="text-ink-600 leading-relaxed whitespace-pre-wrap">
+                            {fc.explanation}
+                          </p>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
             </div>
           </section>
 
@@ -264,6 +301,12 @@ export default async function VideoDetailPage({
             )}
           </section>
         </>
+      )}
+
+      {!awaiting && !ready && (
+        <div className="rounded-2xl border border-ink-200 bg-white/80 p-5 text-center text-ink-600 text-sm">
+          처리 중입니다… ({stageLabel})
+        </div>
       )}
     </div>
   );

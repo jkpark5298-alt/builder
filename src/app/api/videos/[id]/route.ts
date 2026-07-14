@@ -43,11 +43,26 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
     reportType?: ReportType;
     draft?: boolean;
+    /** 완료(ready) → 임시 저장(awaiting_factcheck)으로 되돌림 */
+    reopenAsDraft?: boolean;
     completeManual?: boolean;
     rebuild?: boolean;
   };
 
   let next = { ...video };
+
+  if (body.reopenAsDraft) {
+    next = {
+      ...next,
+      status: "awaiting_factcheck",
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertVideo(next);
+    return NextResponse.json({
+      video: next,
+      progress: factCheckProgress(next),
+    });
+  }
 
   if (body.reportType && ["H", "S", "C", "P"].includes(body.reportType)) {
     next = {
@@ -80,10 +95,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
       updatedAt: new Date().toISOString(),
     };
 
-    if (next.status === "ready" && !body.draft) {
-      next.report = buildTypedReport(next);
-      next.infographic = buildInfographic(next);
-    } else if (next.status !== "error" && next.status !== "ready") {
+    // 완료 항목을 수정하면 임시 저장으로 이동 (보고서 재생성은 다시 완료할 때)
+    if (next.status === "ready") {
+      next.status = "awaiting_factcheck";
+    } else if (next.status !== "error") {
       next.status = "awaiting_factcheck";
     }
   }

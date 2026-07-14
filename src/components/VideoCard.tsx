@@ -1,18 +1,11 @@
 import type { VideoRecord } from "@/lib/types";
+import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { formatDistanceToNow } from "date-fns";
 import { ko } from "date-fns/locale";
 
-const statusLabel: Record<VideoRecord["status"], string> = {
-  queued: "대기",
-  fetching: "수집 중",
-  summarizing: "요약 중",
-  fact_checking: "자동 검증",
-  awaiting_factcheck: "수동 검증",
-  ready: "완료",
-  error: "오류",
-};
-
 export function VideoCard({ video }: { video: VideoRecord }) {
+  const stage = libraryStage(video);
+
   return (
     <a
       href={`/videos/${video.id}`}
@@ -30,16 +23,18 @@ export function VideoCard({ video }: { video: VideoRecord }) {
         <div className="flex items-center justify-between gap-2 mb-2">
           <span
             className={`text-xs px-2 py-0.5 rounded-md ${
-              video.status === "ready"
+              stage === "complete"
                 ? "bg-verify-true/10 text-verify-true"
-                : video.status === "awaiting_factcheck"
-                  ? "bg-accent-muted text-accent"
-                  : video.status === "error"
-                    ? "bg-verify-false/10 text-verify-false"
-                    : "bg-ink-100 text-ink-600"
+                : stage === "report_pending"
+                  ? "bg-ink-900 text-white"
+                  : stage === "factcheck_draft"
+                    ? "bg-accent-muted text-accent"
+                    : stage === "error"
+                      ? "bg-verify-false/10 text-verify-false"
+                      : "bg-ink-100 text-ink-600"
             }`}
           >
-            {statusLabel[video.status]}
+            {libraryCardLabel(video)}
           </span>
           <span className="text-xs text-ink-400">
             {formatDistanceToNow(new Date(video.updatedAt), {

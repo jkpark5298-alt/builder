@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { AlertTriangle, Loader2, Link2 } from "lucide-react";
+import { extractVideoId } from "@/lib/youtube";
 import { ScriptCopyHelper } from "./ScriptCopyHelper";
 
 export function UrlPasteForm() {
@@ -14,7 +15,7 @@ export function UrlPasteForm() {
   const [error, setError] = useState<string | null>(null);
   const [scriptWarn, setScriptWarn] = useState<string | null>(null);
 
-  async function startAnalyze(_forceWithoutScript: boolean) {
+  async function startAnalyze() {
     setError(null);
     setLoading(true);
     try {
@@ -22,17 +23,47 @@ export function UrlPasteForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          youtubeUrl: url,
+          youtubeUrl: url.trim(),
           creatorNotes: creatorNotes.trim() || undefined,
           pastedScript: pastedScript.trim() || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "처리 실패");
+
+      const raw = await res.text();
+      let data: { error?: string; video?: { id: string } } = {};
+      try {
+        data = raw ? (JSON.parse(raw) as typeof data) : {};
+      } catch {
+        throw new Error(
+          res.ok
+            ? "서버 응답을 읽지 못했습니다."
+            : `서버 오류 (${res.status}). 개발 서버가 실행 중인지 확인해 주세요.`
+        );
+      }
+
+      if (!res.ok) {
+        throw new Error(data.error || `처리 실패 (${res.status})`);
+      }
+      if (!data.video?.id) {
+        throw new Error("영상 ID를 받지 못했습니다. 다시 시도해 주세요.");
+      }
+
       router.push(`/videos/${data.video.id}`);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "처리 실패");
+      const message =
+        err instanceof Error ? err.message : "처리 실패";
+      if (
+        message.includes("Failed to fetch") ||
+        message.includes("NetworkError") ||
+        message.includes("fetch")
+      ) {
+        setError(
+          "서버에 연결할 수 없습니다. npm run dev 로 개발 서버를 실행한 뒤 다시 시도해 주세요."
+        );
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -43,19 +74,29 @@ export function UrlPasteForm() {
     setError(null);
     setScriptWarn(null);
 
-    // 붙여넣은 스크립트가 있으면 바로 진행
-    if (pastedScript.trim().length > 80) {
-      await startAnalyze(false);
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      setError("유튜브 주소를 입력해 주세요.");
+      return;
+    }
+    if (!extractVideoId(trimmedUrl)) {
+      setError(
+        "유효한 유튜브 URL이 아닙니다. youtube.com/watch?v=… 또는 youtu.be/… 형식인지 확인해 주세요."
+      );
       return;
     }
 
-    // 스크립트 없이 시작하면 안내만 하고 진행 (복사·붙여넣기가 권장 경로)
+    if (pastedScript.trim().length > 80) {
+      await startAnalyze();
+      return;
+    }
+
     if (!pastedScript.trim()) {
       setScriptWarn(
         "스크립트 없이 시작하면 요약 품질이 떨어질 수 있습니다. 가능하면 아래 도우미로 자막을 복사해 붙여넣은 뒤 다시 시작해 주세요."
       );
     }
-    await startAnalyze(false);
+    await startAnalyze();
   }
 
   const busy = loading;
@@ -100,7 +141,6 @@ export function UrlPasteForm() {
             autoCapitalize="off"
             autoCorrect="off"
             className="flex-1 rounded-xl border border-ink-200 bg-white px-4 py-3.5 text-base text-ink-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-            required
           />
           <button
             type="submit"
@@ -117,6 +157,17 @@ export function UrlPasteForm() {
             )}
           </button>
         </div>
+
+        {busy && (
+          <div
+            className="rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-700"
+            role="status"
+            aria-live="polite"
+          >
+            요약·검증을 준비하고 있습니다. 유튜브 정보 조회에 보통 수 초~1분
+            정도 걸릴 수 있습니다. 잠시만 기다려 주세요.
+          </div>
+        )}
 
         {scriptWarn && (
           <div

@@ -37,13 +37,22 @@ export function thumbnailUrl(videoId: string) {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
 
+const META_FETCH_MS = 12_000;
+
+function fetchSignal(ms: number = META_FETCH_MS): AbortSignal {
+  return AbortSignal.timeout(ms);
+}
+
 export async function fetchOEmbed(url: string): Promise<{
   title: string;
   channel: string;
 } | null> {
   try {
     const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
-    const res = await fetch(endpoint, { next: { revalidate: 0 } });
+    const res = await fetch(endpoint, {
+      next: { revalidate: 0 },
+      signal: fetchSignal(),
+    });
     if (!res.ok) return null;
     const data = (await res.json()) as { title?: string; author_name?: string };
     return {
@@ -74,6 +83,7 @@ export async function fetchYoutubeMeta(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
       },
       next: { revalidate: 0 },
+      signal: fetchSignal(),
     });
     if (res.ok) {
       const html = await res.text();
