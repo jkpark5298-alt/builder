@@ -18,7 +18,10 @@ type Props = {
 
 export function ScriptCopyHelper({ youtubeUrl }: Props) {
   const [copied, setCopied] = useState<"full" | null>(null);
-  const [tab, setTab] = useState<"pc" | "ios">("pc");
+  const [tab, setTab] = useState<"pc" | "ios">(() => {
+    if (typeof navigator === "undefined") return "pc";
+    return /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "ios" : "pc";
+  });
   const [step, setStep] = useState<"easy" | "bookmark" | "manual">("easy");
   const dragHostRef = useRef<HTMLDivElement>(null);
 
@@ -100,44 +103,107 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
 
       {step === "easy" && (
         <div className="space-y-3 text-sm text-ink-800 leading-relaxed">
-          <p className="font-medium text-ink-900">PC에서 수동 복사 (추천)</p>
-          <ol className="list-decimal pl-5 space-y-2">
-            <li>
-              {watchUrl ? (
-                <>
-                  <a
-                    href={watchUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-accent font-medium underline"
-                  >
-                    유튜브에서 영상 열기
-                  </a>
-                  를 누릅니다.
-                </>
-              ) : (
-                <>먼저 위에 유튜브 주소를 입력한 뒤, 유튜브에서 영상을 엽니다.</>
-              )}
-            </li>
-            <li>
-              영상 제목 아래 <strong>⋯ (더보기)</strong> 클릭
-            </li>
-            <li>
-              <strong>스크립트 표시</strong> 클릭 → 오른쪽에 자막 목록이 열림
-            </li>
-            <li>
-              자막 목록 안을 한 번 클릭 →{" "}
-              <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-              <kbd className="rounded bg-ink-100 px-1">A</kbd> (전체 선택) →{" "}
-              <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-              <kbd className="rounded bg-ink-100 px-1">C</kbd> (복사)
-            </li>
-            <li>
-              FactCheck로 돌아와 아래 붙여넣기 칸에{" "}
-              <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-              <kbd className="rounded bg-ink-100 px-1">V</kbd>
-            </li>
-          </ol>
+          <p className="font-medium text-ink-900">
+            {tab === "ios" ? "아이폰에서 수동 복사 (추천)" : "PC에서 수동 복사 (추천)"}
+          </p>
+          {tab === "ios" ? (
+            <ol className="list-decimal pl-5 space-y-2">
+              <li>
+                {watchUrl ? (
+                  <>
+                    <a
+                      href={watchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent font-medium underline"
+                    >
+                      유튜브에서 영상 열기
+                    </a>
+                    (Safari 또는 YouTube 앱)
+                  </>
+                ) : (
+                  <>유튜브에서 영상을 엽니다.</>
+                )}
+              </li>
+              <li>
+                제목 아래 <strong>⋯ 더보기</strong> → <strong>스크립트 표시</strong>
+              </li>
+              <li>
+                자막 목록을 <strong>길게 누르기</strong> → <strong>텍스트 선택</strong> →{" "}
+                <strong>전체 선택</strong> → <strong>복사</strong>
+              </li>
+              <li>
+                FactCheck로 돌아와 붙여넣기 칸을 <strong>길게 눌러 붙여넣기</strong>
+              </li>
+              <li>
+                아래로 스크롤해 <strong>스크립트로 요약 · 검증</strong> 누르기
+              </li>
+            </ol>
+          ) : (
+            <ol className="list-decimal pl-5 space-y-2">
+              <li>
+                {watchUrl ? (
+                  <>
+                    <a
+                      href={watchUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent font-medium underline"
+                    >
+                      유튜브에서 영상 열기
+                    </a>
+                    를 누릅니다.
+                  </>
+                ) : (
+                  <>먼저 위에 유튜브 주소를 입력한 뒤, 유튜브에서 영상을 엽니다.</>
+                )}
+              </li>
+              <li>
+                영상 제목 아래 <strong>⋯ (더보기)</strong> 클릭
+              </li>
+              <li>
+                <strong>스크립트 표시</strong> 클릭 → 오른쪽에 자막 목록이 열림
+              </li>
+              <li>
+                자막 목록 안을 한 번 클릭 →{" "}
+                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
+                <kbd className="rounded bg-ink-100 px-1">A</kbd> →{" "}
+                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
+                <kbd className="rounded bg-ink-100 px-1">C</kbd>
+              </li>
+              <li>
+                FactCheck로 돌아와 붙여넣기 칸에{" "}
+                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
+                <kbd className="rounded bg-ink-100 px-1">V</kbd>
+              </li>
+            </ol>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setTab("ios")}
+              className={`inline-flex items-center gap-1 min-h-10 rounded-lg border px-3 text-xs ${
+                tab === "ios"
+                  ? "border-accent bg-accent-muted text-accent"
+                  : "border-ink-200"
+              }`}
+            >
+              <Smartphone className="h-3.5 w-3.5" />
+              아이폰
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("pc")}
+              className={`inline-flex items-center gap-1 min-h-10 rounded-lg border px-3 text-xs ${
+                tab === "pc"
+                  ? "border-accent bg-accent-muted text-accent"
+                  : "border-ink-200"
+              }`}
+            >
+              <Monitor className="h-3.5 w-3.5" />
+              PC
+            </button>
+          </div>
           {watchUrl && (
             <a
               href={watchUrl}

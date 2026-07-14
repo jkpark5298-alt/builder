@@ -11,19 +11,34 @@ export interface YoutubeMeta {
   chapters: YoutubeChapter[];
 }
 
+/** iPhone 공유 텍스트·보이지 않는 문자 정리 후 video id 추출 */
 export function extractVideoId(url: string): string | null {
   try {
-    const trimmed = url.trim();
+    const cleaned = url
+      .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // 공유 문구와 URL이 섞인 경우 URL만 뽑기
+    const embedded =
+      cleaned.match(
+        /https?:\/\/(?:www\.)?(?:youtube\.com\/[^\s]+|youtu\.be\/[^\s]+)/i
+      )?.[0] ?? cleaned;
+
     const patterns = [
-      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/live\/)([a-zA-Z0-9_-]{11})/,
       /^([a-zA-Z0-9_-]{11})$/,
     ];
     for (const re of patterns) {
-      const m = trimmed.match(re);
+      const m = embedded.match(re);
       if (m?.[1]) return m[1];
     }
-    const u = new URL(trimmed);
-    if (u.hostname.includes("youtube.com")) {
+    const u = new URL(embedded);
+    if (u.hostname.includes("youtube.com") || u.hostname.includes("youtu.be")) {
+      if (u.hostname.includes("youtu.be")) {
+        const id = u.pathname.replace(/^\//, "").slice(0, 11);
+        if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+      }
       const v = u.searchParams.get("v");
       if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
     }

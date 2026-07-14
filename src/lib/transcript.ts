@@ -23,11 +23,35 @@ export interface TranscriptResult {
   notice?: string;
 }
 
+function creatorFallback(
+  meta: YoutubeMeta | undefined,
+  vercelBlocked: boolean
+): TranscriptResult {
+  if (meta && (meta.description || meta.chapters.length)) {
+    return {
+      text: buildCreatorSourceText(meta),
+      source: "creator_meta",
+      notice: vercelBlocked
+        ? "배포 서버에서는 유튜브가 자막 API를 차단해 스크립트를 가져오지 못했습니다. 아래 ‘스크립트 붙여넣기’로 재요약하세요."
+        : "스크립트(자막)를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약을 위해 자막/스크립트 붙여넣기를 권장합니다.",
+    };
+  }
+  return {
+    text: "",
+    source: "none",
+    notice: vercelBlocked
+      ? "배포 서버에서 자막을 가져오지 못했습니다. 스크립트를 붙여넣어 주세요."
+      : "스크립트를 가져오지 못했습니다. 붙여넣기 후 다시 시도해 주세요.",
+  };
+}
+
 /** 자막/자동자막/음성→텍스트 순으로 확보 */
 export async function fetchTranscript(
   videoId: string,
   meta?: YoutubeMeta
 ): Promise<TranscriptResult> {
+  const onVercel = Boolean(process.env.VERCEL);
+
   // 0) 외부 자막 API (SUPADATA_API_KEY) — Vercel IP 차단 우회용
   const viaApi = await trySupadataTranscript(videoId);
   if (viaApi) {
@@ -36,6 +60,11 @@ export async function fetchTranscript(
       source: "youtube_auto",
       notice: "외부 자막 API로 스크립트를 가져와 요약합니다.",
     };
+  }
+
+  // Vercel: 긴 자막 시도로 요청이 멈춰 iPhone에서 ‘무반응’처럼 보이므로 빠르게 수동 붙여넣기로 안내
+  if (onVercel) {
+    return creatorFallback(meta, true);
   }
 
   // 1) 수동/공식 자막 (youtube-transcript)
@@ -64,15 +93,9 @@ export async function fetchTranscript(
   }
 
   // 4) 제작자 설명·챕터만
-  if (meta && (meta.description || meta.chapters.length)) {
-    const vercelBlocked = Boolean(process.env.VERCEL);
-    return {
-      text: buildCreatorSourceText(meta),
-      source: "creator_meta",
-      notice: vercelBlocked
-        ? "배포 서버에서는 유튜브가 자막 API를 차단해 스크립트를 가져오지 못했습니다. 아래 ‘스크립트 붙여넣기’로 재요약하세요."
-        : "스크립트(자막)를 가져오지 못했습니다. 제목·설명·챕터만으로 요약합니다. 정확한 요약을 위해 자막/스크립트 붙여넣기를 권장합니다.",
-    };
+  const fallback = creatorFallback(meta, false);
+  if (fallback.source !== "none" || fallback.notice) {
+    return fallback;
   }
 
   return {
