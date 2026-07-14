@@ -73,9 +73,7 @@ async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
       useCache: false,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
-    if (!result || result.statusCode !== 200 || !result.stream) {
-      return undefined;
-    }
+    if (!result?.stream) return undefined;
     const raw = await streamToJson<VideoRecord>(result.stream);
     return normalizeVideo(raw);
   } catch {
@@ -103,35 +101,45 @@ async function deleteBlobVideo(id: string): Promise<boolean> {
 }
 
 async function listBlobVideos(): Promise<VideoRecord[]> {
-  const out: VideoRecord[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await list({
-      prefix: BLOB_PREFIX,
-      cursor,
-      limit: 100,
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-    for (const blob of page.blobs) {
-      if (!blob.pathname.endsWith(".json")) continue;
-      const id = blob.pathname
-        .slice(BLOB_PREFIX.length)
-        .replace(/\.json$/i, "");
-      const video = await readBlobVideo(id);
-      if (video) out.push(video);
-    }
-    cursor = page.hasMore ? page.cursor : undefined;
-  } while (cursor);
+  try {
+    const out: VideoRecord[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await list({
+        prefix: BLOB_PREFIX,
+        cursor,
+        limit: 100,
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+      });
+      for (const blob of page.blobs) {
+        if (!blob.pathname.endsWith(".json")) continue;
+        const id = blob.pathname
+          .slice(BLOB_PREFIX.length)
+          .replace(/\.json$/i, "");
+        const video = await readBlobVideo(id);
+        if (video) out.push(video);
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
 
-  return out.sort(
-    (a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+    return out.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  } catch (e) {
+    console.error("[store] listBlobVideos failed", e);
+    return [];
+  }
 }
 
 export async function readAllVideos(): Promise<VideoRecord[]> {
-  if (useBlob()) return listBlobVideos();
-  return readLocalVideos();
+  try {
+    if (useBlob()) return await listBlobVideos();
+    return readLocalVideos();
+  } catch (e) {
+    console.error("[store] readAllVideos failed", e);
+    return [];
+  }
 }
 
 export async function getVideo(id: string): Promise<VideoRecord | undefined> {
@@ -166,27 +174,32 @@ export async function deleteVideo(id: string): Promise<boolean> {
 }
 
 export async function searchVideos(query: string): Promise<VideoRecord[]> {
-  const q = query.trim().toLowerCase();
-  const all = await readAllVideos();
-  if (!q) return all;
-  return all.filter((v) => {
-    const hay = [
-      v.title,
-      v.channel,
-      v.description,
-      v.overview,
-      v.reportType,
-      v.youtubeUrl,
-      ...(v.summaryBullets ?? []),
-      ...(v.chapters ?? []).map((c) => c.title),
-      ...v.tags,
-      ...v.items.map((i) => i.statement),
-      ...v.factChecks.map((f) => f.explanation),
-      v.report?.summaryExcerpt ?? "",
-      ...(v.report?.sections?.map((s) => `${s.heading} ${s.body}`) ?? []),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return hay.includes(q);
-  });
+  try {
+    const q = query.trim().toLowerCase();
+    const all = await readAllVideos();
+    if (!q) return all;
+    return all.filter((v) => {
+      const hay = [
+        v.title,
+        v.channel,
+        v.description,
+        v.overview,
+        v.reportType,
+        v.youtubeUrl,
+        ...(v.summaryBullets ?? []),
+        ...(v.chapters ?? []).map((c) => c.title),
+        ...v.tags,
+        ...v.items.map((i) => i.statement),
+        ...v.factChecks.map((f) => f.explanation),
+        v.report?.summaryExcerpt ?? "",
+        ...(v.report?.sections?.map((s) => `${s.heading} ${s.body}`) ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  } catch (e) {
+    console.error("[store] searchVideos failed", e);
+    return [];
+  }
 }
