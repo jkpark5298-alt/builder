@@ -70,7 +70,7 @@ export function libraryCardLabel(
     case "complete":
       return "완료";
     case "report_pending":
-      return "보고서 작성";
+      return "보고서 저장";
     case "factcheck_draft":
       return "임시 저장";
     case "error":

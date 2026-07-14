@@ -110,7 +110,7 @@ export default async function VideoDetailPage({
               {stage === "factcheck_draft"
                 ? `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
                 : stage === "report_pending"
-                  ? "보고서 작성 대기"
+                  ? "보고서 저장 대기"
                   : stageLabel}
             </span>
           </div>

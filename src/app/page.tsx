@@ -1,6 +1,6 @@
 import { UrlPasteForm } from "@/components/UrlPasteForm";
 import { SearchBar } from "@/components/SearchBar";
-import { VideoCard } from "@/components/VideoCard";
+import { VideoListCard } from "@/components/VideoListCard";
 import {
   isComplete,
   isFactCheckDraft,
@@ -13,10 +13,12 @@ export const dynamic = "force-dynamic";
 
 function VideoGrid({
   videos,
+  listKind,
   emptyTitle,
   emptyHint,
 }: {
   videos: VideoRecord[];
+  listKind: "draft" | "report-pending" | "report-complete";
   emptyTitle: string;
   emptyHint: string;
 }) {
@@ -32,7 +34,7 @@ function VideoGrid({
   return (
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
       {videos.map((v) => (
-        <VideoCard key={v.id} video={v} />
+        <VideoListCard key={v.id} video={v} listKind={listKind} />
       ))}
     </div>
   );
@@ -46,8 +48,8 @@ export default async function HomePage({
   const { q } = await searchParams;
   const videos = await searchVideos(q ?? "");
   const drafts = videos.filter(isFactCheckDraft);
-  const reports = videos.filter(isReportPending);
-  const completed = videos.filter(isComplete);
+  const reportPending = videos.filter(isReportPending);
+  const reportComplete = videos.filter(isComplete);
 
   return (
     <div className="space-y-10">
@@ -58,13 +60,15 @@ export default async function HomePage({
           <div>
             <h2 className="font-display text-2xl text-ink-900">라이브러리</h2>
             <p className="text-sm text-ink-500 mt-1">
-              <strong>임시 저장</strong>(팩트체크 진행) →{" "}
-              <strong>보고서 작성</strong>(팩트체크 완료) →{" "}
-              <strong>완료</strong>
+              <strong>임시 저장</strong>(팩트체크 미완료) →{" "}
+              <strong>보고서 저장</strong>(팩트체크 완료 · PDF·공유)
             </p>
           </div>
           <div className="sm:w-96">
-            <SearchBar initialQuery={q ?? ""} />
+            <SearchBar
+              initialQuery={q ?? ""}
+              placeholder="보고서·제목·채널·주장·팩트체크 검색…"
+            />
           </div>
         </div>
 
@@ -79,58 +83,66 @@ export default async function HomePage({
             href="#reports"
             className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
           >
-            보고서 작성 {reports.length}
-          </a>
-          <a
-            href="#completed"
-            className="rounded-lg border border-ink-200 bg-white px-3 py-1.5 text-ink-700 hover:border-accent"
-          >
-            완료 {completed.length}
+            보고서 저장 {reportPending.length + reportComplete.length}
           </a>
         </div>
       </section>
 
       <section id="drafts" className="space-y-4 scroll-mt-24">
         <div>
-          <h3 className="font-display text-xl text-ink-900">1. 임시 저장</h3>
+          <h3 className="font-display text-xl text-ink-900">
+            1. 임시 저장 목록
+          </h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크를 이어서 진행할 수 있는 항목입니다.
+            팩트체크가 끝나지 않은 항목입니다. 카드에서 <strong>수정</strong>·
+            <strong>삭제</strong>할 수 있습니다.
           </p>
         </div>
         <VideoGrid
           videos={drafts}
+          listKind="draft"
           emptyTitle="임시 저장된 항목이 없습니다"
-          emptyHint="유튜브 링크를 추가하거나, 완료 항목을 «수정 필요»로 되돌리면 여기로 옵니다."
+          emptyHint="링크 붙여넣기 → 조회·검증 후, 팩트체크 전까지 여기에 남습니다."
         />
       </section>
 
-      <section id="reports" className="space-y-4 scroll-mt-24">
+      <section id="reports" className="space-y-6 scroll-mt-24">
         <div>
-          <h3 className="font-display text-xl text-ink-900">2. 보고서 작성</h3>
+          <h3 className="font-display text-xl text-ink-900">
+            2. 보고서 저장 목록
+          </h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크가 끝난 항목입니다. 열어 «보고서 작성 → PDF·인포그래픽
-            생성»을 누르세요.
+            팩트체크가 완료된 항목입니다. <strong>수정</strong>·
+            <strong>삭제</strong>·<strong>검색</strong>(상단)·
+            <strong>공유</strong>·<strong>PDF 저장</strong>을 사용할 수
+            있습니다. 수정 시 항목별 <strong>이미지</strong>도 넣을 수
+            있습니다.
           </p>
         </div>
-        <VideoGrid
-          videos={reports}
-          emptyTitle="보고서 작성 대기 항목이 없습니다"
-          emptyHint="팩트체크 항목을 모두 저장하면 자동으로 이 목록으로 옵니다."
-        />
-      </section>
 
-      <section id="completed" className="space-y-4 scroll-mt-24">
-        <div>
-          <h3 className="font-display text-xl text-ink-900">3. 완료</h3>
-          <p className="text-sm text-ink-500 mt-1">
-            보고서·인포그래픽까지 생성된 항목입니다.
-          </p>
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-ink-800">
+            작성 대기 ({reportPending.length})
+          </h4>
+          <VideoGrid
+            videos={reportPending}
+            listKind="report-pending"
+            emptyTitle="보고서 작성 대기 항목이 없습니다"
+            emptyHint="팩트체크를 모두 마치면 여기로 옮겨집니다."
+          />
         </div>
-        <VideoGrid
-          videos={completed}
-          emptyTitle="완료된 항목이 없습니다"
-          emptyHint="보고서 작성 단계에서 PDF·인포그래픽을 만들면 여기로 옵니다."
-        />
+
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-ink-800">
+            저장 완료 · PDF·공유 ({reportComplete.length})
+          </h4>
+          <VideoGrid
+            videos={reportComplete}
+            listKind="report-complete"
+            emptyTitle="저장 완료된 보고서가 없습니다"
+            emptyHint="«보고서 저장 → PDF·인포그래픽»을 누르면 저장 완료로 옵니다."
+          />
+        </div>
       </section>
     </div>
   );

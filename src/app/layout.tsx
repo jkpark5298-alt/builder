@@ -48,13 +48,7 @@ export default function RootLayout({
                   href="/#reports"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
-                  보고서 작성
-                </a>
-                <a
-                  href="/#completed"
-                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
-                >
-                  완료
+                  보고서 저장
                 </a>
                 <a
                   href="/#paste"

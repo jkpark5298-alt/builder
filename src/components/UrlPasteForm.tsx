@@ -160,15 +160,41 @@ export function UrlPasteForm() {
           </h1>
           <ol className="text-ink-600 text-[15px] leading-relaxed space-y-1 list-decimal pl-5">
             <li>
-              <strong>유튜브 링크</strong> 붙여넣기 → <strong>조회 · 검증</strong>
+              <strong>유튜브 링크</strong> → 위 「주소」칸에 붙여넣기 →{" "}
+              <strong>조회 · 검증</strong>
             </li>
-            <li>가능하면 <strong>자막 자동 수집</strong></li>
-            <li>안 되면 <strong>스크립트 수동 붙여넣기</strong> → 다시 검증</li>
+            <li>서버가 <strong>자막 자동 수집</strong> 시도</li>
             <li>
-              다음: <strong>팩트체크 정리</strong> → <strong>보고서</strong> →{" "}
-              <strong>완료</strong>
+              실패 시 → <strong>스크립트(자막) 또는 AI 요약</strong>을 아래
+              「스크립트」칸에 붙여넣기 → 다시 <strong>조회 · 검증</strong>
+            </li>
+            <li>
+              다음: <strong>팩트체크</strong> → 미완료는 <strong>임시 저장</strong>{" "}
+              / 완료는 <strong>보고서 저장</strong>
             </li>
           </ol>
+
+          <div className="mt-3 rounded-xl border border-ink-200 bg-white/90 overflow-hidden text-sm">
+            <div className="grid grid-cols-[1fr_1.2fr] bg-ink-50 border-b border-ink-200 font-medium text-ink-800">
+              <div className="px-3 py-2">어디에 붙여넣나</div>
+              <div className="px-3 py-2">무엇을 붙여넣나</div>
+            </div>
+            <div className="grid grid-cols-[1fr_1.2fr] border-b border-ink-100">
+              <div className="px-3 py-2.5 text-accent font-medium">① 유튜브 주소</div>
+              <div className="px-3 py-2.5 text-ink-700">
+                유튜브 <strong>공유 → 링크 복사</strong>만 (아이폰·PC 동일)
+              </div>
+            </div>
+            <div className="grid grid-cols-[1fr_1.2fr]">
+              <div className="px-3 py-2.5 text-accent font-medium">
+                ② 스크립트(자막)
+              </div>
+              <div className="px-3 py-2.5 text-ink-700">
+                유튜브 <strong>자막/스크립트</strong> 또는 제미나이·ChatGPT{" "}
+                <strong>요약·분석 글</strong> (80자 이상)
+              </div>
+            </div>
+          </div>
         </div>
 
         <label className="block text-sm text-ink-600">
@@ -245,7 +271,11 @@ export function UrlPasteForm() {
           </p>
           <ScriptCopyHelper youtubeUrl={url || undefined} />
           <label className="block text-sm text-ink-600">
-            스크립트(자막)
+            ② 스크립트(자막) · AI 요약 붙여넣기
+            <span className="block text-xs text-ink-500 font-normal mt-0.5">
+              자막 자동 수집 실패 시, 또는 AI로 요약한 글을 여기에 넣고 다시
+              조회·검증하세요.
+            </span>
             <textarea
               value={pastedScript}
               onChange={(e) => setPastedScript(e.target.value)}
@@ -294,11 +324,10 @@ export function UrlPasteForm() {
         </label>
 
         <div className="rounded-xl border border-ink-100 bg-white/70 px-4 py-3 text-xs sm:text-sm text-ink-600 leading-relaxed">
-          <p className="font-medium text-ink-800 mb-1">검증 후 다음 단계</p>
+          <p className="font-medium text-ink-800 mb-1">검증 후 다음 (5~7단계)</p>
           <p>
-            ① <strong>임시 저장</strong>에서 팩트체크 항목 정리 → ②{" "}
-            <strong>보고서 작성</strong>(PDF·인포) → ③ <strong>완료</strong>{" "}
-            목록. 수정이 필요하면 완료에서 다시 임시 저장으로 옮길 수 있습니다.
+            ⑤ 팩트체크 미완료 → <strong>임시 저장 목록</strong> (수정·삭제) /
+            팩트체크 완료 → <strong>보고서 저장 목록</strong> (수정·삭제·검색·공유·PDF)
           </p>
         </div>
       </div>

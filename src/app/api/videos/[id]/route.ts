@@ -47,6 +47,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     reopenAsDraft?: boolean;
     completeManual?: boolean;
     rebuild?: boolean;
+    itemImage?: { itemId: string; imageUrl: string | null };
   };
 
   let next = { ...video };
@@ -70,6 +71,25 @@ export async function PATCH(req: Request, ctx: Ctx) {
       reportType: body.reportType,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  if (body.itemImage?.itemId) {
+    next = {
+      ...next,
+      items: next.items.map((item) =>
+        item.id === body.itemImage!.itemId
+          ? {
+              ...item,
+              imageUrl: body.itemImage!.imageUrl || undefined,
+            }
+          : item
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+    if (next.status === "ready") {
+      next.report = buildTypedReport(next);
+      next.infographic = buildInfographic(next);
+    }
   }
 
   if (body.factCheck) {

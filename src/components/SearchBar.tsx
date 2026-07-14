@@ -4,7 +4,13 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Search } from "lucide-react";
 
-export function SearchBar({ initialQuery = "" }: { initialQuery?: string }) {
+export function SearchBar({
+  initialQuery = "",
+  placeholder = "제목, 채널, 주장, 팩트체크 결과 검색…",
+}: {
+  initialQuery?: string;
+  placeholder?: string;
+}) {
   const router = useRouter();
   const [q, setQ] = useState(initialQuery);
 
@@ -22,7 +28,7 @@ export function SearchBar({ initialQuery = "" }: { initialQuery?: string }) {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="제목, 채널, 주장, 팩트체크 결과 검색…"
+          placeholder={placeholder}
           className="w-full rounded-xl border border-ink-200 bg-white/90 pl-10 pr-4 py-2.5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
       </div>

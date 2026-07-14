@@ -139,8 +139,8 @@ export function ActionBar({ video }: { video: VideoRecord }) {
     <div className="space-y-2">
       {!ready && (
         <p className="text-sm text-accent bg-accent-muted/50 rounded-xl px-3 py-2">
-          ① 팩트체크 중에는 «임시 저장»에 남습니다. ② 팩트체크가 끝나면
-          «보고서 작성»으로 이동합니다. ③ 보고서를 만들면 «완료»가 됩니다.
+          ① 팩트체크 중 → <strong>임시 저장</strong> 목록. ② 팩트체크 완료 →{" "}
+          <strong>보고서 저장</strong> 목록. ③ PDF 생성 후 공유·저장 가능.
         </p>
       )}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">

@@ -128,7 +128,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             onClick={saveDraftAndLeave}
             className="w-full sm:w-auto min-h-12 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 py-3 font-medium hover:bg-accent-muted"
           >
-            보고서 작성 목록으로
+            보고서 저장 목록으로
           </button>
           <button
             type="button"
@@ -136,7 +136,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             disabled={completing}
             className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60"
           >
-            {completing ? "생성 중…" : "보고서 작성 → PDF·인포그래픽"}
+            {completing ? "생성 중…" : "보고서 저장 → PDF·인포그래픽"}
           </button>
         </div>
       </div>
@@ -211,6 +211,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       {current && (
         <StepEditor
           key={current.id}
+          videoId={video.id}
           item={current}
           index={step}
           total={required.length}
@@ -261,7 +262,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           >
             <Save className="h-4 w-4" />
             {progress.complete
-              ? "보고서 작성 목록으로"
+              ? "보고서 저장 목록으로"
               : "임시 저장하고 목록으로"}
           </button>
           <button
@@ -274,14 +275,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             {completing
               ? "보고서 생성 중…"
               : progress.complete
-                ? "보고서 작성 → PDF·인포그래픽"
+                ? "보고서 저장 → PDF·인포그래픽"
                 : `미완료 ${progress.total - progress.doneCount}건`}
           </button>
         </div>
         <p className="text-xs text-ink-500 text-center sm:text-left">
           {progress.complete
-            ? "팩트체크가 끝났습니다. 보고서를 만들면 «완료» 목록으로 이동합니다."
-            : "항목을 저장하면 «임시 저장»에 남습니다. 전부 마치면 «보고서 작성»으로 이동합니다."}
+            ? "팩트체크가 끝났습니다. 보고서를 만들면 «보고서 저장» 완료로 이동합니다."
+            : "항목을 저장하면 «임시 저장»에 남습니다. 전부 마치면 «보고서 저장»으로 이동합니다."}
         </p>
       </div>
     </section>
@@ -289,6 +290,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
 }
 
 function StepEditor({
+  videoId,
   item,
   index,
   total,
@@ -297,6 +299,7 @@ function StepEditor({
   saving,
   onSave,
 }: {
+  videoId: string;
   item: SummaryItem;
   index: number;
   total: number;
@@ -305,6 +308,7 @@ function StepEditor({
   saving: boolean;
   onSave: (answer: string, verdict: FactCheckVerdict) => Promise<void>;
 }) {
+  const router = useRouter();
   const prompt = promptOf(item, fc);
   const existingAnswer =
     fc?.explanation && !/^다음 주장을/.test(fc.explanation)
@@ -315,6 +319,56 @@ function StepEditor({
     fc?.verdict && fc.verdict !== "pending" ? fc.verdict : "unverifiable"
   );
   const [copied, setCopied] = useState(false);
+  const [imageUrl, setImageUrl] = useState(item.imageUrl || "");
+  const [imageBusy, setImageBusy] = useState(false);
+
+  async function onPickImage(file: File | null) {
+    if (!file) return;
+    if (file.size > 900_000) {
+      alert("이미지는 900KB 이하로 선택해 주세요.");
+      return;
+    }
+    setImageBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("read failed"));
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itemImage: { itemId: item.id, imageUrl: dataUrl },
+        }),
+      });
+      if (!res.ok) throw new Error("이미지 저장 실패");
+      setImageUrl(dataUrl);
+      router.refresh();
+    } catch {
+      alert("이미지 저장에 실패했습니다. 다시 시도해 주세요.");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function removeImage() {
+    setImageBusy(true);
+    try {
+      await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itemImage: { itemId: item.id, imageUrl: null },
+        }),
+      });
+      setImageUrl("");
+      router.refresh();
+    } finally {
+      setImageBusy(false);
+    }
+  }
 
   async function copyPrompt() {
     try {
@@ -335,10 +389,37 @@ function StepEditor({
       <div className="overflow-hidden rounded-xl border border-ink-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={item.imageUrl || imageFallback}
+          src={imageUrl || imageFallback}
           alt=""
           className="w-full aspect-video object-cover bg-ink-900"
         />
+        <div className="p-3 bg-ink-50 border-t border-ink-100 flex flex-wrap gap-2 items-center">
+          <label className="inline-flex items-center gap-2 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium cursor-pointer hover:border-accent">
+            <input
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              disabled={imageBusy}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                void onPickImage(f ?? null);
+                e.target.value = "";
+              }}
+            />
+            {imageBusy ? "저장 중…" : "이미지 첨부 (수정)"}
+          </label>
+          {imageUrl && (
+            <button
+              type="button"
+              disabled={imageBusy}
+              onClick={() => void removeImage()}
+              className="min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs text-ink-600 hover:border-verify-false"
+            >
+              이미지 제거
+            </button>
+          )}
+          <span className="text-xs text-ink-500">아이폰·PC 모두 사진 앨범 선택 가능</span>
+        </div>
         <div className="p-3 sm:p-4 bg-ink-50/80 space-y-3">
           <div>
             <p className="text-xs text-accent font-medium mb-1">팩트체크 대상</p>
