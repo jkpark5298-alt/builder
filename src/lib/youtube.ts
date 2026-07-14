@@ -79,6 +79,20 @@ export async function fetchOEmbed(url: string): Promise<{
   }
 }
 
+/** oEmbed만 사용 — 붙여넣은 스크립트 처리 시 빠른 경로 */
+export async function fetchYoutubeMetaLite(
+  youtubeUrl: string,
+  videoId: string
+): Promise<YoutubeMeta> {
+  const oembed = await fetchOEmbed(youtubeUrl);
+  return {
+    title: oembed?.title ?? `YouTube ${videoId}`,
+    channel: oembed?.channel ?? "알 수 없음",
+    description: "",
+    chapters: [],
+  };
+}
+
 /** Fetch title/channel/description/chapters from watch page + oEmbed. */
 export async function fetchYoutubeMeta(
   youtubeUrl: string,

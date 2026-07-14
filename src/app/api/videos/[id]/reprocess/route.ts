@@ -1,6 +1,10 @@
-import { NextResponse } from "next/server";
-import { reprocessFromId } from "@/lib/process";
-import { getVideo } from "@/lib/store";
+import { after, NextResponse } from "next/server";
+import {
+  createVideoJob,
+  runVideoPipeline,
+} from "@/lib/process";
+import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
+import { deleteVideo, getVideo } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +23,30 @@ export async function POST(req: Request, ctx: Ctx) {
     const body = (await req.json().catch(() => ({}))) as {
       pastedScript?: string;
     };
-    const video = await reprocessFromId(id, body.pastedScript);
-    return NextResponse.json({ video });
+
+    const pastedScript = hasUsablePastedScript(body.pastedScript)
+      ? normalizePastedText(body.pastedScript!)
+      : existing.transcript &&
+          hasUsablePastedScript(existing.transcript) &&
+          existing.transcriptSource !== "creator_meta"
+        ? existing.transcript
+        : undefined;
+
+    const creatorNotes = existing.description?.trim() || undefined;
+    const youtubeUrl = existing.youtubeUrl;
+
+    await deleteVideo(id);
+    const video = await createVideoJob(youtubeUrl);
+
+    after(async () => {
+      try {
+        await runVideoPipeline(video.id, creatorNotes, pastedScript);
+      } catch {
+        /* saved in pipeline */
+      }
+    });
+
+    return NextResponse.json({ video, processing: true });
   } catch (e) {
     const message = e instanceof Error ? e.message : "재분석 실패";
     return NextResponse.json({ error: message }, { status: 400 });

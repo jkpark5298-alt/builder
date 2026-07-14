@@ -8,22 +8,22 @@ import type { ReportType, VideoRecord } from "./types";
 import {
   extractVideoId,
   fetchYoutubeMeta,
+  fetchYoutubeMetaLite,
   parseChaptersFromDescription,
   thumbnailUrl,
 } from "./youtube";
 
-export async function createAndProcessVideo(
-  youtubeUrl: string,
-  creatorNotes?: string,
-  pastedScript?: string
-): Promise<VideoRecord> {
+import { hasUsablePastedScript, normalizePastedText } from "./paste";
+
+export { hasUsablePastedScript, normalizePastedText } from "./paste";
+export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
     throw new Error("유효한 유튜브 URL이 아닙니다.");
   }
 
   const now = new Date().toISOString();
-  let record: VideoRecord = {
+  const record: VideoRecord = {
     id: uuid(),
     youtubeUrl: normalizeUrl(videoId, youtubeUrl),
     videoId,
@@ -48,6 +48,23 @@ export async function createAndProcessVideo(
     updatedAt: now,
   };
   await upsertVideo(record);
+  return record;
+}
+
+/** 백그라운드 파이프라인 (요약·팩트체크) */
+export async function runVideoPipeline(
+  recordId: string,
+  creatorNotes?: string,
+  pastedScript?: string
+): Promise<VideoRecord> {
+  let record = await getVideo(recordId);
+  if (!record) {
+    throw new Error("영상을 찾을 수 없습니다.");
+  }
+
+  const script = hasUsablePastedScript(pastedScript)
+    ? normalizePastedText(pastedScript!)
+    : undefined;
 
   try {
     record = {
@@ -57,7 +74,9 @@ export async function createAndProcessVideo(
     };
     await upsertVideo(record);
 
-    let meta = await fetchYoutubeMeta(record.youtubeUrl, videoId);
+    let meta = script
+      ? await fetchYoutubeMetaLite(record.youtubeUrl, record.videoId)
+      : await fetchYoutubeMeta(record.youtubeUrl, record.videoId);
 
     if (creatorNotes && creatorNotes.length > 20) {
       const noteChapters = parseChaptersFromDescription(creatorNotes);
@@ -75,13 +94,12 @@ export async function createAndProcessVideo(
     let source: VideoRecord["transcriptSource"] = "none";
     let notice: string | undefined;
 
-    // 사용자가 붙여넣은 스크립트 최우선
-    if (pastedScript && pastedScript.trim().length > 80) {
-      text = pastedScript.trim();
+    if (script) {
+      text = script;
       source = "pasted";
       notice = "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다.";
     } else {
-      const fetched = await fetchTranscript(videoId, meta);
+      const fetched = await fetchTranscript(record.videoId, meta);
       text = fetched.text;
       source = fetched.source;
       notice = fetched.notice;
@@ -108,7 +126,6 @@ export async function createAndProcessVideo(
     };
     await upsertVideo(record);
 
-    // 1) 요약
     record = {
       ...record,
       status: "summarizing",
@@ -117,7 +134,7 @@ export async function createAndProcessVideo(
     await upsertVideo(record);
 
     const summary = await summarizeContent(
-      { ...meta, transcriptSource: source, videoId },
+      { ...meta, transcriptSource: source, videoId: record.videoId },
       text
     );
     record = {
@@ -131,7 +148,6 @@ export async function createAndProcessVideo(
     };
     await upsertVideo(record);
 
-    // 2) 자동 팩트체크 → 수동 수정 대기
     record = {
       ...record,
       status: "fact_checking",
@@ -142,7 +158,7 @@ export async function createAndProcessVideo(
     const factChecks = await autoFactCheck(summary.items, {
       ...meta,
       transcriptSource: source,
-      videoId,
+      videoId: record.videoId,
     });
     record = {
       ...record,
@@ -175,6 +191,15 @@ export async function createAndProcessVideo(
   }
 }
 
+export async function createAndProcessVideo(
+  youtubeUrl: string,
+  creatorNotes?: string,
+  pastedScript?: string
+): Promise<VideoRecord> {
+  const job = await createVideoJob(youtubeUrl);
+  return runVideoPipeline(job.id, creatorNotes, pastedScript);
+}
+
 /** 3) 요약+팩트체크 → 유형별 보고서 + 인포그래픽 */
 export async function finalizeReport(
   video: VideoRecord,
@@ -205,22 +230,19 @@ export async function reprocessFromId(
   const existing = await getVideo(id);
   if (!existing) throw new Error("영상을 찾을 수 없습니다.");
 
-  const pastedScript =
-    pastedScriptOverride?.trim() && pastedScriptOverride.trim().length > 80
-      ? pastedScriptOverride.trim()
-      : existing.transcript &&
-          existing.transcript.length > 80 &&
-          existing.transcriptSource !== "none" &&
-          existing.transcriptSource !== "creator_meta"
-        ? existing.transcript
-        : undefined;
+  const pastedScript = hasUsablePastedScript(pastedScriptOverride)
+    ? normalizePastedText(pastedScriptOverride!)
+    : existing.transcript &&
+        hasUsablePastedScript(existing.transcript) &&
+        existing.transcriptSource !== "creator_meta"
+      ? existing.transcript
+      : undefined;
 
+  const youtubeUrl = existing.youtubeUrl;
+  const creatorNotes = existing.description?.trim() || undefined;
   await deleteVideo(id);
-  return createAndProcessVideo(
-    existing.youtubeUrl,
-    existing.description?.trim() || undefined,
-    pastedScript
-  );
+  const job = await createVideoJob(youtubeUrl);
+  return runVideoPipeline(job.id, creatorNotes, pastedScript);
 }
 
 function normalizeUrl(videoId: string, original: string) {

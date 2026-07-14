@@ -1,6 +1,11 @@
-import { NextResponse } from "next/server";
-import { createAndProcessVideo } from "@/lib/process";
+import { after, NextResponse } from "next/server";
+import {
+  createVideoJob,
+  runVideoPipeline,
+} from "@/lib/process";
+import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { readAllVideos, searchVideos } from "@/lib/store";
+import { extractVideoId } from "@/lib/youtube";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,20 +25,41 @@ export async function POST(req: Request) {
       creatorNotes?: string;
       pastedScript?: string;
     };
-    if (!body.youtubeUrl?.trim()) {
+    const youtubeUrl = body.youtubeUrl?.trim();
+    if (!youtubeUrl) {
       return NextResponse.json(
         { error: "youtubeUrl이 필요합니다." },
         { status: 400 }
       );
     }
-    const video = await createAndProcessVideo(
-      body.youtubeUrl.trim(),
-      body.creatorNotes?.trim() || undefined,
-      body.pastedScript?.trim() || undefined
-    );
+    if (!extractVideoId(youtubeUrl)) {
+      return NextResponse.json(
+        { error: "유효한 유튜브 URL이 아닙니다." },
+        { status: 400 }
+      );
+    }
+
+    const creatorNotes = body.creatorNotes?.trim() || undefined;
+    const pastedScript = hasUsablePastedScript(body.pastedScript)
+      ? normalizePastedText(body.pastedScript!)
+      : undefined;
+
+    const video = await createVideoJob(youtubeUrl);
+
+    after(async () => {
+      try {
+        await runVideoPipeline(video.id, creatorNotes, pastedScript);
+      } catch {
+        /* runVideoPipeline saves error status */
+      }
+    });
+
     return NextResponse.json({
       video,
-      scriptNotice: video.scriptNotice,
+      processing: true,
+      scriptNotice: pastedScript
+        ? "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다."
+        : undefined,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "처리 실패";

@@ -34,8 +34,7 @@ export function PasteScriptPanel({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "재요약 실패");
-      router.push(`/videos/${data.video.id}`);
-      router.refresh();
+      window.location.assign(`/videos/${data.video.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "재요약 실패");
     } finally {

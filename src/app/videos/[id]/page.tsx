@@ -5,6 +5,7 @@ import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
+import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { factCheckProgress } from "@/lib/factcheck";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
@@ -28,6 +29,11 @@ export default async function VideoDetailPage({
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-24 sm:pb-8">
+      <VideoProcessingPoller
+        videoId={video.id}
+        status={video.status}
+        errorMessage={video.errorMessage}
+      />
       <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs sm:text-sm">
         {[
           { n: "1", t: "유튜브 내용 요약", on: true },
