@@ -8,27 +8,56 @@ import type { ReportType, VideoRecord } from "./types";
  * 공유 저장소(Blob)가 필수 — /tmp는 인스턴스마다 달라 404 원인이 됨.
  */
 function resolveDataDir(): string {
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  if (onVercel()) {
     return path.join("/tmp", "youtube-factcheck", "data");
   }
   return path.join(process.cwd(), "data");
+}
+
+/**
+ * Next.js는 `process.env.FOO`를 빌드 타임에 치환할 수 있음.
+ * 동적 키로 읽어 런타임 Vercel 환경 변수를 반드시 사용.
+ */
+function readEnv(name: string): string | undefined {
+  const env = process.env as Record<string, string | undefined>;
+  const v = env[name];
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length ? t : undefined;
+}
+
+function onVercel(): boolean {
+  return Boolean(readEnv("VERCEL") || readEnv("AWS_LAMBDA_FUNCTION_NAME"));
 }
 
 const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, "videos.json");
 const BLOB_PREFIX = "videos/";
 
-function onVercel(): boolean {
-  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+function blobToken(): string | undefined {
+  return readEnv("BLOB_READ_WRITE_TOKEN");
 }
 
-/** 배포에서는 항상 Blob 시도 (토큰은 SDK가 process.env에서 읽음) */
+function blobStoreId(): string | undefined {
+  return readEnv("BLOB_STORE_ID");
+}
+
+/** 배포에서는 항상 Blob 시도 */
 function useBlob(): boolean {
   if (onVercel()) return true;
-  return Boolean(
-    process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
-      process.env.BLOB_STORE_ID?.trim()
-  );
+  return Boolean(blobToken() || blobStoreId());
+}
+
+function blobCommandOpts(): {
+  token?: string;
+  storeId?: string;
+} {
+  const token = blobToken();
+  const storeId = blobStoreId();
+  return {
+    ...(token ? { token } : {}),
+    ...(storeId ? { storeId } : {}),
+  };
 }
 
 function ensureLocalDb() {
@@ -92,19 +121,17 @@ async function streamToJson<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
 }
 
 function blobAuthHint(): string {
-  const hasToken = Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
-  const hasStore = Boolean(process.env.BLOB_STORE_ID?.trim());
-  return `진단: BLOB_READ_WRITE_TOKEN=${hasToken ? "있음" : "없음"}, BLOB_STORE_ID=${hasStore ? "있음" : "없음"}. Vercel → Storage → Blob 연결 후 재배포하세요.`;
+  return `진단: BLOB_READ_WRITE_TOKEN=${blobToken() ? "있음" : "없음"}, BLOB_STORE_ID=${blobStoreId() ? "있음" : "없음"}. Vercel 프로젝트 Settings → Environment Variables에 BLOB_READ_WRITE_TOKEN이 Production에 있는지 확인 후 Redeploy 하세요.`;
 }
 
-/** public 스토어가 더 흔함 → public 먼저 */
 async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
+  const auth = blobCommandOpts();
   for (const access of ["public", "private"] as const) {
     try {
-      // token을 넘기지 않음 → SDK가 BLOB_READ_WRITE_TOKEN / OIDC 자동 사용
       const result = await get(blobPath(id), {
         access,
         useCache: false,
+        ...auth,
       });
       if (!result?.stream) continue;
       const raw = await streamToJson<VideoRecord>(result.stream);
@@ -117,11 +144,19 @@ async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
 }
 
 async function writeBlobVideo(video: VideoRecord): Promise<void> {
+  const auth = blobCommandOpts();
+  if (!auth.token && !auth.storeId && !readEnv("VERCEL_OIDC_TOKEN")) {
+    throw new Error(
+      `Vercel Blob 자격 증명이 없습니다. ${blobAuthHint()}`
+    );
+  }
+
   const body = JSON.stringify(video);
   const base = {
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json" as const,
+    ...auth,
   };
 
   let lastError: unknown;
@@ -144,7 +179,7 @@ async function writeBlobVideo(video: VideoRecord): Promise<void> {
 
 async function deleteBlobVideo(id: string): Promise<boolean> {
   try {
-    await del(blobPath(id));
+    await del(blobPath(id), blobCommandOpts());
     return true;
   } catch {
     return false;
@@ -160,6 +195,7 @@ async function listBlobVideos(): Promise<VideoRecord[]> {
         prefix: BLOB_PREFIX,
         cursor,
         limit: 100,
+        ...blobCommandOpts(),
       });
       for (const blob of page.blobs) {
         if (!blob.pathname.endsWith(".json")) continue;
@@ -190,9 +226,9 @@ export function storageDiagnostics() {
   return {
     mode: storageMode(),
     onVercel: onVercel(),
-    hasBlobToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim()),
-    hasBlobStoreId: Boolean(process.env.BLOB_STORE_ID?.trim()),
-    hasOidc: Boolean(process.env.VERCEL_OIDC_TOKEN?.trim()),
+    hasBlobToken: Boolean(blobToken()),
+    hasBlobStoreId: Boolean(blobStoreId()),
+    hasOidc: Boolean(readEnv("VERCEL_OIDC_TOKEN")),
   };
 }
 
