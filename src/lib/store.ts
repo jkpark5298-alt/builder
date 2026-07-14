@@ -3,20 +3,39 @@ import path from "path";
 import { del, get, list, put } from "@vercel/blob";
 import type { ReportType, VideoRecord } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+/**
+ * Vercel `/var/task` 는 읽기 전용 → mkdir ENOENT/EROFS 발생.
+ * 서버리스에서는 `/tmp` 만 쓰기 가능.
+ */
+function resolveDataDir(): string {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join("/tmp", "youtube-factcheck", "data");
+  }
+  return path.join(process.cwd(), "data");
+}
+
+const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, "videos.json");
 const BLOB_PREFIX = "videos/";
 
 function useBlob(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
+  // 토큰 없으면 Blob API 호출 불가 (BLOB_STORE_ID만으로는 부족)
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
 function ensureLocalDb() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify({ videos: [] }, null, 2), "utf-8");
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(DB_FILE)) {
+      fs.writeFileSync(DB_FILE, JSON.stringify({ videos: [] }, null, 2), "utf-8");
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `저장소를 열 수 없습니다 (${DATA_DIR}). Vercel에서는 BLOB_READ_WRITE_TOKEN을 설정하거나 /tmp를 사용해야 합니다. ${msg}`
+    );
   }
 }
 

@@ -196,6 +196,10 @@ export function UrlPasteForm() {
             YouTube FactCheck
           </h1>
           <div className="mt-3 rounded-xl border border-ink-200 bg-white/90 overflow-hidden text-sm">
+            <div className="px-3 py-2 bg-ink-50 border-b border-ink-200 text-ink-700 text-xs sm:text-sm">
+              배포(아이폰)에서는 <strong>자동 자막 버튼이 없습니다</strong>.
+              주소 + 스크립트(또는 AI 요약)를 넣고 하단 버튼으로 진행하세요.
+            </div>
             <div className="grid grid-cols-[1fr_1.2fr] bg-ink-50 border-b border-ink-200 font-medium text-ink-800">
               <div className="px-3 py-2">어디에 붙여넣나</div>
               <div className="px-3 py-2">무엇을 붙여넣나</div>
