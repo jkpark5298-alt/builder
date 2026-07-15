@@ -155,18 +155,41 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     setFace("bold");
     writeWrapped(sec.heading, 12, 4);
     setFace("normal");
-    writeWrapped(sec.body, 10, 10);
+    if (sec.body) writeWrapped(sec.body, 10, 6);
+
+    sec.entries?.forEach((entry) => {
+      const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
+      setFace("bold");
+      writeWrapped(`· ${entry.text}`, 10, 2);
+      if (fc?.verdict === "false" || fc?.verdict === "mostly_false") {
+        setFace("bold");
+        writeWrapped("  FACT CHECK ✗", 10, 2);
+      } else if (fc?.checkGuide) {
+        setFace("normal");
+        writeWrapped(`  FACT CHECK: ${fc.checkGuide}`, 9, 6);
+      }
+    });
+    y += 4;
   });
 
-  setFace("bold");
-  writeWrapped("3. 팩트체크 정리", 13, 6);
-  setFace("normal");
-  report.factChecks.forEach((fc, idx) => {
+  const orphanFc = report.factChecks.filter(
+    (fc) =>
+      fc.checkGuide &&
+      !report.sections.some((s) =>
+        s.entries?.some((e) => e.itemId === fc.itemId)
+      )
+  );
+  if (orphanFc.length) {
     setFace("bold");
-    writeWrapped(`${idx + 1}. ${fc.statement}`, 10, 2);
+    writeWrapped("3. 팩트체크 정리", 13, 6);
     setFace("normal");
-    writeWrapped(fc.checkGuide, 9, 8);
-  });
+    orphanFc.forEach((fc, idx) => {
+      setFace("bold");
+      writeWrapped(`${idx + 1}. ${fc.statement}`, 10, 2);
+      setFace("normal");
+      writeWrapped(fc.checkGuide, 9, 8);
+    });
+  }
 
   if (!hasKr) {
     ensureSpace(40);

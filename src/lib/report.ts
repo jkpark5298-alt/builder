@@ -6,80 +6,13 @@ import type {
   VideoRecord,
 } from "./types";
 import { REPORT_TYPE_LABELS, REPORT_TYPE_STRUCTURE } from "./types";
+import {
+  buildFactCheckPrompt,
+  dedupeTexts,
+  normalizeAiAnswer,
+} from "./text-format";
 
-export function detectReportType(input: {
-  title: string;
-  description: string;
-  overview: string;
-  chapters?: Array<{ title: string }>;
-}): ReportType {
-  const text = [
-    input.title,
-    input.description,
-    input.overview,
-    ...(input.chapters?.map((c) => c.title) ?? []),
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  const score = (words: string[]) =>
-    words.reduce((n, w) => (text.includes(w.toLowerCase()) ? n + 1 : n), 0);
-
-  const h = score([
-    "역사",
-    "몽골",
-    "전쟁",
-    "왕조",
-    "제국",
-    "고대",
-    "중세",
-    "사료",
-    "유물",
-    "고고",
-    "칭기즈",
-    "흑사병",
-    "연대기",
-  ]);
-  const s = score([
-    "주식",
-    "증시",
-    "코스피",
-    "나스닥",
-    "실적",
-    "배당",
-    "투자",
-    "주가",
-    "금리",
-    "환율",
-    "재무",
-    "시총",
-    "펀드",
-  ]);
-  const p = score([
-    "정치",
-    "선거",
-    "국회",
-    "대통령",
-    "외교",
-    "시사",
-    "법안",
-    "여야",
-    "정책",
-    "정부",
-    "탄핵",
-    "정당",
-  ]);
-
-  const ranked: Array<[ReportType, number]> = [
-    ["H", h],
-    ["S", s],
-    ["P", p],
-  ];
-  ranked.sort((a, b) => b[1] - a[1]);
-  if (ranked[0][1] >= 2) return ranked[0][0];
-  if (ranked[0][1] >= 1 && ranked[0][1] > ranked[1][1]) return ranked[0][0];
-  return "C";
-}
+export { detectReportType } from "./report-detect";
 
 export function buildTypedReport(
   video: Pick<
@@ -94,22 +27,43 @@ export function buildTypedReport(
     | "reportType"
     | "updatedAt"
     | "createdAt"
+    | "thumbnailUrl"
+    | "videoId"
   >
 ): TypedReport {
   const writtenAt = new Date(video.updatedAt || video.createdAt).toLocaleString(
     "ko-KR"
   );
   const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
-  const bullets = video.summaryBullets?.length
-    ? video.summaryBullets
-    : video.items.slice(0, 6).map((i) => i.statement);
+  const bullets = dedupeTexts(
+    video.summaryBullets?.length
+      ? video.summaryBullets
+      : video.items.slice(0, 6).map((i) => i.statement)
+  );
+
+  const fcItems = video.items.filter((i) => i.needsFactCheck);
+  const inlineFactChecks = fcItems.map((i) => {
+    const fc = fcMap.get(i.id);
+    const raw = fc?.explanation?.trim() ?? "";
+    const isPrompt =
+      !raw ||
+      (/^다음 주장을/.test(raw) && /팩트체크/.test(raw));
+    return {
+      itemId: i.id,
+      statement: i.statement,
+      verdict: fc?.verdict ?? ("pending" as const),
+      checkGuide: isPrompt ? "" : normalizeAiAnswer(raw),
+      answerImageUrl: fc?.answerImageUrl ?? i.imageUrl,
+    };
+  });
 
   const sections = fillTypeSections(
     video.reportType,
     video.overview,
     bullets,
-    video.items,
-    video.factChecks
+    fcItems,
+    fcMap,
+    video.thumbnailUrl
   );
 
   return {
@@ -122,19 +76,30 @@ export function buildTypedReport(
     reportType: video.reportType,
     reportTypeLabel: REPORT_TYPE_LABELS[video.reportType],
     sections,
-    summaryExcerpt: [video.overview, ...bullets.map((b) => `· ${b}`)].join(
+    summaryExcerpt: dedupeTexts([video.overview, ...bullets.map((b) => `· ${b}`)]).join(
       "\n"
     ),
-    factChecks: video.items
-      .filter((i) => i.needsFactCheck)
-      .map((i) => ({
-        statement: i.detail
-          ? `${i.statement}\n(상세) ${i.detail}`
-          : i.statement,
-        checkGuide:
-          fcMap.get(i.id)?.explanation ||
-          "팩트체크할 내용을 정리해 주세요.",
-      })),
+    factChecks: inlineFactChecks.map((f) => ({
+      itemId: f.itemId,
+      statement: f.statement,
+      checkGuide: f.checkGuide,
+      verdict: f.verdict,
+      answerImageUrl: f.answerImageUrl,
+    })),
+  };
+}
+
+function entryForItem(
+  item: SummaryItem,
+  fc: FactCheckResult | undefined
+): { itemId: string; text: string; imageUrl?: string } {
+  const raw = fc?.explanation?.trim() ?? "";
+  const isPrompt =
+    !raw || (/^다음 주장을/.test(raw) && /팩트체크/.test(raw));
+  return {
+    itemId: item.id,
+    text: item.statement,
+    imageUrl: item.imageUrl ?? fc?.answerImageUrl,
   };
 }
 
@@ -142,20 +107,16 @@ function fillTypeSections(
   type: ReportType,
   overview: string,
   bullets: string[],
-  items: SummaryItem[],
-  factChecks: FactCheckResult[]
-): Array<{ heading: string; body: string }> {
+  fcItems: SummaryItem[],
+  fcMap: Map<string, FactCheckResult>,
+  heroImage?: string
+): Array<{ heading: string; body: string; imageUrl?: string; entries?: Array<{ itemId?: string; text: string; imageUrl?: string }> }> {
   const headings = REPORT_TYPE_STRUCTURE[type];
-  const claimTexts = items
-    .filter((i) => i.needsFactCheck)
-    .map((i) => i.statement);
-  const fcNotes = factChecks
-    .map((f) => f.explanation)
-    .filter(Boolean)
-    .slice(0, 4);
+  const uniqueBullets = dedupeTexts(bullets);
+  const claimEntries = fcItems.map((i) => entryForItem(i, fcMap.get(i.id)));
 
   const chunk = (parts: string[]) =>
-    parts.filter(Boolean).join("\n\n") || overview;
+    dedupeTexts(parts.filter(Boolean)).join("\n\n") || overview;
 
   if (type === "H") {
     return [
@@ -163,23 +124,20 @@ function fillTypeSections(
         heading: headings[0],
         body: chunk([
           overview,
-          bullets[0] ? `관련 배경: ${bullets[0]}` : "",
-          bullets[1] ? `원인·맥락: ${bullets[1]}` : "",
+          uniqueBullets[0] ? `관련 배경: ${uniqueBullets[0]}` : "",
         ]),
+        imageUrl: heroImage,
       },
       {
         heading: headings[1],
-        body: chunk([
-          claimTexts.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join("\n") ||
-            bullets.slice(0, 3).map((b, i) => `${i + 1}. ${b}`).join("\n"),
-        ]),
+        body: chunk([]),
+        entries: claimEntries.slice(0, 4),
       },
       {
         heading: headings[2],
         body: chunk([
-          bullets.slice(3).join("\n") ||
-            "영상에서 제시한 결과·영향과 팩트체크 포인트를 함께 고려해야 합니다.",
-          fcNotes[0] ? `검증 관점: ${fcNotes[0]}` : "",
+          uniqueBullets.slice(1, 3).join("\n") ||
+            "영상에서 제시한 결과·영향을 팩트체크와 함께 검토해야 합니다.",
         ]),
       },
     ];
@@ -189,21 +147,19 @@ function fillTypeSections(
     return [
       {
         heading: headings[0],
-        body: chunk([overview, bullets[0] ?? ""]),
+        body: chunk([overview, uniqueBullets[0] ?? ""]),
+        imageUrl: heroImage,
       },
       {
         heading: headings[1],
-        body: chunk([
-          ...bullets.slice(1, 4).map((b) => `· ${b}`),
-          ...claimTexts.slice(0, 2).map((c) => `· ${c}`),
-        ]),
+        body: chunk(uniqueBullets.slice(1, 3).map((b) => `· ${b}`)),
+        entries: claimEntries.slice(0, 3),
       },
       {
         heading: headings[2],
         body: chunk([
-          bullets.slice(-2).join("\n") ||
+          uniqueBullets.slice(-1)[0] ||
             "투자 판단 전 지표·리스크를 교차 확인하세요.",
-          fcNotes.slice(0, 2).join("\n"),
         ]),
       },
     ];
@@ -213,47 +169,54 @@ function fillTypeSections(
     return [
       {
         heading: headings[0],
-        body: chunk([
-          overview,
-          bullets[0] ? `핵심 배경: ${bullets[0]}` : "",
-        ]),
+        body: chunk([overview, uniqueBullets[0] ? `핵심 배경: ${uniqueBullets[0]}` : ""]),
+        imageUrl: heroImage,
       },
       {
         heading: headings[1],
-        body: chunk([
-          claimTexts.map((c, i) => `${i + 1}. ${c}`).join("\n") ||
-            bullets.slice(1, 4).map((b, i) => `${i + 1}. ${b}`).join("\n"),
-          fcNotes[0] ? `\n검증 쟁점: ${fcNotes[0]}` : "",
-        ]),
+        body: chunk([]),
+        entries: claimEntries,
       },
       {
         heading: headings[2],
         body: chunk([
-          bullets.slice(-2).join("\n") ||
-            "향후 전개와 관전 포인트는 추가 보도·공식 발표를 확인하세요.",
-          fcNotes.slice(1, 3).join("\n"),
+          uniqueBullets.slice(-2).join("\n") ||
+            "향후 전개는 추가 보도·공식 발표를 확인하세요.",
         ]),
       },
     ];
   }
 
-  // C — 교양
+  // C — 교양: 핵심 메시지 중복 제거
+  const coreMessage = chunk([
+    overview,
+    ...uniqueBullets.slice(0, 2).map((b) => `· ${b}`),
+  ]);
+
   return [
     {
       heading: headings[0],
-      body: chunk([
-        overview,
-        ...bullets.slice(0, 3).map((b) => `· ${b}`),
-      ]),
+      body: coreMessage,
+      imageUrl: heroImage,
     },
     {
       heading: headings[1],
       body: chunk([
-        ...claimTexts.slice(0, 3).map((c) => `실천·주의: ${c}`),
-        ...fcNotes.slice(0, 2).map((n) => `확인: ${n}`),
-        bullets.slice(3).join("\n") ||
-          "핵심 메시지를 일상·학습에 적용할 때 과장·단정은 걸러 보세요.",
+        uniqueBullets.slice(2).join("\n") ||
+          "핵심 메시지를 일상에 적용할 때 과장·단정은 걸러 보세요.",
       ]),
+      entries: claimEntries.slice(0, 4),
     },
   ];
+}
+
+/** API·파이프라인 공용 */
+export function factCheckGuideForItem(item: SummaryItem): string {
+  const fromEvidence = item.evidence.find(
+    (e) => e.sourceHint === "factcheck-guide"
+  )?.text;
+  if (fromEvidence && !fromEvidence.includes("본문 근거")) {
+    return fromEvidence;
+  }
+  return buildFactCheckPrompt(item.statement, item.detail);
 }

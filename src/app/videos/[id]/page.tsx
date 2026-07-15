@@ -1,6 +1,7 @@
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
+import { EditableReportPanel } from "@/components/EditableReportPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
@@ -226,69 +227,7 @@ export default async function VideoDetailPage({
             </div>
           </section>
 
-          {video.report && (
-            <section className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-5">
-              <h2 className="font-display text-lg sm:text-xl">
-                3. 보고서 ({video.report.reportTypeLabel})
-              </h2>
-              <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1">
-                <p>
-                  <span className="text-ink-500">영상 제목</span> ·{" "}
-                  {video.report.meta.title}
-                </p>
-                <p>
-                  <span className="text-ink-500">채널명</span> ·{" "}
-                  {video.report.meta.channel}
-                </p>
-                <p className="break-all">
-                  <span className="text-ink-500">링크</span> ·{" "}
-                  {video.report.meta.url}
-                </p>
-                <p>
-                  <span className="text-ink-500">작성일자</span> ·{" "}
-                  {video.report.meta.writtenAt}
-                </p>
-              </div>
-
-              {video.report.sections.map((sec) => (
-                <div key={sec.heading}>
-                  <h3 className="font-medium text-accent mb-2">{sec.heading}</h3>
-                  <pre className="whitespace-pre-wrap text-sm text-ink-700 font-sans leading-relaxed">
-                    {sec.body}
-                  </pre>
-                </div>
-              ))}
-
-              <div>
-                <h3 className="font-medium text-accent mb-2">팩트체크 정리</h3>
-                <div className="space-y-3">
-                  {video.report.factChecks.map((fc, i) => (
-                    <div
-                      key={i}
-                      className="rounded-xl border border-ink-100 p-3 text-sm space-y-2"
-                    >
-                      <div>
-                        <p className="text-xs text-accent font-medium">
-                          팩트체크 대상
-                        </p>
-                        <p className="font-medium text-ink-900 whitespace-pre-wrap">
-                          {fc.statement}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-ink-500 font-medium">
-                          AI 답변 · 팩트체크 결과
-                        </p>
-                        <p className="text-ink-600 leading-relaxed whitespace-pre-wrap">
-                          {fc.checkGuide}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-          )}
+          {video.report && <EditableReportPanel video={video} />}
 
           <section className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5">
             <h2 className="font-display text-lg sm:text-xl mb-3">

@@ -49,11 +49,30 @@ export interface FactCheckResult {
   explanation: string;
   sources: string[];
   checkedAt: string;
+  /** AI 답변 참고 이미지 (data URL 또는 URL) */
+  answerImageUrl?: string;
+}
+
+export interface ReportEntry {
+  itemId?: string;
+  text: string;
+  imageUrl?: string;
 }
 
 export interface ReportSectionBlock {
   heading: string;
   body: string;
+  imageUrl?: string;
+  /** 본문 아래 항목(팩트체크 연동) */
+  entries?: ReportEntry[];
+}
+
+export interface TypedReportFactCheckInline {
+  itemId: string;
+  statement: string;
+  verdict: FactCheckVerdict;
+  checkGuide: string;
+  answerImageUrl?: string;
 }
 
 export interface TypedReport {
@@ -69,10 +88,13 @@ export interface TypedReport {
   sections: ReportSectionBlock[];
   /** 요약 발췌 */
   summaryExcerpt: string;
-  /** 팩트체크 정리 */
+  /** @deprecated — entries + inline fact-check 사용 */
   factChecks: Array<{
+    itemId?: string;
     statement: string;
     checkGuide: string;
+    verdict?: FactCheckVerdict;
+    answerImageUrl?: string;
   }>;
 }
 

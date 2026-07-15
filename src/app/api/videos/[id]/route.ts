@@ -4,10 +4,11 @@ import { buildInfographic } from "@/lib/infographic";
 import { finalizeReport } from "@/lib/process";
 import { buildTypedReport } from "@/lib/report";
 import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
-import type { FactCheckResult, ReportType, SummaryItem } from "@/lib/types";
+import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
+import type { FactCheckResult, ReportType, SummaryItem, TypedReport } from "@/lib/types";
 
-function buildFactCheckGuide(statement: string): string {
-  return `다음 주장을 팩트체크해 주세요: 「${statement}」 — 수치·시기·지명·사료 근거와 반론을 출처와 함께 사실·과장·미확인으로 구분해 주세요.`;
+function buildFactCheckGuide(statement: string, detail?: string): string {
+  return buildFactCheckPrompt(statement, detail);
 }
 
 function applyItemEdit(
@@ -25,7 +26,7 @@ function applyItemEdit(
         ? patch.detail.trim() || undefined
         : item.detail;
 
-  const guide = buildFactCheckGuide(statement);
+  const guide = buildFactCheckGuide(statement, detail);
   const hasGuide = item.evidence.some((e) => e.sourceHint === "factcheck-guide");
   const evidence = hasGuide
     ? item.evidence.map((e) =>
@@ -75,6 +76,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       verdict?: FactCheckResult["verdict"];
       explanation: string;
       sources?: string[];
+      answerImageUrl?: string;
     };
     reportType?: ReportType;
     draft?: boolean;
@@ -91,6 +93,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
     /** 팩트체크 대상 삭제 */
     deleteItem?: { itemId: string };
+    /** AI 답변 참고 이미지 */
+    answerImage?: { itemId: string; imageUrl: string | null };
+    /** 보고서 직접 수정 */
+    updateReport?: TypedReport;
   };
 
   let next = { ...video };
@@ -169,7 +175,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
         ) {
           return {
             ...fc,
-            explanation: buildFactCheckGuide(updated.statement),
+            explanation: buildFactCheckGuide(updated.statement, updated.detail),
           };
         }
         return fc;
@@ -202,6 +208,34 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
   }
 
+  if (body.answerImage?.itemId) {
+    next = {
+      ...next,
+      factChecks: next.factChecks.map((fc) =>
+        fc.itemId === body.answerImage!.itemId
+          ? {
+              ...fc,
+              answerImageUrl: body.answerImage!.imageUrl || undefined,
+            }
+          : fc
+      ),
+      updatedAt: new Date().toISOString(),
+    };
+    if (next.status === "ready") {
+      next.report = buildTypedReport(next);
+      next.infographic = await buildInfographic(next);
+    }
+  }
+
+  if (body.updateReport) {
+    next = {
+      ...next,
+      report: body.updateReport,
+      updatedAt: new Date().toISOString(),
+    };
+    next.infographic = await buildInfographic(next);
+  }
+
   if (body.factCheck) {
     if (!body.factCheck.explanation?.trim()) {
       return NextResponse.json(
@@ -214,9 +248,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
       itemId: body.factCheck.itemId,
       mode: "manual",
       verdict: body.factCheck.verdict ?? "unverifiable",
-      explanation: body.factCheck.explanation.trim(),
+      explanation: normalizeAiAnswer(body.factCheck.explanation.trim()),
       sources: body.factCheck.sources ?? [],
       checkedAt: new Date().toISOString(),
+      answerImageUrl:
+        body.factCheck.answerImageUrl ??
+        next.factChecks.find((f) => f.itemId === body.factCheck!.itemId)
+          ?.answerImageUrl,
     };
     const others = next.factChecks.filter((f) => f.itemId !== fc.itemId);
     next = {

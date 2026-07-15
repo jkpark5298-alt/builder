@@ -3,6 +3,7 @@ import type { FactCheckResult, SummaryItem, VideoRecord } from "./types";
 import type { YoutubeMeta } from "./youtube";
 import { detectReportType } from "./report";
 import type { ReportType } from "./types";
+import { buildFactCheckPrompt } from "./text-format";
 
 export type SummaryMeta = YoutubeMeta & {
   transcriptSource:
@@ -366,10 +367,7 @@ function snippetForChapter(title: string, body: string): string | null {
 
 /** AI(제미나이 등)에 붙여넣을 팩트체크 질문 한 문장 */
 function aiPromptFor(statement: string, detail?: string): string {
-  const focus = detail
-    ? detail.replace(/\s+/g, " ").slice(0, 100)
-    : "수치·시기·지명·인명의 1차 근거와 반론";
-  return `다음 주장을 학술 연구·1차 사료·신뢰할 수 있는 기록으로 팩트체크해 주세요: 「${statement.replace(/\s+/g, " ").trim()}」 — ${focus}를 포함해 사실·과장·미확인을 구분하고 출처를 함께 제시해 주세요.`;
+  return buildFactCheckPrompt(statement, detail);
 }
 
 /** 스크립트/본문에서 검증 가능한 문장 추출 */
@@ -390,7 +388,7 @@ function extractClaimsFromText(
 
   return selected.map((s, idx) => {
     const statement = toAssertiveClaim(s);
-    const detail = `본문 근거: 「${s}」. 이 진술의 수치·인과·인용 출처를 교차 확인해야 합니다.`;
+    const detail = "수치·인과·인용 출처를 교차 확인";
     const checkGuide = aiPromptFor(statement, detail);
     return toItem(
       statement,

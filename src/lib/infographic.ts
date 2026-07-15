@@ -1,5 +1,6 @@
 import type { InfographicData, VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
+import { isFailedVerdict, verdictBadge } from "./text-format";
 import { youtubeThumbCandidates } from "./youtube";
 
 const imageCache = new Map<string, string | null>();
@@ -19,8 +20,7 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    // YouTube maxres 미제공 시 회색 자리표시자(~1–2KB)가 옴
-    if (buf.length < 4_000) {
+    if (buf.length < 3_000) {
       imageCache.set(url, null);
       return null;
     }
@@ -34,132 +34,156 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
   }
 }
 
-async function resolveYoutubeThumb(videoId: string, preferred?: string) {
-  const urls = [
-    ...(preferred ? [preferred] : []),
+function ytFrameUrls(videoId: string): string[] {
+  return [
     ...youtubeThumbCandidates(videoId),
+    `https://i.ytimg.com/vi/${videoId}/hq1.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hq2.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hq3.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/1.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/2.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/3.jpg`,
   ];
-  for (const url of urls) {
+}
+
+async function resolveDistinctImages(
+  video: VideoRecord,
+  count: number
+): Promise<string[]> {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  const push = async (url?: string) => {
+    if (!url || seen.has(url)) return;
     const data = await fetchImageDataUrl(url);
-    if (data) return data;
+    if (!data || seen.has(data.slice(0, 80))) return;
+    seen.add(url);
+    seen.add(data.slice(0, 80));
+    urls.push(data);
+  };
+
+  await push(video.thumbnailUrl);
+  for (const u of ytFrameUrls(video.videoId)) {
+    if (urls.length >= count) break;
+    await push(u);
   }
-  return null;
+
+  for (const item of video.items.filter((i) => i.needsFactCheck)) {
+    if (urls.length >= count) break;
+    await push(item.imageUrl);
+  }
+
+  for (const fc of video.factChecks) {
+    if (urls.length >= count) break;
+    await push(fc.answerImageUrl);
+  }
+
+  while (urls.length < count && urls.length > 0) {
+    urls.push(urls[urls.length % Math.max(1, urls.length - 1)] ?? urls[0]);
+  }
+
+  return urls.slice(0, count);
 }
 
 export async function buildInfographic(
   video: VideoRecord
 ): Promise<InfographicData> {
-  const claims = video.items.filter((i) => i.type === "claim").length;
-  const opinions = video.items.filter((i) => i.type === "opinion").length;
-  const info = video.items.filter((i) => i.type === "info").length;
-  const verified = video.factChecks.filter((f) =>
-    f.explanation.trim()
-  ).length;
+  const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
+  const fcItems = video.items.filter((i) => i.needsFactCheck).slice(0, 5);
 
-  const highlights = (video.summaryBullets?.length
-    ? video.summaryBullets
-    : video.items.map((i) => i.statement)
-  )
-    .slice(0, 5)
-    .map((text) => ({
-      label: "요약",
-      short: text.slice(0, 80) + (text.length > 80 ? "…" : ""),
-    }));
+  const cards = fcItems.map((item) => {
+    const fc = fcMap.get(item.id);
+    const verdict = fc?.verdict ?? "pending";
+    const badge = verdictBadge(verdict);
+    const fail = isFailedVerdict(verdict);
+    const answer = fc?.explanation?.trim() ?? "";
+    const isPrompt = !answer || /^다음 주장을/.test(answer);
+    return {
+      item,
+      statement: item.statement,
+      summary: isPrompt
+        ? item.statement.slice(0, 72)
+        : answer.slice(0, 100) + (answer.length > 100 ? "…" : ""),
+      verdict,
+      mark: fail ? "✗" : badge.mark,
+      fail,
+      imageHint: item.imageUrl ?? fc?.answerImageUrl,
+    };
+  });
 
-  const sectionHints = (video.report?.sections ?? []).map((s) => ({
-    heading: s.heading,
-    short: s.body.slice(0, 70) + (s.body.length > 70 ? "…" : ""),
+  const images = await resolveDistinctImages(video, Math.max(3, cards.length));
+  cards.forEach((c, i) => {
+    (c as { img?: string }).img = images[i] ?? images[0];
+  });
+
+  const sectionHints =
+    video.report?.sections.map((s) => ({
+      heading: s.heading,
+      short:
+        s.body.slice(0, 80) + (s.body.length > 80 ? "…" : "") ||
+        s.entries?.[0]?.text.slice(0, 80) ||
+        "",
+    })) ?? [];
+
+  const highlights = cards.map((c) => ({
+    label: c.fail ? "검증 ✗" : "검증",
+    short: c.statement.slice(0, 60) + (c.statement.length > 60 ? "…" : ""),
   }));
 
-  const heroThumb = await resolveYoutubeThumb(
-    video.videoId,
-    video.thumbnailUrl
-  );
-
-  const factItems = video.items.filter((i) => i.needsFactCheck).slice(0, 4);
-  const itemImages = await Promise.all(
-    factItems.map(async (item) => {
-      if (item.imageUrl?.startsWith("data:") || item.imageUrl?.startsWith("http")) {
-        const data = await fetchImageDataUrl(item.imageUrl);
-        if (data) return { item, dataUrl: data };
-      }
-      return {
-        item,
-        dataUrl: heroThumb,
-      };
-    })
-  );
-
-  const title = escapeXml(video.title.slice(0, 56));
+  const title = escapeXml(video.title.slice(0, 52));
   const channel = escapeXml(video.channel);
   const typeLabel = escapeXml(REPORT_TYPE_LABELS[video.reportType]);
+  const hero = images[0];
 
-  const hasHero = Boolean(heroThumb);
-  const heroBlock = hasHero
-    ? `
-  <defs>
-    <clipPath id="heroClip">
-      <rect x="48" y="36" width="340" height="191" rx="14"/>
-    </clipPath>
-  </defs>
-  <image href="${heroThumb}" xlink:href="${heroThumb}" x="48" y="36" width="340" height="191" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroClip)"/>
-  <rect x="48" y="36" width="340" height="191" rx="14" fill="none" stroke="#d0d9e2"/>
-  <text x="412" y="64" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="22" fill="#1a2430">인포그래픽 보고서</text>
-  <text x="412" y="94" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="14" fill="#425870">${title}</text>
-  <text x="412" y="118" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="12" fill="#7890a8">${channel} · ${typeLabel}</text>
-  <a href="${escapeXml(video.youtubeUrl)}">
-    <text x="412" y="148" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="11" fill="#c45c26">유튜브에서 보기 →</text>
-  </a>`
-    : `
-  <text x="48" y="48" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="26" fill="#1a2430">인포그래픽 보고서</text>
-  <text x="48" y="76" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="15" fill="#425870">${title}</text>
-  <text x="48" y="98" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="12" fill="#7890a8">${channel} · ${typeLabel}</text>`;
-
-  const statsY = hasHero ? 250 : 120;
-  const imageRowY = statsY + 72;
-  const hasItemImages = itemImages.some((x) => x.dataUrl);
-  const cards = hasItemImages
-    ? itemImages
-        .map(({ item, dataUrl }, i) => {
-          const x = 48 + (i % 4) * 184;
-          const label = escapeXml(
-            item.statement.slice(0, 28) +
-              (item.statement.length > 28 ? "…" : "")
-          );
-          const img = dataUrl
-            ? `<image href="${dataUrl}" xlink:href="${dataUrl}" x="${x}" y="${imageRowY}" width="168" height="94" preserveAspectRatio="xMidYMid slice"/>`
-            : `<rect x="${x}" y="${imageRowY}" width="168" height="94" fill="#dce3ea"/>`;
-          return `
-      <g>
-        ${img}
-        <rect x="${x}" y="${imageRowY}" width="168" height="94" fill="none" stroke="#c8d2dc" rx="8"/>
-        <rect x="${x}" y="${imageRowY + 94}" width="168" height="40" rx="0" fill="#fff"/>
-        <text x="${x + 8}" y="${imageRowY + 118}" font-size="11" fill="#1a2430">${label}</text>
-      </g>`;
-        })
-        .join("")
-    : "";
-
-  const rowsBase = hasItemImages ? imageRowY + 150 : statsY + 72;
-  const rowH = 48;
-  const rowSource = sectionHints.length
-    ? sectionHints
-    : highlights.map((h) => ({ heading: h.label, short: h.short }));
-  const rows = rowSource
-    .map((h, i) => {
-      const y = rowsBase + i * rowH;
+  const cardW = 148;
+  const cardH = 200;
+  const gap = 12;
+  const cardsY = 248;
+  const cardRow = cards
+    .map((c, i) => {
+      const x = 48 + i * (cardW + gap);
+      const img = (c as { img?: string }).img ?? hero;
+      const fill = c.fail ? "#fde8e8" : "#eef6ef";
+      const stroke = c.fail ? "#e05555" : "#3d8b5a";
       return `
-      <rect x="48" y="${y}" width="704" height="40" rx="8" fill="#ffffff" stroke="#d0d9e2"/>
-      <rect x="48" y="${y}" width="8" height="40" rx="2" fill="#c45c26"/>
-      <text x="72" y="${y + 16}" font-size="12" fill="#567088">${escapeXml(h.heading)}</text>
-      <text x="72" y="${y + 34}" font-size="13" fill="#1a2430">${escapeXml(h.short)}</text>`;
+    <g>
+      <rect x="${x}" y="${cardsY}" width="${cardW}" height="${cardH}" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>
+      ${
+        img
+          ? `<clipPath id="clip${i}"><rect x="${x + 4}" y="${cardsY + 4}" width="${cardW - 8}" height="78" rx="6"/></clipPath>
+      <image href="${img}" xlink:href="${img}" x="${x + 4}" y="${cardsY + 4}" width="${cardW - 8}" height="78" preserveAspectRatio="xMidYMid slice" clip-path="url(#clip${i})"/>`
+          : `<rect x="${x + 4}" y="${cardsY + 4}" width="${cardW - 8}" height="78" rx="6" fill="#dce3ea"/>`
+      }
+      <text x="${x + 10}" y="${cardsY + 98}" font-size="18" font-weight="bold" fill="${c.fail ? "#c03030" : "#2d6a3e"}">${escapeXml(c.mark)}</text>
+      <text x="${x + 32}" y="${cardsY + 98}" font-size="10" fill="#567088">${escapeXml(c.statement.slice(0, 14))}${c.statement.length > 14 ? "…" : ""}</text>
+      <text x="${x + 10}" y="${cardsY + 118}" font-size="9" fill="#1a2430">${escapeXml(c.summary.slice(0, 48))}${c.summary.length > 48 ? "…" : ""}</text>
+    </g>`;
     })
     .join("");
 
-  const height = Math.max(
-    320,
-    rowsBase + rowSource.length * rowH + 48
-  );
+  const rowsY = cardsY + cardH + 36;
+  const rowH = 44;
+  const rowSource = (sectionHints.length ? sectionHints : highlights.map((h) => ({
+    heading: h.label,
+    short: h.short,
+  })));
+  const rows = rowSource.map((h, i) => {
+    const y = rowsY + i * rowH;
+    return `
+      <rect x="48" y="${y}" width="704" height="36" rx="8" fill="#ffffff" stroke="#d0d9e2"/>
+      <rect x="48" y="${y}" width="6" height="36" rx="2" fill="#c45c26"/>
+      <text x="64" y="${y + 14}" font-size="11" fill="#567088">${escapeXml(h.heading)}</text>
+      <text x="64" y="${y + 28}" font-size="10" fill="#1a2430">${escapeXml(h.short)}</text>`;
+  });
+
+  const verified = video.factChecks.filter(
+    (f) => f.explanation.trim() && !/^다음 주장을/.test(f.explanation)
+  ).length;
+  const failed = video.factChecks.filter((f) =>
+    isFailedVerdict(f.verdict)
+  ).length;
+
+  const height = Math.max(420, rowsY + rows.length * rowH + 48);
 
   const svgMarkup = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="800" height="${height}" viewBox="0 0 800 ${height}">
@@ -168,42 +192,53 @@ export async function buildInfographic(
       <stop offset="0%" stop-color="#f4f6f8"/>
       <stop offset="100%" stop-color="#e8ecf0"/>
     </linearGradient>
+    ${
+      hero
+        ? `<clipPath id="heroClip"><rect x="48" y="36" width="280" height="158" rx="12"/></clipPath>`
+        : ""
+    }
   </defs>
   <rect width="800" height="100%" fill="url(#bg)"/>
   <rect x="0" y="0" width="800" height="8" fill="#c45c26"/>
-  ${heroBlock}
-
-  <g font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">
-    <rect x="48" y="${statsY}" width="160" height="52" rx="10" fill="#1a2430"/>
-    <text x="64" y="${statsY + 22}" font-size="11" fill="#a8b8c8">요약 포인트</text>
-    <text x="64" y="${statsY + 42}" font-size="20" fill="#fff">${highlights.length}</text>
-
-    <rect x="224" y="${statsY}" width="160" height="52" rx="10" fill="#354858"/>
-    <text x="240" y="${statsY + 22}" font-size="11" fill="#a8b8c8">검증 항목</text>
-    <text x="240" y="${statsY + 42}" font-size="20" fill="#fff">${claims + info}</text>
-
-    <rect x="400" y="${statsY}" width="160" height="52" rx="10" fill="#425870"/>
-    <text x="416" y="${statsY + 22}" font-size="11" fill="#a8b8c8">가이드</text>
-    <text x="416" y="${statsY + 42}" font-size="20" fill="#fff">${verified}</text>
-
-    <rect x="576" y="${statsY}" width="176" height="52" rx="10" fill="#c45c26"/>
-    <text x="592" y="${statsY + 22}" font-size="11" fill="#f5e6dc">보고서 유형</text>
-    <text x="592" y="${statsY + 42}" font-size="18" fill="#fff">${escapeXml(video.reportType)}</text>
-  </g>
   ${
-    hasItemImages
-      ? `<text x="48" y="${imageRowY - 12}" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="13" fill="#567088">팩트체크 장면 · 유튜브 이미지</text>`
+    hero
+      ? `<image href="${hero}" xlink:href="${hero}" x="48" y="36" width="280" height="158" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroClip)"/>
+  <rect x="48" y="36" width="280" height="158" rx="12" fill="none" stroke="#d0d9e2"/>`
       : ""
   }
-  ${cards}
-  ${rows}
+  <text x="${hero ? 348 : 48}" y="56" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="22" fill="#1a2430">팩트체크 인포그래픽</text>
+  <text x="${hero ? 348 : 48}" y="84" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="13" fill="#425870">${title}</text>
+  <text x="${hero ? 348 : 48}" y="106" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="11" fill="#7890a8">${channel} · ${typeLabel}</text>
+
+  <g font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">
+    <rect x="48" y="206" width="120" height="44" rx="8" fill="#1a2430"/>
+    <text x="60" y="224" font-size="10" fill="#a8b8c8">검증 완료</text>
+    <text x="60" y="242" font-size="16" fill="#fff">${verified}</text>
+
+    <rect x="178" y="206" width="120" height="44" rx="8" fill="#c03030"/>
+    <text x="190" y="224" font-size="10" fill="#fde8e8">사실과 다름 ✗</text>
+    <text x="190" y="242" font-size="16" fill="#fff">${failed}</text>
+
+    <rect x="308" y="206" width="120" height="44" rx="8" fill="#354858"/>
+    <text x="320" y="224" font-size="10" fill="#a8b8c8">대상</text>
+    <text x="320" y="242" font-size="16" fill="#fff">${fcItems.length}</text>
+  </g>
+
+  <text x="48" y="${cardsY - 8}" font-size="12" fill="#567088">팩트체크 항목 · 보고서 요약</text>
+  ${cardRow}
+  ${rows.join("")}
 </svg>`;
 
   return {
     title: video.title,
     channel: video.channel,
     reportType: video.reportType,
-    stats: { claims, opinions, info, verified },
+    stats: {
+      claims: video.items.filter((i) => i.type === "claim").length,
+      opinions: video.items.filter((i) => i.type === "opinion").length,
+      info: video.items.filter((i) => i.type === "info").length,
+      verified,
+    },
     highlights,
     sectionHints,
     svgMarkup,
