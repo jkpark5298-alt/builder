@@ -132,21 +132,21 @@ export async function buildInfographic(
     });
   }
 
-  const sectionHints =
-    video.report?.sections
-      .filter((s) => s.heading !== "팩트체크")
-      .map((s) => ({
-        heading: s.heading,
-        short: stripTags(s.body).slice(0, 280) || "",
-      }))
-      .filter((s) => s.short) ?? [];
+  const sectionHints = (() => {
+    const raw =
+      video.report?.sections
+        .filter((s) => s.heading !== "팩트체크")
+        .map((s) => ({
+          heading: s.heading,
+          short: stripTags(s.body).slice(0, 280) || "",
+        }))
+        .filter((s) => s.short) ?? [];
 
-  // 팩트체크 하단 요약 (항상 표시)
-  const fcBottom = cards.map((c) => ({
-    heading: `FACT ${c.mark}`,
-    short: c.statement,
-    fail: c.fail,
-  }));
+    // 요약 → 결론 순
+    const order = (h: string) =>
+      h === "요약" ? 0 : h === "결론" ? 1 : 2;
+    return [...raw].sort((a, b) => order(a.heading) - order(b.heading));
+  })();
 
   const highlights = cards.map((c) => ({
     label: c.fail ? "검증 ✗" : "검증",
@@ -172,12 +172,47 @@ export async function buildInfographic(
   const titleBlockH = 70;
   const heroTop = 24 + titleBlockH;
   const statsY = hero ? heroTop + heroH + 18 : 24 + titleBlockH;
-  let y = statsY + 72;
+  let y = statsY + 56;
   let contentBottom = y;
 
   const blocks: string[] = [];
 
-  // —— 팩트체크 항목 카드 ——
+  // 1) 보고서 요약 — 요약 → 결론
+  if (sectionHints.length) {
+    blocks.push(
+      `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">보고서 요약</text>`
+    );
+    y += 18;
+    contentBottom = y;
+
+    for (const h of sectionHints) {
+      const lines = wrapSvgText(h.short, contentW - 36, 6, 11);
+      const hgt = 22 + 8 + lines.length * 15 + 14;
+      const top = y;
+      const body = lines
+        .map(
+          (line, li) =>
+            `<text x="${padX + 20}" y="${top + 36 + li * 15}" font-size="11" fill="#425870">${escapeXml(line)}</text>`
+        )
+        .join("");
+      blocks.push(`
+      <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="10" fill="#fff" stroke="#e2e8f0"/>
+      <rect x="${padX}" y="${top}" width="5" height="${hgt}" rx="2" fill="#c45c26"/>
+      <text x="${padX + 20}" y="${top + 18}" font-size="12" font-weight="600" fill="#c45c26">${escapeXml(h.heading)}</text>
+      ${body}`);
+      y += hgt + 12;
+      contentBottom = y;
+    }
+    y += 8;
+  }
+
+  // 2) 팩트체크 항목
+  blocks.push(
+    `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">팩트체크 항목${cards.some((c) => c.img) ? " · 관련 이미지(있을 때만)" : ""}</text>`
+  );
+  y += 18;
+  contentBottom = y;
+
   cards.forEach((c, i) => {
     const hasImg = Boolean(c.img);
     const textW = hasImg ? contentW - 200 : contentW - 36;
@@ -223,63 +258,6 @@ export async function buildInfographic(
     contentBottom = y;
   });
 
-  // —— 보고서 요약 (결론·요약 전체 표시) ——
-  if (sectionHints.length) {
-    y += 10;
-    blocks.push(
-      `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">보고서 요약</text>`
-    );
-    y += 18;
-    contentBottom = y;
-
-    for (const h of sectionHints) {
-      const lines = wrapSvgText(h.short, contentW - 36, 6, 11);
-      const hgt = 22 + 8 + lines.length * 15 + 14;
-      const top = y;
-      const body = lines
-        .map(
-          (line, li) =>
-            `<text x="${padX + 20}" y="${top + 36 + li * 15}" font-size="11" fill="#425870">${escapeXml(line)}</text>`
-        )
-        .join("");
-      blocks.push(`
-      <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="10" fill="#fff" stroke="#e2e8f0"/>
-      <rect x="${padX}" y="${top}" width="5" height="${hgt}" rx="2" fill="#c45c26"/>
-      <text x="${padX + 20}" y="${top + 18}" font-size="12" font-weight="600" fill="#c45c26">${escapeXml(h.heading)}</text>
-      ${body}`);
-      y += hgt + 12;
-      contentBottom = y;
-    }
-  }
-
-  // —— 팩트체크 한줄 요약 (하단) ——
-  if (fcBottom.length) {
-    y += 8;
-    blocks.push(
-      `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">팩트체크 요약</text>`
-    );
-    y += 18;
-    contentBottom = y;
-
-    for (const row of fcBottom) {
-      const lines = wrapSvgText(row.short, contentW - 48, 3, 12);
-      const hgt = 18 + lines.length * 16 + 12;
-      const top = y;
-      const body = lines
-        .map(
-          (line, li) =>
-            `<text x="${padX + 44}" y="${top + 22 + li * 16}" font-size="12" fill="#1a2430">${escapeXml(line)}</text>`
-        )
-        .join("");
-      blocks.push(`
-      <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="10" fill="${row.fail ? "#fff5f5" : "#f7faf8"}" stroke="${row.fail ? "#f0b4b4" : "#cfe3d4"}"/>
-      <text x="${padX + 14}" y="${top + 22}" font-size="12" font-weight="700" fill="${row.fail ? "#c03030" : "#2d6a3e"}">${escapeXml(row.heading)}</text>
-      ${body}`);
-      y += hgt + 10;
-      contentBottom = y;
-    }
-  }
-
   // 하단이 잘리지 않도록 여유 패딩
   const height = Math.max(480, contentBottom + 64);
 
@@ -323,8 +301,6 @@ export async function buildInfographic(
     <text x="536" y="${statsY + 20}" font-size="11" fill="#a8b8c8">팩트체크 대상</text>
     <text x="536" y="${statsY + 38}" font-size="18" fill="#fff">${fcItems.length}</text>
   </g>
-
-  <text x="${padX}" y="${statsY + 68}" font-size="12" fill="#7890a8" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">팩트체크 항목${cards.some((c) => c.img) ? " · 관련 이미지(있을 때만)" : ""}</text>
 
   <g font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">
     ${blocks.join("\n")}
