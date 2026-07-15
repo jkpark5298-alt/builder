@@ -20,6 +20,32 @@ export function hasLlm(): boolean {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
+function parseJsonLoose<T>(raw: string): T | null {
+  const trimmed = raw.trim();
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced?.[1]) {
+      try {
+        return JSON.parse(fenced[1].trim()) as T;
+      } catch {
+        /* continue */
+      }
+    }
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(trimmed.slice(start, end + 1)) as T;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
 async function chatJson<T>(system: string, user: string): Promise<T | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -35,6 +61,7 @@ async function chatJson<T>(system: string, user: string): Promise<T | null> {
     body: JSON.stringify({
       model,
       temperature: 0.2,
+      max_tokens: 4096,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
@@ -53,7 +80,7 @@ async function chatJson<T>(system: string, user: string): Promise<T | null> {
   };
   const content = data.choices?.[0]?.message?.content;
   if (!content) return null;
-  return JSON.parse(content) as T;
+  return parseJsonLoose<T>(content);
 }
 
 export interface SummarizeResult {
@@ -72,10 +99,10 @@ function cleanTranscript(text: string): string {
     .trim();
 }
 
-/** LLM 한 번에 넣을 스크립트 길이. 길면 구간으로 나눠 전체를 요약한다. */
-const SCRIPT_PER_CALL = 14000;
-const SCRIPT_OVERLAP = 500;
-const MAX_SCRIPT_CHUNKS = 8;
+/** LLM 한 번에 넣을 스크립트 길이. 대부분 영상은 1회로 처리. */
+const SCRIPT_PER_CALL = 48000;
+const SCRIPT_OVERLAP = 600;
+const MAX_SCRIPT_CHUNKS = 6;
 
 function splitTranscriptChunks(text: string): string[] {
   if (text.length <= SCRIPT_PER_CALL) return [text];
@@ -123,24 +150,61 @@ type LlmSummary = {
   reportTypeHint?: ReportType;
 };
 
-function summarizeSystemPrompt(reportType: ReportType, partHint?: string) {
-  return `당신은 한국어 유튜브 분석가입니다.
+function isUsableLlmSummary(llm: LlmSummary | null | undefined): llm is LlmSummary {
+  if (!llm) return false;
+  const overview = (llm.overview ?? "").trim();
+  const bullets = (llm.summaryBullets ?? []).filter((b) => b?.trim());
+  return overview.length >= 40 || bullets.length >= 3;
+}
+
+function normalizeLlmSummary(llm: LlmSummary): LlmSummary {
+  const overview = (llm.overview ?? "").trim();
+  let bullets = (llm.summaryBullets ?? [])
+    .map((b) => String(b).trim())
+    .filter(Boolean);
+  if (!bullets.length && overview) {
+    bullets = overview
+      .split(/\n+/)
+      .map((l) => l.replace(/^[-*•\d.)\s]+/, "").trim())
+      .filter((l) => l.length >= 20)
+      .slice(0, 12);
+  }
+  return {
+    ...llm,
+    overview:
+      overview ||
+      bullets.slice(0, 6).join("\n") ||
+      "요약을 생성하지 못했습니다.",
+    summaryBullets: bullets,
+    factPoints: llm.factPoints ?? [],
+  };
+}
+
+function summarizeSystemPrompt(
+  reportType: ReportType,
+  opts: { hasChapters: boolean; partHint?: string }
+) {
+  const structure = opts.hasChapters
+    ? `2) 유튜브 방송 순서(챕터)를 기준으로 요약하세요.
+3) 각 챕터마다 핵심만 1~2문장. summaryBullets 형식: "00:00 챕터제목 — 핵심"`
+    : `2) 챕터가 없으니 스크립트 전체 흐름을 앞→뒤 시간순 주제 단락으로 요약하세요.
+3) summaryBullets는 8~15개. 형식: "주제 — 핵심 한두 문장". 자막을 그대로 복사하지 말고 핵심만 압축하세요.
+   overview는 3~8문단으로 영상 전체 줄거리를 다루세요. 초반만 쓰지 마세요.`;
+
+  return `당신은 한국어 유튜브 분석가입니다. 목표: 시청자가 영상 전체를 이해하도록 **압축 요약**합니다.
 
 필수 규칙:
-1) 보고서 유형(H/S/C/P) 구조로 요약하지 마세요.
-2) 유튜브가 제공하는 방송 순서(챕터 타임스탬프) 그대로 요약하세요.
-3) 각 챕터마다 그 구간의 핵심 내용만 1~2문장으로 쓰세요. 스크립트가 있으면 스크립트 근거로.
-4) factPoints는 인트로/엔딩을 제외한 챕터별 검증 가능 주장만.
-   - statement: 단정형 주장 한 줄
-   - detail: 왜 확인해야 하는지 2~3문장
-   - checkGuide: 제미나이 등 AI에게 붙여넣을 수 있는 **팩트체크 질문 한 문장**(상세·구체적)
-5) summaryBullets 형식: "00:00 챕터제목 — 핵심 한두 문장"
-${partHint ? `6) ${partHint}` : ""}
+1) 보고서 유형(H/S/C/P) 구조로 쓰지 마세요.
+${structure}
+4) 금지: 자막 문장 나열, "그런데 시작하기 전에" 같은 말투 복붙, 앞부분만 요약.
+5) factPoints는 검증 가능한 단정형 주장만 (인트로/엔딩·잡담 제외).
+   - statement / detail / checkGuide(팩트체크 질문 한 문장)
+${opts.partHint ? `6) ${opts.partHint}` : ""}
 
 JSON만 반환:
 {
-  "overview": "방송 순서 요약을 문단으로 (각 챕터를 타임스탬프와 함께)",
-  "summaryBullets": ["00:00 인트로 — …", "03:47 … — …"],
+  "overview": "전체 요약 문단",
+  "summaryBullets": ["…"],
   "factPoints": [{
     "statement": "검증 가능한 단정형 주장",
     "detail": "왜 확인해야 하는지",
@@ -177,17 +241,23 @@ function packSummaryResult(
   cleanedTranscript: string,
   reportType: ReportType
 ): SummarizeResult {
+  const normalized = normalizeLlmSummary(llm);
   const rt =
-    llm.reportTypeHint && ["H", "S", "C", "P"].includes(llm.reportTypeHint)
-      ? llm.reportTypeHint
+    normalized.reportTypeHint &&
+    ["H", "S", "C", "P"].includes(normalized.reportTypeHint)
+      ? normalized.reportTypeHint
       : reportType;
 
-  const rawPoints = (llm.factPoints ?? []).filter(
+  const rawPoints = (normalized.factPoints ?? []).filter(
     (p) => p.statement && !isVagueClaim(p.statement)
   );
   const seen = new Set<string>();
   const deduped = rawPoints.filter((p) => {
-    const key = p.statement.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 80);
+    const key = p.statement
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+      .slice(0, 80);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -206,9 +276,13 @@ function packSummaryResult(
     )
   );
 
+  const bullets = normalized.summaryBullets.filter((b) => !isVagueClaim(b));
+
   return {
-    overview: llm.overview,
-    summaryBullets: llm.summaryBullets.filter((b) => !isVagueClaim(b)),
+    overview: normalized.overview,
+    summaryBullets: bullets.length
+      ? bullets
+      : normalized.summaryBullets.slice(0, 12),
     items: items.length ? items : chapterOrderClaims(meta, cleanedTranscript),
     reportType: rt,
   };
@@ -227,9 +301,10 @@ export async function summarizeContent(
   });
   const cleanedTranscript = cleanTranscript(transcript);
   const scriptMode = hasRealScript(meta, cleanedTranscript);
-  const chapterList = meta.chapters.length
+  const hasChapters = meta.chapters.length > 0;
+  const chapterList = hasChapters
     ? meta.chapters.map((c) => `${c.timestamp} ${c.title}`).join("\n")
-    : "(챕터 없음)";
+    : "(챕터 없음 — 스크립트 전체 흐름으로 요약)";
 
   if (!scriptMode) {
     const sourceBlock = [
@@ -239,7 +314,7 @@ export async function summarizeContent(
       `방송 순서(챕터):\n${chapterList}`,
       meta.description ? `설명:\n${meta.description.slice(0, 5000)}` : "",
       cleanedTranscript
-        ? `보조 텍스트:\n${cleanedTranscript.slice(0, 8000)}`
+        ? `보조 텍스트:\n${cleanedTranscript.slice(0, 12000)}`
         : "",
     ]
       .filter(Boolean)
@@ -247,10 +322,10 @@ export async function summarizeContent(
 
     try {
       const llm = await chatJson<LlmSummary>(
-        summarizeSystemPrompt(reportType),
+        summarizeSystemPrompt(reportType, { hasChapters }),
         sourceBlock
       );
-      if (llm?.overview && llm.summaryBullets?.length) {
+      if (isUsableLlmSummary(llm)) {
         return packSummaryResult(llm, meta, cleanedTranscript, reportType);
       }
     } catch {
@@ -264,23 +339,23 @@ export async function summarizeContent(
   try {
     if (chunks.length === 1) {
       const sourceBlock = [
-        `【요약 대상: 스크립트 전체 + 유튜브 방송 순서(챕터)】`,
+        `【요약 대상: 스크립트 전체】`,
         `제목: ${meta.title}`,
         `채널: ${meta.channel}`,
         `방송 순서(챕터):\n${chapterList}`,
-        `스크립트(전체 ${cleanedTranscript.length}자):\n${chunks[0]}`,
+        `스크립트 분량: ${cleanedTranscript.length}자 (아래는 전체)`,
+        `스크립트:\n${chunks[0]}`,
       ].join("\n\n");
 
       const llm = await chatJson<LlmSummary>(
-        summarizeSystemPrompt(reportType),
+        summarizeSystemPrompt(reportType, { hasChapters }),
         sourceBlock
       );
-      if (llm?.overview && llm.summaryBullets?.length) {
+      if (isUsableLlmSummary(llm)) {
         return packSummaryResult(llm, meta, cleanedTranscript, reportType);
       }
     } else {
-      // 긴 스크립트: 구간별 병렬 요약 후 합침 (앞부분만 보던 제한 제거)
-      const parts = await Promise.all(
+      const settled = await Promise.allSettled(
         chunks.map(async (chunk, i) => {
           const sourceBlock = [
             `【요약 대상: 스크립트 구간 ${i + 1}/${chunks.length}】`,
@@ -290,29 +365,32 @@ export async function summarizeContent(
             `이 구간 스크립트:\n${chunk}`,
           ].join("\n\n");
           return chatJson<LlmSummary>(
-            summarizeSystemPrompt(
-              reportType,
-              `제공된 구간(${i + 1}/${chunks.length})만 빠짐없이 요약하세요. 다른 구간은 없다고 단정하지 마세요.`
-            ),
+            summarizeSystemPrompt(reportType, {
+              hasChapters,
+              partHint: `구간 ${i + 1}/${chunks.length}만 빠짐없이 요약하세요. 이 구간의 핵심 주장·사실을 압축하세요.`,
+            }),
             sourceBlock
           );
         })
       );
 
-      const ok = parts.filter(
-        (p): p is LlmSummary =>
-          Boolean(p?.overview && p.summaryBullets?.length)
-      );
+      const ok = settled
+        .map((r) => (r.status === "fulfilled" ? r.value : null))
+        .filter(isUsableLlmSummary)
+        .map(normalizeLlmSummary);
 
       if (ok.length) {
         const merged: LlmSummary = {
-          overview: ok.map((p, i) => `【${i + 1}/${ok.length}】\n${p.overview}`).join("\n\n"),
+          overview: ok
+            .map((p, i) =>
+              ok.length > 1 ? `【구간 ${i + 1}】\n${p.overview}` : p.overview
+            )
+            .join("\n\n"),
           summaryBullets: ok.flatMap((p) => p.summaryBullets ?? []),
           factPoints: ok.flatMap((p) => p.factPoints ?? []),
           reportTypeHint: ok.find((p) => p.reportTypeHint)?.reportTypeHint,
         };
 
-        // 챕터 순서로 bullet 정리 가능한 경우 중복 제거
         const bulletSeen = new Set<string>();
         merged.summaryBullets = merged.summaryBullets.filter((b) => {
           const key = b.replace(/\s+/g, " ").trim().slice(0, 60);
@@ -411,22 +489,22 @@ function chapterOrderFallback(
     return { overview, summaryBullets, items, reportType };
   }
 
-  // 챕터 없음: 스크립트/설명에서 주요 문장
-  const claims = extractClaimsFromText(body, meta, reportType);
+  // 챕터 없음: 앞·중·뒤를 고르게 뽑아 요약 흉내 (자막 복붙 방지)
+  const spread = extractSpreadPoints(body, meta);
   const bullets =
-    claims.length > 0
-      ? claims.map((c, i) => `${i + 1}. ${c.statement}`)
+    spread.bullets.length > 0
+      ? spread.bullets
       : ["주요 내용을 추출하지 못했습니다. 스크립트를 붙여넣어 다시 시도하세요."];
 
   return {
     overview: [
       scriptMode
-        ? `「${meta.title}」 스크립트 기준 주요 내용 요약입니다. (챕터 정보 없음)`
+        ? `「${meta.title}」 스크립트 기준 주요 내용 요약입니다. (챕터 정보 없음 · AI 요약 실패 시 구간 발췌)`
         : `「${meta.title}」 설명 기준 주요 내용 요약입니다. (챕터·스크립트 부족)`,
       ...bullets,
     ].join("\n"),
     summaryBullets: bullets,
-    items: claims,
+    items: spread.items,
     reportType,
   };
 }
@@ -493,26 +571,58 @@ function aiPromptFor(statement: string, detail?: string): string {
   return buildFactCheckPrompt(statement, detail);
 }
 
-/** 스크립트/본문에서 검증 가능한 문장 추출 */
-function extractClaimsFromText(
+/** 타임스탬프·말투 마커 제거 */
+function stripSpokenCruff(s: string): string {
+  return s
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
+    .replace(/\b\d{1,2}\.\d{1,2}\b/g, " ")
+    .replace(/그런데|그다음에|그래서|자,|네,|어,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 긴 스크립트를 앞·중·뒤에서 고르게 발췌 */
+function extractSpreadPoints(
   text: string,
-  meta: SummaryMeta,
-  _reportType: ReportType
-): SummaryItem[] {
-  const sentences = pickDenseSentences(text, 20);
-  const claimLike = sentences.filter((s) =>
-    /\d|%|년|세기|주장|때문|원인|결과|퍼트|몰살|악마|서진|증가|감소|기록|사료|연구|인구|전쟁|정복|전파|성장|GDP|부채|수출|목표/.test(
-      s
-    )
-  );
+  meta: SummaryMeta
+): { bullets: string[]; items: SummaryItem[] } {
+  const cleaned = cleanTranscript(text);
+  if (cleaned.length < 80) {
+    return { bullets: [], items: detailedChapterClaims(meta) };
+  }
 
-  const selected = (claimLike.length ? claimLike : sentences).slice(0, 8);
-  if (!selected.length) return detailedChapterClaims(meta);
+  const parts = Math.min(6, Math.max(3, Math.ceil(cleaned.length / 2800)));
+  const sliceLen = Math.floor(cleaned.length / parts);
+  const picked: string[] = [];
 
-  return selected.map((s, idx) => {
+  for (let i = 0; i < parts; i++) {
+    const start = i * sliceLen;
+    const end = i === parts - 1 ? cleaned.length : start + sliceLen;
+    const segment = cleaned.slice(start, end);
+    const dens = pickDenseSentences(segment, 4);
+    for (const s of dens) {
+      const brief = stripSpokenCruff(s);
+      if (brief.length < 24) continue;
+      if (picked.some((p) => p.slice(0, 28) === brief.slice(0, 28))) continue;
+      picked.push(brief.length > 140 ? `${brief.slice(0, 137)}…` : brief);
+      break;
+    }
+  }
+
+  // 부족하면 전체에서 보충
+  if (picked.length < 5) {
+    for (const s of pickDenseSentences(cleaned, 24)) {
+      const brief = stripSpokenCruff(s);
+      if (brief.length < 24) continue;
+      if (picked.some((p) => p.slice(0, 28) === brief.slice(0, 28))) continue;
+      picked.push(brief.length > 140 ? `${brief.slice(0, 137)}…` : brief);
+      if (picked.length >= 10) break;
+    }
+  }
+
+  const items = picked.slice(0, 10).map((s, idx) => {
     const statement = toAssertiveClaim(s);
-    const detail = "수치·인과·인용 출처를 교차 확인";
-    const checkGuide = aiPromptFor(statement, detail);
+    const detail = "수치·시기·인명·학설 출처를 교차 확인";
     return toItem(
       statement,
       "claim",
@@ -521,31 +631,55 @@ function extractClaimsFromText(
       idx,
       undefined,
       detail,
-      checkGuide
+      aiPromptFor(statement, detail)
     );
   });
+
+  const bullets = items.map(
+    (it, i) => `${i + 1}. ${it.statement}`
+  );
+
+  return {
+    bullets,
+    items: items.length ? items : detailedChapterClaims(meta),
+  };
+}
+
+/** 스크립트/본문에서 검증 가능한 문장 추출 */
+function extractClaimsFromText(
+  text: string,
+  meta: SummaryMeta,
+  _reportType: ReportType
+): SummaryItem[] {
+  return extractSpreadPoints(text, meta).items;
 }
 
 function pickDenseSentences(text: string, limit: number): string[] {
-  const cleaned = cleanTranscript(text)
-    .replace(/제목:|채널\/제작:|제작자 설명:|챕터\(목차\):/g, " ");
-  const minLen = cleaned.length < 400 ? 18 : 32;
+  const cleaned = cleanTranscript(text).replace(
+    /제목:|채널\/제작:|제작자 설명:|챕터\(목차\):/g,
+    " "
+  );
+  const minLen = cleaned.length < 400 ? 18 : 28;
   const parts = cleaned
     .split(/(?<=[.。!?？])\s+|(?<=다)\s+(?=[가-힣A-Z0-9「])/)
+    .map((s) => stripSpokenCruff(s))
     .map((s) => s.trim())
     .filter((s) => s.length >= minLen && s.length <= 220)
     .filter((s) => !/^https?:\/\//i.test(s))
     .filter((s) => !isVagueClaim(s))
     .filter((s) => !isChatter(s))
-    .filter(
-      (s) =>
-        /\d|%|년|세기|흑사병|페스트|몽골|칭기즈|훈족|유연|아바르|호레즘|인구|전쟁|정복|악마|전파|사료|연구|DNA|기록/.test(
-          s
-        )
-    );
+    .filter((s) => !/^(그런데|그다음|그래서|자 |네 )/i.test(s));
+
+  // 키워드 있는 문장 우선, 없으면 일반 문장
+  const keyworded = parts.filter((s) =>
+    /\d|%|년|세기|인류|진화|화석|연구|기록|주장|공통|기원|침팬|원인|결과|인구|전쟁|정복|사료|DNA|학자|발견/.test(
+      s
+    )
+  );
+  const pool = keyworded.length >= Math.min(3, limit) ? keyworded : parts;
 
   const uniq: string[] = [];
-  for (const p of parts) {
+  for (const p of pool) {
     if (!uniq.some((u) => u.slice(0, 40) === p.slice(0, 40))) uniq.push(p);
     if (uniq.length >= limit) break;
   }
