@@ -55,7 +55,7 @@ export function EditableReportPanel({
 
   // 구형식(TYPE별) → 일반 형식 자동 재생성
   useEffect(() => {
-    if (!video.report || video.report.format === "general_v2") return;
+    if (!video.report || video.report.format === "general_v3") return;
     let cancelled = false;
     (async () => {
       setRebuilding(true);
@@ -283,15 +283,14 @@ export function EditableReportPanel({
             const badge = verdictBadge(verdict);
             const open = openFc === entry.itemId;
             const failed = isFailedVerdict(verdict);
-            // 팩트체크 첨부 이미지 우선 → 항목 이미지
-            const reportImages = [
-              entry.answerImageUrl,
-              entry.imageUrl,
-              fc?.answerImageUrl,
-            ].filter(
-              (u, i, arr): u is string =>
-                Boolean(u) && arr.indexOf(u) === i
-            );
+            // 첨부된 관련 이미지만 (대표 유튜브 썸네일 반복 제외)
+            const reportImages = [entry.answerImageUrl, fc?.answerImageUrl]
+              .filter((u): u is string => Boolean(u))
+              .filter(
+                (u, i, arr) =>
+                  arr.indexOf(u) === i &&
+                  !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+              );
 
             return (
               <div

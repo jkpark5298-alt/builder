@@ -51,6 +51,11 @@ export function reportBodyPlain(body: string, rich?: boolean): string {
   return rich ? stripHtml(body) : body;
 }
 
+function isYoutubeThumb(url?: string | null): boolean {
+  if (!url) return false;
+  return /i\.ytimg\.com|ytimg\.com\/vi\//i.test(url);
+}
+
 export function buildTypedReport(
   video: Pick<
     VideoRecord,
@@ -114,24 +119,26 @@ export function buildTypedReport(
     return true;
   });
 
-  const relatedImages = Array.from(
+  // 팩트체크에 직접 첨부한 이미지만 (유튜브 대표/프레임 제외)
+  const attachedImages = Array.from(
     new Set(
-      [
-        ...fcItems.flatMap((item) => {
+      fcItems
+        .flatMap((item) => {
           const fc = fcMap.get(item.id);
-          return [fc?.answerImageUrl, item.imageUrl].filter(Boolean) as string[];
-        }),
-      ].filter((u) => u && !u.includes("/hqdefault.jpg") && !u.includes("/mqdefault.jpg"))
+          return [fc?.answerImageUrl].filter(Boolean) as string[];
+        })
+        .filter((u) => !isYoutubeThumb(u))
     )
-  ).slice(0, 6);
+  ).slice(0, 4);
 
   const sections = [
     {
       heading: "결론",
       body: highlightConclusion(conclusionText),
       rich: true,
-      imageUrl: relatedImages[0] || video.thumbnailUrl,
-      images: relatedImages.slice(1, 4),
+      // 대표 이미지 1회만
+      imageUrl: video.thumbnailUrl,
+      images: attachedImages,
     },
     {
       heading: "요약",
@@ -146,11 +153,16 @@ export function buildTypedReport(
       rich: true,
       entries: fcItems.map((item) => {
         const fc = fcMap.get(item.id);
+        const attached =
+          fc?.answerImageUrl && !isYoutubeThumb(fc.answerImageUrl)
+            ? fc.answerImageUrl
+            : undefined;
         return {
           itemId: item.id,
           text: item.statement,
-          imageUrl: item.imageUrl,
-          answerImageUrl: fc?.answerImageUrl,
+          // 유튜브 썸네일은 항목에 반복 넣지 않음
+          imageUrl: undefined,
+          answerImageUrl: attached,
         };
       }),
     },
@@ -165,7 +177,7 @@ export function buildTypedReport(
     },
     reportType: video.reportType,
     reportTypeLabel: "일반 보고서",
-    format: "general_v2" as const,
+    format: "general_v3" as const,
     sections,
     summaryExcerpt: dedupeTexts([
       `결론: ${conclusionText}`,
