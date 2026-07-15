@@ -97,7 +97,10 @@ export async function runVideoPipeline(
     if (script) {
       text = script;
       source = "pasted";
-      notice = "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다.";
+      notice =
+        script.length > 14000
+          ? `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 구간으로 나눠 요약합니다.`
+          : "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다.";
     } else {
       const fetched = await fetchTranscript(record.videoId, meta);
       text = fetched.text;

@@ -72,6 +72,87 @@ function cleanTranscript(text: string): string {
     .trim();
 }
 
+/** LLM 한 번에 넣을 스크립트 길이. 길면 구간으로 나눠 전체를 요약한다. */
+const SCRIPT_PER_CALL = 14000;
+const SCRIPT_OVERLAP = 500;
+const MAX_SCRIPT_CHUNKS = 8;
+
+function splitTranscriptChunks(text: string): string[] {
+  if (text.length <= SCRIPT_PER_CALL) return [text];
+
+  let chunkSize = SCRIPT_PER_CALL;
+  const approx = Math.ceil(text.length / SCRIPT_PER_CALL);
+  if (approx > MAX_SCRIPT_CHUNKS) {
+    chunkSize = Math.ceil(text.length / MAX_SCRIPT_CHUNKS);
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length && chunks.length < MAX_SCRIPT_CHUNKS) {
+    let end = Math.min(start + chunkSize, text.length);
+    if (end < text.length) {
+      const slice = text.slice(start, end);
+      const breaks = [". ", "? ", "! ", "。", "？", "！"].map((b) =>
+        slice.lastIndexOf(b)
+      );
+      const lastBreak = Math.max(...breaks);
+      if (lastBreak > chunkSize * 0.45) {
+        end = start + lastBreak + 1;
+      }
+    }
+    const piece = text.slice(start, end).trim();
+    if (piece) chunks.push(piece);
+    if (end >= text.length) break;
+    start = Math.max(0, end - SCRIPT_OVERLAP);
+  }
+
+  return chunks.length ? chunks : [text];
+}
+
+type LlmSummary = {
+  overview: string;
+  summaryBullets: string[];
+  factPoints: Array<{
+    statement: string;
+    detail?: string;
+    checkGuide?: string;
+    type?: "claim" | "info";
+    needsFactCheck?: boolean;
+    chapterTimestamp?: string;
+  }>;
+  reportTypeHint?: ReportType;
+};
+
+function summarizeSystemPrompt(reportType: ReportType, partHint?: string) {
+  return `당신은 한국어 유튜브 분석가입니다.
+
+필수 규칙:
+1) 보고서 유형(H/S/C/P) 구조로 요약하지 마세요.
+2) 유튜브가 제공하는 방송 순서(챕터 타임스탬프) 그대로 요약하세요.
+3) 각 챕터마다 그 구간의 핵심 내용만 1~2문장으로 쓰세요. 스크립트가 있으면 스크립트 근거로.
+4) factPoints는 인트로/엔딩을 제외한 챕터별 검증 가능 주장만.
+   - statement: 단정형 주장 한 줄
+   - detail: 왜 확인해야 하는지 2~3문장
+   - checkGuide: 제미나이 등 AI에게 붙여넣을 수 있는 **팩트체크 질문 한 문장**(상세·구체적)
+5) summaryBullets 형식: "00:00 챕터제목 — 핵심 한두 문장"
+${partHint ? `6) ${partHint}` : ""}
+
+JSON만 반환:
+{
+  "overview": "방송 순서 요약을 문단으로 (각 챕터를 타임스탬프와 함께)",
+  "summaryBullets": ["00:00 인트로 — …", "03:47 … — …"],
+  "factPoints": [{
+    "statement": "검증 가능한 단정형 주장",
+    "detail": "왜 확인해야 하는지",
+    "checkGuide": "AI에게 물어볼 팩트체크 질문 한 문장",
+    "type": "claim",
+    "needsFactCheck": true,
+    "chapterTimestamp": "03:47"
+  }],
+  "reportTypeHint": "${reportType}"
+}`;
+}
+
 function isChatter(text: string): boolean {
   return /머그컵|굿즈|다이어리|구독|인스타|제휴|인사하고|팬들이|옷도|티셔츠|히스토리입니다|기말고사|촬영 기준/.test(
     text
@@ -88,6 +169,49 @@ function hasRealScript(meta: SummaryMeta, transcript: string): boolean {
     cleaned.length > 80 &&
     !cleaned.startsWith("제목:")
   );
+}
+
+function packSummaryResult(
+  llm: LlmSummary,
+  meta: SummaryMeta,
+  cleanedTranscript: string,
+  reportType: ReportType
+): SummarizeResult {
+  const rt =
+    llm.reportTypeHint && ["H", "S", "C", "P"].includes(llm.reportTypeHint)
+      ? llm.reportTypeHint
+      : reportType;
+
+  const rawPoints = (llm.factPoints ?? []).filter(
+    (p) => p.statement && !isVagueClaim(p.statement)
+  );
+  const seen = new Set<string>();
+  const deduped = rawPoints.filter((p) => {
+    const key = p.statement.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 80);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const items = deduped.map((p, idx) =>
+    toItem(
+      p.statement,
+      "claim",
+      true,
+      meta.videoId,
+      idx,
+      p.chapterTimestamp,
+      p.detail,
+      p.checkGuide || aiPromptFor(p.statement, p.detail)
+    )
+  );
+
+  return {
+    overview: llm.overview,
+    summaryBullets: llm.summaryBullets.filter((b) => !isVagueClaim(b)),
+    items: items.length ? items : chapterOrderClaims(meta, cleanedTranscript),
+    reportType: rt,
+  };
 }
 
 /** 1) 방송(챕터) 순서 기준 주요 내용 요약 + 팩트체크 항목 */
@@ -107,99 +231,98 @@ export async function summarizeContent(
     ? meta.chapters.map((c) => `${c.timestamp} ${c.title}`).join("\n")
     : "(챕터 없음)";
 
-  const sourceBlock = scriptMode
-    ? [
-        `【요약 대상: 스크립트 + 유튜브 방송 순서(챕터)】`,
-        `제목: ${meta.title}`,
-        `채널: ${meta.channel}`,
-        `방송 순서(챕터):\n${chapterList}`,
-        `스크립트:\n${cleanedTranscript.slice(0, 16000)}`,
-      ].join("\n\n")
-    : [
-        `【스크립트 약함 — 챕터·설명으로 요약】`,
-        `제목: ${meta.title}`,
-        `채널: ${meta.channel}`,
-        `방송 순서(챕터):\n${chapterList}`,
-        meta.description ? `설명:\n${meta.description.slice(0, 5000)}` : "",
-        cleanedTranscript
-          ? `보조 텍스트:\n${cleanedTranscript.slice(0, 8000)}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+  if (!scriptMode) {
+    const sourceBlock = [
+      `【스크립트 약함 — 챕터·설명으로 요약】`,
+      `제목: ${meta.title}`,
+      `채널: ${meta.channel}`,
+      `방송 순서(챕터):\n${chapterList}`,
+      meta.description ? `설명:\n${meta.description.slice(0, 5000)}` : "",
+      cleanedTranscript
+        ? `보조 텍스트:\n${cleanedTranscript.slice(0, 8000)}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
-  const system = `당신은 한국어 유튜브 분석가입니다.
+    try {
+      const llm = await chatJson<LlmSummary>(
+        summarizeSystemPrompt(reportType),
+        sourceBlock
+      );
+      if (llm?.overview && llm.summaryBullets?.length) {
+        return packSummaryResult(llm, meta, cleanedTranscript, reportType);
+      }
+    } catch {
+      /* fallback */
+    }
+    return chapterOrderFallback(meta, cleanedTranscript, reportType, scriptMode);
+  }
 
-필수 규칙:
-1) 보고서 유형(H/S/C/P) 구조로 요약하지 마세요.
-2) 유튜브가 제공하는 방송 순서(챕터 타임스탬프) 그대로 요약하세요.
-3) 각 챕터마다 그 구간의 핵심 내용만 1~2문장으로 쓰세요. 스크립트가 있으면 스크립트 근거로.
-4) factPoints는 인트로/엔딩을 제외한 챕터별 검증 가능 주장만.
-   - statement: 단정형 주장 한 줄
-   - detail: 왜 확인해야 하는지 2~3문장
-   - checkGuide: 제미나이 등 AI에게 붙여넣을 수 있는 **팩트체크 질문 한 문장**(상세·구체적)
-5) summaryBullets 형식: "00:00 챕터제목 — 핵심 한두 문장"
-
-JSON만 반환:
-{
-  "overview": "방송 순서 요약을 문단으로 (각 챕터를 타임스탬프와 함께)",
-  "summaryBullets": ["00:00 인트로 — …", "03:47 … — …"],
-  "factPoints": [{
-    "statement": "검증 가능한 단정형 주장",
-    "detail": "왜 확인해야 하는지",
-    "checkGuide": "AI에게 물어볼 팩트체크 질문 한 문장",
-    "type": "claim",
-    "needsFactCheck": true,
-    "chapterTimestamp": "03:47"
-  }],
-  "reportTypeHint": "${reportType}"
-}`;
+  const chunks = splitTranscriptChunks(cleanedTranscript);
 
   try {
-    const llm = await chatJson<{
-      overview: string;
-      summaryBullets: string[];
-      factPoints: Array<{
-        statement: string;
-        detail?: string;
-        checkGuide?: string;
-        type?: "claim" | "info";
-        needsFactCheck?: boolean;
-        chapterTimestamp?: string;
-      }>;
-      reportTypeHint?: ReportType;
-    }>(system, sourceBlock);
+    if (chunks.length === 1) {
+      const sourceBlock = [
+        `【요약 대상: 스크립트 전체 + 유튜브 방송 순서(챕터)】`,
+        `제목: ${meta.title}`,
+        `채널: ${meta.channel}`,
+        `방송 순서(챕터):\n${chapterList}`,
+        `스크립트(전체 ${cleanedTranscript.length}자):\n${chunks[0]}`,
+      ].join("\n\n");
 
-    if (llm?.overview && llm.summaryBullets?.length) {
-      const rt =
-        llm.reportTypeHint && ["H", "S", "C", "P"].includes(llm.reportTypeHint)
-          ? llm.reportTypeHint
-          : reportType;
-
-      const rawPoints = (llm.factPoints ?? []).filter(
-        (p) => p.statement && !isVagueClaim(p.statement)
+      const llm = await chatJson<LlmSummary>(
+        summarizeSystemPrompt(reportType),
+        sourceBlock
       );
-      const items = rawPoints.map((p, idx) =>
-        toItem(
-          p.statement,
-          "claim",
-          true,
-          meta.videoId,
-          idx,
-          p.chapterTimestamp,
-          p.detail,
-          p.checkGuide || aiPromptFor(p.statement, p.detail)
-        )
+      if (llm?.overview && llm.summaryBullets?.length) {
+        return packSummaryResult(llm, meta, cleanedTranscript, reportType);
+      }
+    } else {
+      // 긴 스크립트: 구간별 병렬 요약 후 합침 (앞부분만 보던 제한 제거)
+      const parts = await Promise.all(
+        chunks.map(async (chunk, i) => {
+          const sourceBlock = [
+            `【요약 대상: 스크립트 구간 ${i + 1}/${chunks.length}】`,
+            `제목: ${meta.title}`,
+            `채널: ${meta.channel}`,
+            `방송 순서(챕터):\n${chapterList}`,
+            `이 구간 스크립트:\n${chunk}`,
+          ].join("\n\n");
+          return chatJson<LlmSummary>(
+            summarizeSystemPrompt(
+              reportType,
+              `제공된 구간(${i + 1}/${chunks.length})만 빠짐없이 요약하세요. 다른 구간은 없다고 단정하지 마세요.`
+            ),
+            sourceBlock
+          );
+        })
       );
 
-      return {
-        overview: llm.overview,
-        summaryBullets: llm.summaryBullets.filter((b) => !isVagueClaim(b)),
-        items: items.length
-          ? items
-          : chapterOrderClaims(meta, cleanedTranscript),
-        reportType: rt,
-      };
+      const ok = parts.filter(
+        (p): p is LlmSummary =>
+          Boolean(p?.overview && p.summaryBullets?.length)
+      );
+
+      if (ok.length) {
+        const merged: LlmSummary = {
+          overview: ok.map((p, i) => `【${i + 1}/${ok.length}】\n${p.overview}`).join("\n\n"),
+          summaryBullets: ok.flatMap((p) => p.summaryBullets ?? []),
+          factPoints: ok.flatMap((p) => p.factPoints ?? []),
+          reportTypeHint: ok.find((p) => p.reportTypeHint)?.reportTypeHint,
+        };
+
+        // 챕터 순서로 bullet 정리 가능한 경우 중복 제거
+        const bulletSeen = new Set<string>();
+        merged.summaryBullets = merged.summaryBullets.filter((b) => {
+          const key = b.replace(/\s+/g, " ").trim().slice(0, 60);
+          if (bulletSeen.has(key)) return false;
+          bulletSeen.add(key);
+          return true;
+        });
+
+        return packSummaryResult(merged, meta, cleanedTranscript, reportType);
+      }
     }
   } catch {
     /* fallback */
