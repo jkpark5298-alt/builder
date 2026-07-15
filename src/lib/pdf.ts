@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { jsPDF } from "jspdf";
+import { reportBodyPlain } from "./report";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 
@@ -147,7 +148,7 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
   writeWrapped(report.summaryExcerpt, 10, 12);
 
   setFace("bold");
-  writeWrapped(`2. 본문 — ${report.reportTypeLabel}`, 13, 6);
+  writeWrapped("2. 본문 (요약 · 팩트체크)", 13, 6);
   setFace("normal");
 
   report.sections.forEach((sec) => {
@@ -155,7 +156,8 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     setFace("bold");
     writeWrapped(sec.heading, 12, 4);
     setFace("normal");
-    if (sec.body) writeWrapped(sec.body, 10, 6);
+    const plain = reportBodyPlain(sec.body, sec.rich);
+    if (plain) writeWrapped(plain, 10, 6);
 
     sec.entries?.forEach((entry) => {
       const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
@@ -164,32 +166,17 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
       if (fc?.verdict === "false" || fc?.verdict === "mostly_false") {
         setFace("bold");
         writeWrapped("  FACT CHECK ✗", 10, 2);
-      } else if (fc?.checkGuide) {
+      }
+      if (fc?.checkGuide) {
         setFace("normal");
-        writeWrapped(`  FACT CHECK: ${fc.checkGuide}`, 9, 6);
+        writeWrapped(`  ${fc.checkGuide}`, 9, 6);
+      } else if (entry.html) {
+        setFace("normal");
+        writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
       }
     });
     y += 4;
   });
-
-  const orphanFc = report.factChecks.filter(
-    (fc) =>
-      fc.checkGuide &&
-      !report.sections.some((s) =>
-        s.entries?.some((e) => e.itemId === fc.itemId)
-      )
-  );
-  if (orphanFc.length) {
-    setFace("bold");
-    writeWrapped("3. 팩트체크 정리", 13, 6);
-    setFace("normal");
-    orphanFc.forEach((fc, idx) => {
-      setFace("bold");
-      writeWrapped(`${idx + 1}. ${fc.statement}`, 10, 2);
-      setFace("normal");
-      writeWrapped(fc.checkGuide, 9, 8);
-    });
-  }
 
   if (!hasKr) {
     ensureSpace(40);

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
+  Eye,
   FileDown,
   Pencil,
   Share2,
@@ -43,7 +44,7 @@ export function VideoListCard({
   async function share(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const url = `${window.location.origin}/videos/${video.id}`;
+    const url = `${window.location.origin}/videos/${video.id}#report`;
     const text = `[FactCheck] ${video.title}`;
     try {
       if (navigator.share) {
@@ -66,7 +67,14 @@ export function VideoListCard({
 
   return (
     <article className="overflow-hidden rounded-2xl border border-ink-200 bg-white/90 hover:border-accent/40 hover:shadow-md transition-all">
-      <a href={`/videos/${video.id}`} className="block group">
+      <a
+        href={
+          listKind === "report-complete"
+            ? `/videos/${video.id}#report`
+            : `/videos/${video.id}`
+        }
+        className="block group"
+      >
         <div className="aspect-video overflow-hidden bg-ink-900">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -113,6 +121,15 @@ export function VideoListCard({
       </a>
 
       <div className="px-4 pb-4 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
+        {listKind === "report-complete" && ready && (
+          <a
+            href={`/videos/${video.id}#report`}
+            className={`${btn} border-accent/40 bg-accent-muted/40 text-ink-900 hover:bg-accent-muted`}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            보기
+          </a>
+        )}
         <a
           href={`/videos/${video.id}`}
           className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}

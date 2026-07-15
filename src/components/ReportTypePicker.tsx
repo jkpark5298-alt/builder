@@ -57,8 +57,8 @@ export function ReportTypePicker({
         보고서 유형
       </h3>
       <p className="text-xs sm:text-sm text-ink-500">
-        팩트체크 완료 후 이 유형으로 보고서(3번)를 작성합니다. (자동 추천:{" "}
-        {REPORT_TYPE_LABELS[video.reportType]})
+        영상 분류 태그입니다. 보고서는 유형과 무관하게 «결론 → 요약 →
+        팩트체크+이미지» 일반 형식으로 작성됩니다.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {(["H", "S", "C", "P"] as ReportType[]).map((t) => (

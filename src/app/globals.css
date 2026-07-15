@@ -34,3 +34,32 @@ h3,
 .font-display {
   font-family: var(--font-display);
 }
+
+/* 보고서 형광펜 · 서식 */
+.report-body mark,
+.hl-yellow {
+  background: linear-gradient(transparent 8%, #fef08a 8%, #fef08a 92%, transparent 92%);
+  color: inherit;
+  padding: 0 0.12em;
+  border-radius: 0.15em;
+}
+
+.report-body mark[style*="background"],
+.report-body span[style*="background"] {
+  border-radius: 0.15em;
+  padding: 0 0.1em;
+}
+
+.report-body u {
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
+
+.report-body strong,
+.report-body b {
+  font-weight: 700;
+}
+
+.report-body p {
+  margin: 0.4em 0;
+}

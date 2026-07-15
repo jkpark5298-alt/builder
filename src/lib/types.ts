@@ -56,23 +56,24 @@ export interface FactCheckResult {
 export interface ReportEntry {
   itemId?: string;
   text: string;
+  /** HTML 가능 */
+  html?: string;
   imageUrl?: string;
+  /** 팩트체크 답변 이미지 */
+  answerImageUrl?: string;
 }
 
 export interface ReportSectionBlock {
   heading: string;
+  /** plain 또는 HTML */
   body: string;
+  /** true 이면 body를 HTML로 렌더 */
+  rich?: boolean;
   imageUrl?: string;
+  /** 첨부·손글씨 이미지들 */
+  images?: string[];
   /** 본문 아래 항목(팩트체크 연동) */
   entries?: ReportEntry[];
-}
-
-export interface TypedReportFactCheckInline {
-  itemId: string;
-  statement: string;
-  verdict: FactCheckVerdict;
-  checkGuide: string;
-  answerImageUrl?: string;
 }
 
 export interface TypedReport {
@@ -84,11 +85,12 @@ export interface TypedReport {
   };
   reportType: ReportType;
   reportTypeLabel: string;
+  /** general = 연역형 일반 보고서 (TYPE 형식 폐지) */
+  format?: "general_v1" | "typed_legacy";
   /** 유형별 본문 섹션 */
   sections: ReportSectionBlock[];
   /** 요약 발췌 */
   summaryExcerpt: string;
-  /** @deprecated — entries + inline fact-check 사용 */
   factChecks: Array<{
     itemId?: string;
     statement: string;
