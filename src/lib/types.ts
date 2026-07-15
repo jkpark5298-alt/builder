@@ -86,7 +86,7 @@ export interface TypedReport {
   reportType: ReportType;
   reportTypeLabel: string;
   /** general = 연역형 일반 보고서 (TYPE 형식 폐지) */
-  format?: "general_v1" | "typed_legacy";
+  format?: "general_v1" | "general_v2" | "typed_legacy";
   /** 유형별 본문 섹션 */
   sections: ReportSectionBlock[];
   /** 요약 발췌 */

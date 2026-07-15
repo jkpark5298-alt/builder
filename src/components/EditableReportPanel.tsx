@@ -45,9 +45,7 @@ export function EditableReportPanel({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TypedReport | null>(report);
-  const [openFc, setOpenFc] = useState<string | null>(
-    report?.factChecks[0]?.itemId ?? null
-  );
+  const [openFc, setOpenFc] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
 
@@ -57,7 +55,7 @@ export function EditableReportPanel({
 
   // 구형식(TYPE별) → 일반 형식 자동 재생성
   useEffect(() => {
-    if (!video.report || video.report.format === "general_v1") return;
+    if (!video.report || video.report.format === "general_v2") return;
     let cancelled = false;
     (async () => {
       setRebuilding(true);
@@ -285,56 +283,45 @@ export function EditableReportPanel({
             const badge = verdictBadge(verdict);
             const open = openFc === entry.itemId;
             const failed = isFailedVerdict(verdict);
-            const primaryImg = entry.imageUrl || entry.answerImageUrl;
-            const secondaryImg =
-              entry.answerImageUrl &&
-              entry.answerImageUrl !== entry.imageUrl
-                ? entry.answerImageUrl
-                : undefined;
+            // 팩트체크 첨부 이미지 우선 → 항목 이미지
+            const reportImages = [
+              entry.answerImageUrl,
+              entry.imageUrl,
+              fc?.answerImageUrl,
+            ].filter(
+              (u, i, arr): u is string =>
+                Boolean(u) && arr.indexOf(u) === i
+            );
 
             return (
               <div
                 key={entry.itemId ?? entry.text}
                 className="rounded-xl border border-ink-100 overflow-hidden bg-white"
               >
-                {primaryImg && (
-                  <div className="border-b border-ink-100">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={primaryImg}
-                      alt=""
-                      className="w-full max-h-52 object-cover"
-                    />
-                  </div>
-                )}
                 <div className="p-3 sm:p-4 space-y-3">
                   <p className="font-medium text-ink-900 leading-snug">
                     <mark className="hl-yellow">{entry.text}</mark>
                   </p>
 
-                  {entry.html && !editing ? (
+                  {reportImages.map((src) => (
                     <div
-                      className="report-body text-sm text-ink-700 leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: entry.html }}
-                    />
-                  ) : null}
-
-                  {secondaryImg && (
-                    <div className="overflow-hidden rounded-lg border border-ink-100">
+                      key={src.slice(0, 48)}
+                      className="overflow-hidden rounded-lg border border-ink-100"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={secondaryImg}
-                        alt="팩트체크 참고 이미지"
-                        className="w-full max-h-44 object-cover"
+                        src={src}
+                        alt=""
+                        className="w-full max-h-64 object-contain bg-ink-50"
                       />
-                      <p className="text-xs text-ink-500 px-2 py-1 bg-ink-50">
-                        팩트체크 첨부 이미지
+                      <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
+                        관련 이미지
                       </p>
                     </div>
-                  )}
+                  ))}
 
                   {fc && (
-                    <div className="border-t border-ink-100 pt-2">
+                    <div className="pt-1">
                       <button
                         type="button"
                         onClick={() =>
@@ -359,14 +346,19 @@ export function EditableReportPanel({
                         )}
                       </button>
 
-                      {open && fc.checkGuide && (
+                      {/* 선택 시에만 세부 팩트체크 표시 */}
+                      {open && (
                         <div className="mt-2 rounded-lg bg-ink-50 border border-ink-100 p-3 text-sm text-ink-700 whitespace-pre-wrap leading-relaxed">
                           {failed && (
                             <p className="text-verify-false font-bold mb-2">
                               ✗ 사실과 다름
                             </p>
                           )}
-                          {fc.checkGuide}
+                          {fc.checkGuide || (
+                            <p className="text-ink-500">
+                              저장된 팩트체크 세부 내용이 없습니다.
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>

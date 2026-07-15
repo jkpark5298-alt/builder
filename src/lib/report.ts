@@ -7,9 +7,7 @@ import { REPORT_TYPE_LABELS } from "./types";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
-  isFailedVerdict,
   normalizeAiAnswer,
-  verdictBadge,
 } from "./text-format";
 
 export { detectReportType } from "./report-detect";
@@ -116,12 +114,24 @@ export function buildTypedReport(
     return true;
   });
 
+  const relatedImages = Array.from(
+    new Set(
+      [
+        ...fcItems.flatMap((item) => {
+          const fc = fcMap.get(item.id);
+          return [fc?.answerImageUrl, item.imageUrl].filter(Boolean) as string[];
+        }),
+      ].filter((u) => u && !u.includes("/hqdefault.jpg") && !u.includes("/mqdefault.jpg"))
+    )
+  ).slice(0, 6);
+
   const sections = [
     {
       heading: "결론",
       body: highlightConclusion(conclusionText),
       rich: true,
-      imageUrl: video.thumbnailUrl,
+      imageUrl: relatedImages[0] || video.thumbnailUrl,
+      images: relatedImages.slice(1, 4),
     },
     {
       heading: "요약",
@@ -136,20 +146,9 @@ export function buildTypedReport(
       rich: true,
       entries: fcItems.map((item) => {
         const fc = fcMap.get(item.id);
-        const raw = fc?.explanation?.trim() ?? "";
-        const isPrompt =
-          !raw || (/^다음 주장을/.test(raw) && /팩트체크/.test(raw));
-        const badge = verdictBadge(fc?.verdict ?? "pending");
-        const guide = isPrompt ? "" : normalizeAiAnswer(raw);
-        const fail = isFailedVerdict(fc?.verdict ?? "pending");
         return {
           itemId: item.id,
           text: item.statement,
-          html: guide
-            ? `<p><strong>FACT CHECK ${badge.mark} ${escapeHtml(badge.label)}</strong>${
-                fail ? ' <span style="color:#c03030">✗</span>' : ""
-              }</p><p>${escapeHtml(guide).replace(/\n/g, "<br/>")}</p>`
-            : undefined,
           imageUrl: item.imageUrl,
           answerImageUrl: fc?.answerImageUrl,
         };
@@ -166,7 +165,7 @@ export function buildTypedReport(
     },
     reportType: video.reportType,
     reportTypeLabel: "일반 보고서",
-    format: "general_v1",
+    format: "general_v2" as const,
     sections,
     summaryExcerpt: dedupeTexts([
       `결론: ${conclusionText}`,
