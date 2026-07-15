@@ -1,7 +1,16 @@
 "use client";
 
-import { Check, Copy, ExternalLink, Monitor, Smartphone } from "lucide-react";
+import {
+  Check,
+  ClipboardCopy,
+  Copy,
+  ExternalLink,
+  Link2,
+  Monitor,
+  Smartphone,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { extractVideoId } from "@/lib/youtube";
 
 /**
  * 유튜브 페이지에서 실행 → 자막을 클립보드에 복사.
@@ -16,28 +25,38 @@ type Props = {
   compact?: boolean;
 };
 
+type Step = "app" | "easy" | "bookmark" | "manual";
+
+function buildTranscriptAppUrl(videoId: string | null): string {
+  if (videoId) return `https://youtubetranscript.com/?v=${videoId}`;
+  return "https://youtubetranscript.com/";
+}
+
 export function ScriptCopyHelper({ youtubeUrl }: Props) {
-  const [copied, setCopied] = useState<"full" | null>(null);
+  const [copied, setCopied] = useState<"full" | "url" | null>(null);
   const [tab, setTab] = useState<"pc" | "ios">(() => {
     if (typeof navigator === "undefined") return "pc";
     return /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "ios" : "pc";
   });
-  const [step, setStep] = useState<"easy" | "bookmark" | "manual">("easy");
+  const [step, setStep] = useState<Step>("app");
+  const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
   const dragHostRef = useRef<HTMLDivElement>(null);
+
+  const videoId = useMemo(
+    () => (youtubeUrl?.trim() ? extractVideoId(youtubeUrl.trim()) : null),
+    [youtubeUrl]
+  );
 
   const watchUrl = useMemo(() => {
     if (!youtubeUrl?.trim()) return null;
-    try {
-      const u = new URL(youtubeUrl.trim());
-      if (u.hostname.includes("youtu.be")) {
-        const id = u.pathname.replace("/", "");
-        return id ? `https://www.youtube.com/watch?v=${id}` : youtubeUrl;
-      }
-      return youtubeUrl.trim();
-    } catch {
-      return youtubeUrl.trim();
-    }
-  }, [youtubeUrl]);
+    if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    return youtubeUrl.trim();
+  }, [youtubeUrl, videoId]);
+
+  const transcriptAppUrl = useMemo(
+    () => buildTranscriptAppUrl(videoId),
+    [videoId]
+  );
 
   // React는 JSX의 javascript: href를 보안상 막음 → 네이티브 DOM으로만 드래그 링크 생성
   useEffect(() => {
@@ -70,20 +89,50 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
     setTimeout(() => setCopied(null), 4000);
   }
 
+  async function copyWatchUrl() {
+    const text = watchUrl || youtubeUrl?.trim() || "";
+    if (!text) return;
+    await navigator.clipboard.writeText(text);
+    setCopied("url");
+    setPhase(2);
+    setTimeout(() => setCopied(null), 4000);
+  }
+
+  function openTranscriptApp() {
+    setPhase((p) => (p < 2 ? 2 : p));
+    window.open(transcriptAppUrl, "_blank", "noopener,noreferrer");
+  }
+
+  async function requestSubtitles() {
+    // 1) URL 복사 2) 자막 앱 열기
+    if (watchUrl || youtubeUrl?.trim()) {
+      try {
+        await navigator.clipboard.writeText(watchUrl || youtubeUrl!.trim());
+        setCopied("url");
+        setTimeout(() => setCopied(null), 4000);
+      } catch {
+        /* 클립보드 실패해도 앱은 연다 */
+      }
+    }
+    setPhase(2);
+    window.open(transcriptAppUrl, "_blank", "noopener,noreferrer");
+  }
+
   return (
     <div className="rounded-xl border border-ink-200 bg-white/90 p-4 space-y-4">
       <div>
-        <p className="text-base font-medium text-ink-900">스크립트(자막) 복사 방법</p>
+        <p className="text-base font-medium text-ink-900">스크립트(자막) 가져오기</p>
         <p className="text-xs text-ink-500 mt-1">
-          가장 쉬운 건 <strong>수동 복사</strong>입니다. 북마크는 자주 쓸 때만
-          설치하세요.
+          추천: 무료 웹앱{" "}
+          <strong>youtubetranscript.com</strong>에서 자막 복사 → 여기 붙여넣기
         </p>
       </div>
 
       <div className="flex gap-1 rounded-lg bg-ink-100/80 p-0.5">
         {(
           [
-            ["easy", "가장 쉬움"],
+            ["app", "자막 앱"],
+            ["easy", "유튜브 수동"],
             ["bookmark", "북마크"],
             ["manual", "기기별"],
           ] as const
@@ -92,7 +141,7 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
             key={id}
             type="button"
             onClick={() => setStep(id)}
-            className={`flex-1 min-h-9 rounded-md text-xs sm:text-sm font-medium ${
+            className={`flex-1 min-h-9 rounded-md text-[11px] sm:text-sm font-medium ${
               step === id ? "bg-white text-ink-900 shadow-sm" : "text-ink-500"
             }`}
           >
@@ -101,10 +150,134 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
         ))}
       </div>
 
+      {step === "app" && (
+        <div className="space-y-3 text-sm text-ink-800 leading-relaxed">
+          <ol className="space-y-3">
+            <li
+              className={`rounded-xl border px-3 py-3 ${
+                phase === 1
+                  ? "border-accent bg-accent-muted/40"
+                  : "border-ink-100 bg-ink-50/60"
+              }`}
+            >
+              <p className="font-medium text-ink-900 mb-1">1. 자막 요청</p>
+              <p className="text-xs text-ink-600 mb-2">
+                유튜브 주소를 복사하고 무료 자막 앱으로 이동합니다.
+              </p>
+              {!videoId && (
+                <p className="text-xs text-verify-false mb-2">
+                  먼저 위에 유튜브 주소를 붙여넣어 주세요.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => void requestSubtitles()}
+                disabled={!videoId && !youtubeUrl?.trim()}
+                className="inline-flex w-full items-center justify-center gap-2 min-h-11 rounded-xl bg-accent px-4 text-sm font-medium text-white hover:bg-ink-900 disabled:opacity-50"
+              >
+                <ExternalLink className="h-4 w-4" />
+                자막 요청 · 앱으로 이동
+              </button>
+              {copied === "url" && (
+                <p className="mt-2 text-xs text-accent font-medium flex items-center gap-1">
+                  <Check className="h-3.5 w-3.5" />
+                  유튜브 주소가 복사됐습니다
+                </p>
+              )}
+            </li>
+
+            <li
+              className={`rounded-xl border px-3 py-3 ${
+                phase === 2
+                  ? "border-accent bg-accent-muted/40"
+                  : "border-ink-100 bg-ink-50/60"
+              }`}
+            >
+              <p className="font-medium text-ink-900 mb-1">
+                2. 자막 앱에 URL 입력
+              </p>
+              <p className="text-xs text-ink-600 mb-2">
+                <strong>youtubetranscript.com</strong>이 열리면 영상이 자동으로
+                불러와집니다. 안 되면 복사한 주소를 붙여넣으세요.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyWatchUrl()}
+                  disabled={!watchUrl}
+                  className="inline-flex flex-1 items-center justify-center gap-2 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+                >
+                  <Link2 className="h-3.5 w-3.5" />
+                  URL 다시 복사
+                </button>
+                <button
+                  type="button"
+                  onClick={openTranscriptApp}
+                  className="inline-flex flex-1 items-center justify-center gap-2 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  앱 다시 열기
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhase(3)}
+                className="mt-2 text-xs text-accent font-medium underline"
+              >
+                앱에서 자막이 보임 → 다음
+              </button>
+            </li>
+
+            <li
+              className={`rounded-xl border px-3 py-3 ${
+                phase === 3
+                  ? "border-accent bg-accent-muted/40"
+                  : "border-ink-100 bg-ink-50/60"
+              }`}
+            >
+              <p className="font-medium text-ink-900 mb-1">3. 자막 복사</p>
+              <p className="text-xs text-ink-600">
+                사이트에서{" "}
+                <strong>Copy entire transcript</strong> (전체 자막 복사)를
+                누르거나, 자막 텍스트를 전체 선택 → 복사하세요.
+              </p>
+              <button
+                type="button"
+                onClick={() => setPhase(4)}
+                className="mt-2 inline-flex items-center gap-1.5 min-h-10 rounded-xl bg-ink-900 px-3 text-xs font-medium text-white"
+              >
+                <ClipboardCopy className="h-3.5 w-3.5" />
+                복사 완료 · 붙여넣기로
+              </button>
+            </li>
+
+            <li
+              className={`rounded-xl border px-3 py-3 ${
+                phase === 4
+                  ? "border-accent bg-accent-muted/40"
+                  : "border-ink-100 bg-ink-50/60"
+              }`}
+            >
+              <p className="font-medium text-ink-900 mb-1">4. 여기에 붙여넣기</p>
+              <p className="text-xs text-ink-600">
+                FactCheck로 돌아와 아래{" "}
+                <strong>② 스크립트</strong> 칸에 붙여넣기 →{" "}
+                <strong>스크립트로 요약 · 검증</strong>
+              </p>
+            </li>
+          </ol>
+
+          <p className="text-[11px] text-ink-500 leading-relaxed">
+            무료 웹 서비스(youtubetranscript.com)입니다. 자막이 없는 영상은
+            가져올 수 없습니다.
+          </p>
+        </div>
+      )}
+
       {step === "easy" && (
         <div className="space-y-3 text-sm text-ink-800 leading-relaxed">
           <p className="font-medium text-ink-900">
-            {tab === "ios" ? "아이폰에서 수동 복사 (추천)" : "PC에서 수동 복사 (추천)"}
+            {tab === "ios" ? "아이폰에서 수동 복사" : "PC에서 수동 복사"}
           </p>
           {tab === "ios" ? (
             <ol className="list-decimal pl-5 space-y-2">
@@ -135,9 +308,6 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
               <li>
                 FactCheck로 돌아와 붙여넣기 칸을 <strong>길게 눌러 붙여넣기</strong>
               </li>
-              <li>
-                아래로 스크롤해 <strong>스크립트로 요약 · 검증</strong> 누르기
-              </li>
             </ol>
           ) : (
             <ol className="list-decimal pl-5 space-y-2">
@@ -152,29 +322,16 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
                     >
                       유튜브에서 영상 열기
                     </a>
-                    를 누릅니다.
                   </>
                 ) : (
-                  <>먼저 위에 유튜브 주소를 입력한 뒤, 유튜브에서 영상을 엽니다.</>
+                  <>먼저 유튜브 주소를 입력한 뒤 영상을 엽니다.</>
                 )}
               </li>
               <li>
-                영상 제목 아래 <strong>⋯ (더보기)</strong> 클릭
+                <strong>⋯</strong> → <strong>스크립트 표시</strong>
               </li>
               <li>
-                <strong>스크립트 표시</strong> 클릭 → 오른쪽에 자막 목록이 열림
-              </li>
-              <li>
-                자막 목록 안을 한 번 클릭 →{" "}
-                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-                <kbd className="rounded bg-ink-100 px-1">A</kbd> →{" "}
-                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-                <kbd className="rounded bg-ink-100 px-1">C</kbd>
-              </li>
-              <li>
-                FactCheck로 돌아와 붙여넣기 칸에{" "}
-                <kbd className="rounded bg-ink-100 px-1">Ctrl</kbd>+
-                <kbd className="rounded bg-ink-100 px-1">V</kbd>
+                자막 클릭 → Ctrl+A → Ctrl+C → FactCheck에 Ctrl+V
               </li>
             </ol>
           )}
@@ -204,53 +361,11 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
               PC
             </button>
           </div>
-          {watchUrl && (
-            <a
-              href={watchUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 min-h-11 rounded-xl bg-ink-900 px-4 text-sm font-medium text-white hover:bg-accent"
-            >
-              <ExternalLink className="h-4 w-4" />
-              유튜브에서 영상 열기
-            </a>
-          )}
         </div>
       )}
 
       {step === "bookmark" && (
         <div className="space-y-4 text-sm text-ink-800 leading-relaxed">
-          <div className="rounded-lg border border-verify-false/40 bg-red-50 px-3 py-2.5 text-xs sm:text-sm text-ink-800">
-            <p className="font-medium text-ink-900 mb-1">
-              「React has blocked a javascript: URL」 오류가 나면
-            </p>
-            <p className="mb-2">
-              예전에 저장된 북마크가 <strong>잘못된 코드</strong>입니다. 아래
-              순서대로 URL을 다시 넣으세요.
-            </p>
-            <ol className="list-decimal pl-4 space-y-1">
-              <li>
-                <strong>북마크 코드 복사</strong> 클릭
-              </li>
-              <li>
-                즐겨찾기 <strong>YT 스크립트 복사</strong> 우클릭 →{" "}
-                <strong>수정</strong>
-              </li>
-              <li>
-                URL 칸을 전부 지우고 <kbd className="rounded bg-white px-1 border">Ctrl</kbd>+
-                <kbd className="rounded bg-white px-1 border">V</kbd> → 저장
-              </li>
-              <li>
-                URL이 <code className="bg-white px-1 rounded border text-[11px]">javascript:void</code> 로
-                시작하는지 확인 (React / Error 글자가 있으면 안 됨)
-              </li>
-              <li>유튜브에서 다시 클릭 → 「자막 복사 시작…」 알림 확인</li>
-            </ol>
-          </div>
-
-          <p className="font-medium text-ink-900">
-            권장 — 북마크 코드 복사 후 URL에 직접 넣기
-          </p>
           <button
             type="button"
             onClick={copyFull}
@@ -265,22 +380,7 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
               ? "복사됨 — 북마크 수정 → URL에 Ctrl+V"
               : "북마크 코드 복사"}
           </button>
-
-          <p className="font-medium text-ink-900 pt-1">
-            또는 — 아래 버튼을 즐겨찾기로 드래그
-          </p>
-          <p className="text-xs text-ink-600">
-            마우스 왼쪽 누른 채 주소창 아래 즐겨찾기 줄로 끌어다 놓으세요.
-          </p>
           <div ref={dragHostRef} />
-
-          <div className="rounded-lg border border-accent/30 bg-accent-muted/40 p-3 text-xs sm:text-sm">
-            <p className="font-medium text-ink-900 mb-1">즐겨찾기 표시줄 켜기</p>
-            <p>
-              Chrome <strong>⋮</strong> → 북마크 → 즐겨찾기 표시줄 표시
-              (또는 Ctrl+Shift+B)
-            </p>
-          </div>
         </div>
       )}
 
@@ -310,17 +410,18 @@ export function ScriptCopyHelper({ youtubeUrl }: Props) {
           </div>
           {tab === "pc" ? (
             <p className="text-sm text-ink-700 leading-relaxed">
-              PC는 <strong>가장 쉬움</strong> 탭의 ⋯ → 스크립트 표시 → Ctrl+A →
-              Ctrl+C 가 가장 확실합니다.
+              PC는 <strong>자막 앱</strong> 탭 또는 유튜브 ⋯ → 스크립트 표시가
+              가장 확실합니다.
             </p>
           ) : (
             <ol className="list-decimal pl-5 space-y-2 text-sm text-ink-700 leading-relaxed">
-              <li>유튜브 <strong>앱이 아니라 Safari</strong>로 영상을 엽니다.</li>
               <li>
-                주소창 <strong>AA</strong> → 데스크톱 웹 사이트 요청
+                <strong>자막 앱</strong> 탭의 「자막 요청 · 앱으로 이동」을
+                권장합니다.
               </li>
-              <li>⋯ → 스크립트 표시</li>
-              <li>자막을 길게 눌러 선택 → 복사 → FactCheck에 붙여넣기</li>
+              <li>
+                Safari로 열면 Copy entire transcript 후 FactCheck에 붙여넣기
+              </li>
             </ol>
           )}
         </div>

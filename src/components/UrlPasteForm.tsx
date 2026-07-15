@@ -221,7 +221,7 @@ export function UrlPasteForm() {
             <div className="grid grid-cols-[1fr_1.2fr]">
               <div className="px-3 py-2.5 text-accent font-medium">② 스크립트</div>
               <div className="px-3 py-2.5 text-ink-700">
-                자막 또는 AI 요약 (80자+) → <strong>스크립트로 요약·검증</strong>
+                「자막 요청」→ youtubetranscript.com → 복사 → 붙여넣기 (80자+)
               </div>
             </div>
           </div>

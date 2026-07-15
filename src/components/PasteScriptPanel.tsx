@@ -54,8 +54,8 @@ export function PasteScriptPanel({
             스크립트를 붙여넣어 재요약하세요
           </p>
           <p className="text-xs text-ink-600 mt-1 leading-relaxed">
-            Vercel에서는 유튜브 자막을 자동으로 가져오지 않습니다. 아래 도우미로
-            복사한 뒤 붙여넣으면 요약·팩트체크가 정상 진행됩니다.
+            「자막 앱」에서 자막 요청 → youtubetranscript.com에서 복사 → 아래에
+            붙여넣으면 요약·팩트체크가 진행됩니다.
           </p>
         </div>
       </div>
