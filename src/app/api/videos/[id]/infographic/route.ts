@@ -48,7 +48,7 @@ export async function POST(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
   const body = (await req.json().catch(() => ({}))) as {
-    channel?: "email" | "kakao";
+    channel?: "email" | "kakao" | "goodnotes";
     rebuild?: boolean;
   };
 
@@ -62,16 +62,18 @@ export async function POST(req: Request, ctx: Ctx) {
     };
   }
 
+  const tag =
+    body.channel === "kakao"
+      ? "shared-kakao"
+      : body.channel === "goodnotes"
+        ? "shared-goodnotes"
+        : "shared-email";
+
   const updated = {
     ...next,
     sharedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    tags: Array.from(
-      new Set([
-        ...next.tags,
-        body.channel === "kakao" ? "shared-kakao" : "shared-email",
-      ])
-    ),
+    tags: Array.from(new Set([...next.tags, tag])),
   };
   await upsertVideo(updated);
   return NextResponse.json({ video: updated, channel: body.channel ?? "email" });

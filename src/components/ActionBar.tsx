@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookOpen,
   Mail,
   MessageCircle,
   FileDown,
@@ -12,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
+import { shareInfographicToGoodNotes } from "@/lib/share-goodnotes";
 
 declare global {
   interface Window {
@@ -28,10 +30,11 @@ declare global {
 export function ActionBar({ video }: { video: VideoRecord }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [goodnotesBusy, setGoodnotesBusy] = useState(false);
   const ready = canExportArtifacts(video);
   const kakaoConfigured = Boolean(process.env.NEXT_PUBLIC_KAKAO_JS_KEY);
 
-  async function markShared(channel: "email" | "kakao") {
+  async function markShared(channel: "email" | "kakao" | "goodnotes") {
     await fetch(`/api/videos/${video.id}/infographic`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -113,6 +116,33 @@ export function ActionBar({ video }: { video: VideoRecord }) {
     window.location.href = `/api/videos/${video.id}/infographic?download=1`;
   }
 
+  async function shareGoodNotes() {
+    if (!ready) return;
+    setGoodnotesBusy(true);
+    try {
+      const result = await shareInfographicToGoodNotes({
+        videoId: video.videoId,
+        title: video.title,
+        svgUrl: `/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`,
+      });
+      void markShared("goodnotes");
+      if (result === "downloaded") {
+        alert(
+          "PNG를 저장했습니다.\nGoodnotes 앱에서 「이미지 가져오기」로 열어 필기하세요."
+        );
+      }
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      alert(
+        e instanceof Error
+          ? e.message
+          : "굿노트 공유에 실패했습니다. SVG 다운로드를 이용해 주세요."
+      );
+    } finally {
+      setGoodnotesBusy(false);
+    }
+  }
+
   async function remove() {
     if (!confirm("이 항목을 삭제할까요?")) return;
     setBusy(true);
@@ -152,6 +182,19 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         >
           <ImageDown className="h-4 w-4 shrink-0" />
           SVG 다운로드
+        </button>
+        <button
+          type="button"
+          disabled={!ready || goodnotesBusy}
+          onClick={() => void shareGoodNotes()}
+          className={`${btn} ${
+            ready
+              ? "border-accent/40 bg-accent-muted/40 hover:bg-accent-muted text-ink-900"
+              : disabled
+          }`}
+        >
+          <BookOpen className="h-4 w-4 shrink-0" />
+          {goodnotesBusy ? "준비 중…" : "굿노트 공유"}
         </button>
         <button
           type="button"

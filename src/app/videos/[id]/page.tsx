@@ -1,7 +1,8 @@
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
-import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
+import { InfographicSharePanel } from "@/components/InfographicSharePanel";
+import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
@@ -234,14 +235,17 @@ export default async function VideoDetailPage({
               4. 인포그래픽 · 저장 · 공유
             </h2>
             {video.infographic ? (
-              <div className="overflow-x-auto rounded-xl border border-ink-100 bg-ink-50">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`}
-                  alt="인포그래픽"
-                  className="w-full h-auto min-w-[280px]"
-                />
-              </div>
+              <>
+                <div className="overflow-x-auto rounded-xl border border-ink-100 bg-ink-50">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`}
+                    alt="인포그래픽"
+                    className="w-full h-auto min-w-[280px]"
+                  />
+                </div>
+                <InfographicSharePanel video={video} />
+              </>
             ) : (
               <p className="text-ink-500 text-sm">아직 생성되지 않았습니다.</p>
             )}
