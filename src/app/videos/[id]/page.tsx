@@ -236,12 +236,13 @@ export default async function VideoDetailPage({
             </h2>
             {video.infographic ? (
               <>
-                <div className="overflow-x-auto rounded-xl border border-ink-100 bg-ink-50">
+                <div className="overflow-auto rounded-xl border border-ink-100 bg-ink-50 max-h-none">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={`/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`}
                     alt="인포그래픽"
-                    className="w-full h-auto min-w-[280px]"
+                    className="w-full h-auto max-w-none block"
+                    style={{ minHeight: "200px" }}
                   />
                 </div>
                 <InfographicSharePanel video={video} />

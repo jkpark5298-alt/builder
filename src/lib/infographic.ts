@@ -11,14 +11,15 @@ function isYoutubeThumb(url?: string | null): boolean {
 
 function stripTags(html: string): string {
   return html
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<\/p>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
+    .replace(/\n+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -52,13 +53,17 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
   }
 }
 
+/** 한글·영문 혼합 줄바꿈 (대략 픽셀 폭 기준) */
 function wrapSvgText(
   text: string,
-  maxChars: number,
-  maxLines: number
+  maxWidthPx: number,
+  maxLines: number,
+  fontSize: number
 ): string[] {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return [];
+  const avg = fontSize * 0.92; // 한글 기준
+  const maxChars = Math.max(8, Math.floor(maxWidthPx / avg));
   const lines: string[] = [];
   let rest = clean;
   while (rest && lines.length < maxLines) {
@@ -67,7 +72,7 @@ function wrapSvgText(
       break;
     }
     let cut = rest.lastIndexOf(" ", maxChars);
-    if (cut < maxChars * 0.4) cut = maxChars;
+    if (cut < maxChars * 0.35) cut = maxChars;
     lines.push(rest.slice(0, cut).trim());
     rest = rest.slice(cut).trim();
   }
@@ -109,9 +114,8 @@ export async function buildInfographic(
     const isPrompt = !answer || /^다음 주장을/.test(answer);
     const summary = isPrompt
       ? item.statement
-      : normalizeAiAnswer(answer).slice(0, 160);
+      : normalizeAiAnswer(answer).slice(0, 220);
 
-    // 관련 이미지만 — 유튜브 대표/프레임은 카드에 넣지 않음
     let related: string | null = null;
     if (fc?.answerImageUrl && !isYoutubeThumb(fc.answerImageUrl)) {
       related = await fetchImageDataUrl(fc.answerImageUrl);
@@ -133,9 +137,16 @@ export async function buildInfographic(
       .filter((s) => s.heading !== "팩트체크")
       .map((s) => ({
         heading: s.heading,
-        short: stripTags(s.body).slice(0, 90) || "",
+        short: stripTags(s.body).slice(0, 280) || "",
       }))
       .filter((s) => s.short) ?? [];
+
+  // 팩트체크 하단 요약 (항상 표시)
+  const fcBottom = cards.map((c) => ({
+    heading: `FACT ${c.mark}`,
+    short: c.statement,
+    fail: c.fail,
+  }));
 
   const highlights = cards.map((c) => ({
     label: c.fail ? "검증 ✗" : "검증",
@@ -153,85 +164,127 @@ export async function buildInfographic(
     isFailedVerdict(f.verdict)
   ).length;
 
-  // —— Layout: title → hero once → stats → vertical FC rows ——
+  const W = 800;
+  const padX = 48;
+  const contentW = W - padX * 2;
+
   const heroH = hero ? 200 : 0;
   const titleBlockH = 70;
   const heroTop = 24 + titleBlockH;
   const statsY = hero ? heroTop + heroH + 18 : 24 + titleBlockH;
-  let y = statsY + 68;
+  let y = statsY + 72;
+  let contentBottom = y;
 
-  const cardBlocks: string[] = [];
+  const blocks: string[] = [];
+
+  // —— 팩트체크 항목 카드 ——
   cards.forEach((c, i) => {
     const hasImg = Boolean(c.img);
-    const stmtLines = wrapSvgText(c.statement, hasImg ? 42 : 68, 2);
-    const sumLines = wrapSvgText(c.summary, hasImg ? 42 : 68, hasImg ? 3 : 4);
-    const textH = 28 + stmtLines.length * 16 + sumLines.length * 14 + 16;
-    const blockH = Math.max(hasImg ? 118 : 72, textH);
+    const textW = hasImg ? contentW - 200 : contentW - 36;
+    const stmtLines = wrapSvgText(c.statement, textW, 3, 13);
+    const sumLines = wrapSvgText(c.summary, textW, hasImg ? 4 : 5, 11);
+    const textH =
+      24 + stmtLines.length * 18 + 6 + sumLines.length * 15 + 16;
+    const blockH = Math.max(hasImg ? 124 : 80, textH);
     const top = y;
 
     let imgBlock = "";
     if (c.img) {
       imgBlock = `
-      <clipPath id="rc${i}"><rect x="560" y="${top + 10}" width="180" height="98" rx="8"/></clipPath>
-      <image href="${c.img}" xlink:href="${c.img}" x="560" y="${top + 10}" width="180" height="98" preserveAspectRatio="xMidYMid slice" clip-path="url(#rc${i})"/>
-      <rect x="560" y="${top + 10}" width="180" height="98" rx="8" fill="none" stroke="#d0d9e2"/>`;
+      <clipPath id="rc${i}"><rect x="${padX + contentW - 188}" y="${top + 12}" width="176" height="100" rx="8"/></clipPath>
+      <image href="${c.img}" xlink:href="${c.img}" x="${padX + contentW - 188}" y="${top + 12}" width="176" height="100" preserveAspectRatio="xMidYMid slice" clip-path="url(#rc${i})"/>
+      <rect x="${padX + contentW - 188}" y="${top + 12}" width="176" height="100" rx="8" fill="none" stroke="#d0d9e2"/>`;
     }
 
     const stmt = stmtLines
       .map(
         (line, li) =>
-          `<text x="72" y="${top + 36 + li * 16}" font-size="13" font-weight="600" fill="#1a2430">${escapeXml(line)}</text>`
+          `<text x="${padX + 28}" y="${top + 34 + li * 18}" font-size="13" font-weight="600" fill="#1a2430">${escapeXml(line)}</text>`
       )
       .join("");
+    const sumStart = top + 34 + stmtLines.length * 18 + 8;
     const sum = sumLines
       .map(
         (line, li) =>
-          `<text x="72" y="${top + 40 + stmtLines.length * 16 + li * 14}" font-size="11" fill="#567088">${escapeXml(line)}</text>`
+          `<text x="${padX + 28}" y="${sumStart + li * 15}" font-size="11" fill="#567088">${escapeXml(line)}</text>`
       )
       .join("");
 
-    cardBlocks.push(`
+    blocks.push(`
     <g>
-      <rect x="48" y="${top}" width="704" height="${blockH}" rx="12" fill="#ffffff" stroke="${c.fail ? "#e05555" : "#d0d9e2"}"/>
-      <circle cx="64" cy="${top + 22}" r="10" fill="${c.fail ? "#fde8e8" : "#e8f5ec"}"/>
-      <text x="64" y="${top + 26}" text-anchor="middle" font-size="12" font-weight="700" fill="${c.fail ? "#c03030" : "#2d6a3e"}">${escapeXml(c.mark)}</text>
+      <rect x="${padX}" y="${top}" width="${contentW}" height="${blockH}" rx="12" fill="#ffffff" stroke="${c.fail ? "#e05555" : "#d0d9e2"}"/>
+      <circle cx="${padX + 16}" cy="${top + 22}" r="10" fill="${c.fail ? "#fde8e8" : "#e8f5ec"}"/>
+      <text x="${padX + 16}" y="${top + 26}" text-anchor="middle" font-size="12" font-weight="700" fill="${c.fail ? "#c03030" : "#2d6a3e"}">${escapeXml(c.mark)}</text>
       ${stmt}
       ${sum}
       ${imgBlock}
     </g>`);
     y += blockH + 12;
+    contentBottom = y;
   });
 
-  y += 8;
+  // —— 보고서 요약 (결론·요약 전체 표시) ——
   if (sectionHints.length) {
-    cardBlocks.push(
-      `<text x="48" y="${y}" font-size="12" fill="#7890a8">보고서 요약</text>`
+    y += 10;
+    blocks.push(
+      `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">보고서 요약</text>`
     );
-    y += 14;
+    y += 18;
+    contentBottom = y;
+
+    for (const h of sectionHints) {
+      const lines = wrapSvgText(h.short, contentW - 36, 6, 11);
+      const hgt = 22 + 8 + lines.length * 15 + 14;
+      const top = y;
+      const body = lines
+        .map(
+          (line, li) =>
+            `<text x="${padX + 20}" y="${top + 36 + li * 15}" font-size="11" fill="#425870">${escapeXml(line)}</text>`
+        )
+        .join("");
+      blocks.push(`
+      <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="10" fill="#fff" stroke="#e2e8f0"/>
+      <rect x="${padX}" y="${top}" width="5" height="${hgt}" rx="2" fill="#c45c26"/>
+      <text x="${padX + 20}" y="${top + 18}" font-size="12" font-weight="600" fill="#c45c26">${escapeXml(h.heading)}</text>
+      ${body}`);
+      y += hgt + 12;
+      contentBottom = y;
+    }
   }
 
-  const rowBlocks = sectionHints.map((h) => {
-    const lines = wrapSvgText(h.short, 78, 2);
-    const hgt = 28 + lines.length * 14;
-    const top = y;
-    const body = lines
-      .map(
-        (line, li) =>
-          `<text x="68" y="${top + 30 + li * 14}" font-size="11" fill="#425870">${escapeXml(line)}</text>`
-      )
-      .join("");
-    y += hgt + 10;
-    return `
-      <rect x="48" y="${top}" width="704" height="${hgt}" rx="10" fill="#fff" stroke="#e2e8f0"/>
-      <rect x="48" y="${top}" width="5" height="${hgt}" rx="2" fill="#c45c26"/>
-      <text x="68" y="${top + 16}" font-size="11" font-weight="600" fill="#c45c26">${escapeXml(h.heading)}</text>
-      ${body}`;
-  });
+  // —— 팩트체크 한줄 요약 (하단) ——
+  if (fcBottom.length) {
+    y += 8;
+    blocks.push(
+      `<text x="${padX}" y="${y}" font-size="13" font-weight="600" fill="#567088">팩트체크 요약</text>`
+    );
+    y += 18;
+    contentBottom = y;
 
-  const height = Math.max(420, y + 40);
+    for (const row of fcBottom) {
+      const lines = wrapSvgText(row.short, contentW - 48, 3, 12);
+      const hgt = 18 + lines.length * 16 + 12;
+      const top = y;
+      const body = lines
+        .map(
+          (line, li) =>
+            `<text x="${padX + 44}" y="${top + 22 + li * 16}" font-size="12" fill="#1a2430">${escapeXml(line)}</text>`
+        )
+        .join("");
+      blocks.push(`
+      <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="10" fill="${row.fail ? "#fff5f5" : "#f7faf8"}" stroke="${row.fail ? "#f0b4b4" : "#cfe3d4"}"/>
+      <text x="${padX + 14}" y="${top + 22}" font-size="12" font-weight="700" fill="${row.fail ? "#c03030" : "#2d6a3e"}">${escapeXml(row.heading)}</text>
+      ${body}`);
+      y += hgt + 10;
+      contentBottom = y;
+    }
+  }
+
+  // 하단이 잘리지 않도록 여유 패딩
+  const height = Math.max(480, contentBottom + 64);
 
   const svgMarkup = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="800" height="${height}" viewBox="0 0 800 ${height}">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${height}" viewBox="0 0 ${W} ${height}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#f7f8fa"/>
@@ -239,28 +292,28 @@ export async function buildInfographic(
     </linearGradient>
     ${
       hero
-        ? `<clipPath id="heroClip"><rect x="48" y="${heroTop}" width="704" height="${heroH}" rx="14"/></clipPath>`
+        ? `<clipPath id="heroClip"><rect x="${padX}" y="${heroTop}" width="${contentW}" height="${heroH}" rx="14"/></clipPath>`
         : ""
     }
   </defs>
-  <rect width="800" height="100%" fill="url(#bg)"/>
-  <rect x="0" y="0" width="800" height="6" fill="#c45c26"/>
+  <rect width="${W}" height="${height}" fill="url(#bg)"/>
+  <rect x="0" y="0" width="${W}" height="6" fill="#c45c26"/>
 
-  <text x="48" y="40" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="22" font-weight="700" fill="#1a2430">팩트체크 인포그래픽</text>
-  <text x="48" y="62" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="13" fill="#425870">${title}</text>
-  <text x="48" y="80" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="11" fill="#7890a8">${channel} · ${typeLabel}</text>
+  <text x="${padX}" y="40" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="22" font-weight="700" fill="#1a2430">팩트체크 인포그래픽</text>
+  <text x="${padX}" y="62" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="13" fill="#425870">${title}</text>
+  <text x="${padX}" y="80" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif" font-size="11" fill="#7890a8">${channel} · ${typeLabel}</text>
 
   ${
     hero
-      ? `<image href="${hero}" xlink:href="${hero}" x="48" y="${heroTop}" width="704" height="${heroH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroClip)"/>
-  <rect x="48" y="${heroTop}" width="704" height="${heroH}" rx="14" fill="none" stroke="#d0d9e2"/>`
+      ? `<image href="${hero}" xlink:href="${hero}" x="${padX}" y="${heroTop}" width="${contentW}" height="${heroH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#heroClip)"/>
+  <rect x="${padX}" y="${heroTop}" width="${contentW}" height="${heroH}" rx="14" fill="none" stroke="#d0d9e2"/>`
       : ""
   }
 
   <g font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">
-    <rect x="48" y="${statsY}" width="220" height="48" rx="10" fill="#1a2430"/>
-    <text x="64" y="${statsY + 20}" font-size="11" fill="#a8b8c8">검증 완료</text>
-    <text x="64" y="${statsY + 38}" font-size="18" fill="#fff">${verified}</text>
+    <rect x="${padX}" y="${statsY}" width="220" height="48" rx="10" fill="#1a2430"/>
+    <text x="${padX + 16}" y="${statsY + 20}" font-size="11" fill="#a8b8c8">검증 완료</text>
+    <text x="${padX + 16}" y="${statsY + 38}" font-size="18" fill="#fff">${verified}</text>
 
     <rect x="284" y="${statsY}" width="220" height="48" rx="10" fill="#c03030"/>
     <text x="300" y="${statsY + 20}" font-size="11" fill="#fde8e8">사실과 다름 ✗</text>
@@ -271,12 +324,13 @@ export async function buildInfographic(
     <text x="536" y="${statsY + 38}" font-size="18" fill="#fff">${fcItems.length}</text>
   </g>
 
-  <text x="48" y="${statsY + 68}" font-size="12" fill="#7890a8" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">팩트체크 항목${cards.some((c) => c.img) ? " · 관련 이미지(있을 때만)" : ""}</text>
+  <text x="${padX}" y="${statsY + 68}" font-size="12" fill="#7890a8" font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">팩트체크 항목${cards.some((c) => c.img) ? " · 관련 이미지(있을 때만)" : ""}</text>
 
   <g font-family="Malgun Gothic, Apple SD Gothic Neo, NanumGothic, sans-serif">
-    ${cardBlocks.join("")}
-    ${rowBlocks.join("")}
+    ${blocks.join("\n")}
   </g>
+
+  <rect x="0" y="${height - 8}" width="${W}" height="8" fill="#c45c26"/>
 </svg>`;
 
   return {

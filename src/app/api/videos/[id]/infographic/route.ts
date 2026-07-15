@@ -18,18 +18,13 @@ export async function GET(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "인포그래픽 없음" }, { status: 404 });
   }
 
-  // 유튜브 썸네일 포함 최신 인포그래픽으로 재생성
+  // 항상 최신 레이아웃으로 재생성 (하단 잘림·서식 수정 반영)
   const infographic = await buildInfographic(video);
-  if (
-    !video.infographic?.svgMarkup.includes("<image") ||
-    video.infographic.svgMarkup !== infographic.svgMarkup
-  ) {
-    await upsertVideo({
-      ...video,
-      infographic,
-      updatedAt: new Date().toISOString(),
-    });
-  }
+  await upsertVideo({
+    ...video,
+    infographic,
+    updatedAt: new Date().toISOString(),
+  });
 
   const download = new URL(req.url).searchParams.get("download") === "1";
   return new NextResponse(infographic.svgMarkup, {
