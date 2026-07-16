@@ -12,6 +12,7 @@ import {
   Bold,
   ChevronDown,
   ChevronUp,
+  ClipboardPaste,
   ImagePlus,
   Pencil,
   PenLine,
@@ -25,7 +26,7 @@ import type {
   TypedReport,
   VideoRecord,
 } from "@/lib/types";
-import { compressImageFiles, extractImageFilesFromDataTransfer } from "@/lib/image-client";
+import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 
@@ -142,6 +143,24 @@ export function EditableReportPanel({
     void addImagesToSection(idx, files);
   }
 
+  async function pasteImagesToSection(idx: number) {
+    if (!editing) return;
+    try {
+      const files = await readImagesFromClipboard();
+      if (files.length) {
+        await addImagesToSection(idx, files);
+        return;
+      }
+    } catch {
+      /* fall through */
+    }
+    const el = document.getElementById(`sec-paste-${idx}`) as HTMLTextAreaElement | null;
+    el?.focus();
+    alert(
+      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 입력칸을 길게 눌러 붙여넣기하세요."
+    );
+  }
+
   function insertHandwriting(idx: number, dataUrl: string) {
     setDraft((prev) => {
       if (!prev) return prev;
@@ -222,6 +241,7 @@ export function EditableReportPanel({
                 ) as HTMLInputElement | null;
                 input?.click();
               }}
+              onPasteImage={() => void pasteImagesToSection(idx)}
               onHandwriting={() => setHandwritingFor(idx)}
             />
           )}
@@ -240,9 +260,17 @@ export function EditableReportPanel({
 
           {editing && (
             <p className="text-xs text-ink-500">
-              이미지: 파일 복수 선택 또는 Ctrl+V 붙여넣기
+              이미지: 파일 선택 · PC Ctrl+V · 아이폰 「붙여넣기」 버튼
             </p>
           )}
+
+          <textarea
+            id={`sec-paste-${idx}`}
+            readOnly
+            aria-label="이미지 붙여넣기"
+            className="sr-only"
+            onPaste={(e) => handleSectionPaste(idx, e)}
+          />
 
           {sec.imageUrl && (
             <div className="overflow-hidden rounded-xl border border-ink-100">
@@ -421,6 +449,7 @@ function FormatToolbar({
   onColor,
   onHighlight,
   onImage,
+  onPasteImage,
   onHandwriting,
 }: {
   onBold: () => void;
@@ -428,6 +457,7 @@ function FormatToolbar({
   onColor: (c: string) => void;
   onHighlight: (c: string) => void;
   onImage: () => void;
+  onPasteImage: () => void;
   onHandwriting: () => void;
 }) {
   return (
@@ -462,6 +492,10 @@ function FormatToolbar({
       ))}
       <ToolBtn onClick={onImage} title="이미지 추가">
         <ImagePlus className="h-4 w-4" />
+      </ToolBtn>
+      <ToolBtn onClick={onPasteImage} title="클립보드에서 붙여넣기 (아이폰)">
+        <ClipboardPaste className="h-4 w-4" />
+        <span className="text-xs">붙여넣기</span>
       </ToolBtn>
       <ToolBtn onClick={onHandwriting} title="손글씨">
         <PenLine className="h-4 w-4" />

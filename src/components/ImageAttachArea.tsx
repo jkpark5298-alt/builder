@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import { Loader2, X } from "lucide-react";
+import { ClipboardPaste, Loader2, X } from "lucide-react";
 import {
   compressImageFiles,
   extractImageFilesFromDataTransfer,
+  readImagesFromClipboard,
 } from "@/lib/image-client";
 
 type Props = {
@@ -23,11 +24,12 @@ export function ImageAttachArea({
   onChange,
   busy = false,
   label = "이미지 추가",
-  hint = "파일 선택·복수 선택·Ctrl+V 붙여넣기 가능",
+  hint = "PC: Ctrl+V · 아이폰: 「붙여넣기」 버튼",
   maxImages = 12,
   pasteEnabled = true,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -71,6 +73,23 @@ export function ImageAttachArea({
     [addFiles, busy, pasteEnabled]
   );
 
+  async function pasteFromClipboard() {
+    if (!pasteEnabled || busy) return;
+    try {
+      const files = await readImagesFromClipboard();
+      if (files.length) {
+        await addFiles(files);
+        return;
+      }
+    } catch {
+      /* iOS 구형·권한 거부 등 → textarea 폴백 */
+    }
+    pasteRef.current?.focus();
+    alert(
+      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 아래 입력칸을 길게 눌러 붙여넣기하세요."
+    );
+  }
+
   return (
     <div
       className="space-y-2"
@@ -108,9 +127,30 @@ export function ImageAttachArea({
           )}
         </label>
         {pasteEnabled && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void pasteFromClipboard()}
+            className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5" />
+            붙여넣기
+          </button>
+        )}
+        {pasteEnabled && (
           <span className="text-xs text-ink-500">{hint}</span>
         )}
       </div>
+
+      {pasteEnabled && (
+        <textarea
+          ref={pasteRef}
+          readOnly
+          aria-label="이미지 붙여넣기"
+          className="sr-only"
+          onPaste={onPaste}
+        />
+      )}
 
       {images.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

@@ -54,6 +54,28 @@ export function extractImageFilesFromDataTransfer(
   return Array.from(data.files).filter((f) => f.type.startsWith("image/"));
 }
 
+/** iOS·모바일: 사용자 탭 후 클립보드에서 이미지 읽기 */
+export async function readImagesFromClipboard(): Promise<File[]> {
+  if (!navigator.clipboard?.read) {
+    return [];
+  }
+  const items = await navigator.clipboard.read();
+  const files: File[] = [];
+  for (const item of items) {
+    for (const type of item.types) {
+      if (!type.startsWith("image/")) continue;
+      const blob = await item.getType(type);
+      const ext = type.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png";
+      files.push(
+        new File([blob], `clipboard.${ext}`, {
+          type: blob.type || type,
+        })
+      );
+    }
+  }
+  return files;
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

@@ -630,7 +630,7 @@ function StepEditor({
             images={itemImages}
             busy={itemImageBusy}
             label="대상 이미지 추가"
-            hint="복수 선택·Ctrl+V 붙여넣기"
+            hint="PC: Ctrl+V · 아이폰: 「붙여넣기」 버튼"
             onChange={(urls) => void persistItemImages(urls)}
           />
         </div>
@@ -749,7 +749,7 @@ function StepEditor({
           images={answerImages}
           busy={answerImageBusy}
           label="이미지 추가"
-          hint="복수 선택·Ctrl+V 붙여넣기"
+          hint="PC: Ctrl+V · 아이폰: 「붙여넣기」 버튼"
           onChange={(urls) => void persistAnswerImages(urls)}
         />
         <p className="text-xs text-ink-500">
