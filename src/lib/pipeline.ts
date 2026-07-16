@@ -638,13 +638,14 @@ function packSummaryResult(
     )
   );
 
-  const bullets = normalized.summaryBullets.filter((b) => !isVagueClaim(b));
+  const summaryBullets = normalized.summaryBullets ?? [];
+  const bullets = summaryBullets.filter((b) => !isVagueClaim(b));
 
   return {
-    overview: normalized.overview,
+    overview: normalized.overview ?? "",
     summaryBullets: bullets.length
       ? bullets
-      : normalized.summaryBullets.slice(0, 12),
+      : summaryBullets.slice(0, 12),
     items: items.length ? items : chapterOrderClaims(meta, cleanedTranscript),
     reportType: rt,
     summarySource: "ai",
