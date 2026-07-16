@@ -1,10 +1,9 @@
 "use client";
 
-import { Loader2, Pencil, Save, Sparkles, UserRound } from "lucide-react";
+import { CheckCircle2, Loader2, Pencil, Sparkles, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
-import { ManualFollowUpBanner } from "@/components/ManualFollowUpBanner";
 
 const SOURCE_UI: Record<
   NonNullable<VideoRecord["summarySource"]>,
@@ -18,7 +17,7 @@ const SOURCE_UI: Record<
   },
   manual: {
     label: "수동 입력 요약",
-    hint: "직접 작성·저장한 요약입니다. 저장 후 팩트체크·보고서는 직접 수정하거나, 자동 갱신을 선택할 수 있습니다.",
+    hint: "직접 작성한 요약입니다. 「완료」를 누르면 팩트체크·보고서에 반영됩니다.",
     ai: false,
     className: "bg-sky-50 text-sky-900 border-sky-200",
   },
@@ -36,7 +35,7 @@ const SOURCE_UI: Record<
   },
 };
 
-/** 유튜브 내용 요약: AI 여부 표시 + 비AI면 수동 편집 */
+/** 유튜브 내용 요약: 수동 수정 후 완료 → FC·보고서 자동 갱신 */
 export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
   const router = useRouter();
   const source = video.summarySource ?? "none";
@@ -45,30 +44,20 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
 
   const [editing, setEditing] = useState(needsManual && !video.overview.trim());
   const [draft, setDraft] = useState(video.overview || "");
-  const [saving, setSaving] = useState<"only" | "sync" | null>(null);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
-  const [localVideo, setLocalVideo] = useState(video);
-
-  useEffect(() => {
-    if (
-      new Date(video.updatedAt).getTime() >=
-      new Date(localVideo.updatedAt).getTime()
-    ) {
-      setLocalVideo(video);
-    }
-  }, [video, localVideo.updatedAt]);
 
   const charCount = useMemo(() => draft.trim().length, [draft]);
 
-  async function saveManual(syncFactChecks: boolean) {
+  async function completeManualOverview() {
     setError(null);
     setHint(null);
     if (draft.trim().length < 40) {
       setError("요약을 40자 이상 입력해 주세요.");
       return;
     }
-    setSaving(syncFactChecks ? "sync" : "only");
+    setSaving(true);
     try {
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
@@ -76,44 +65,32 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
         body: JSON.stringify({
           updateOverview: {
             overview: draft.trim(),
-            syncFactChecks,
+            complete: true,
           },
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "저장 실패");
-      if (data.video) setLocalVideo(data.video);
-
-      if (syncFactChecks) {
-        const n = data.progress?.total ?? data.video?.items?.length;
-        setHint(
-          n
-            ? `요약을 저장했고, 팩트체크 ${n}건을 자동으로 다시 만들었습니다.`
-            : "요약을 저장하고 팩트체크를 자동 갱신했습니다."
-        );
-        setEditing(false);
-        router.refresh();
-        window.setTimeout(() => {
+      if (!res.ok) throw new Error(data.error || "완료 처리 실패");
+      const n = data.progress?.total ?? data.video?.items?.length ?? 0;
+      setHint(
+        `요약 완료. 팩트체크 ${n}건·보고서를 새 요약에 맞춰 자동 갱신했습니다.`
+      );
+      setEditing(false);
+      router.refresh();
+      window.setTimeout(() => {
+        document
+          .getElementById("manual-factcheck")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (!document.getElementById("manual-factcheck")) {
           document
-            .getElementById("manual-factcheck")
+            .getElementById("report")
             ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 200);
-      } else {
-        setHint(
-          "요약을 저장했습니다. 팩트체크·보고서는 유지되었으니 아래에서 직접 수정하세요."
-        );
-        setEditing(false);
-        router.refresh();
-        window.setTimeout(() => {
-          document
-            .getElementById("manual-follow-up")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 200);
-      }
+        }
+      }, 250);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "저장 실패");
+      setError(e instanceof Error ? e.message : "완료 처리 실패");
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
   }
 
@@ -131,13 +108,6 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       </div>
       <p className="text-xs text-ink-500">{ui.hint}</p>
 
-      <div id="manual-follow-up">
-        <ManualFollowUpBanner
-          video={localVideo.updatedAt >= video.updatedAt ? localVideo : video}
-          onDismissed={setLocalVideo}
-        />
-      </div>
-
       {!editing ? (
         <>
           <div className="text-ink-800 leading-relaxed whitespace-pre-wrap text-[15px]">
@@ -148,7 +118,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               {hint}
             </p>
           )}
-          {(needsManual || source === "ai") && (
+          {(needsManual || source === "ai" || source === "manual") && (
             <button
               type="button"
               onClick={() => {
@@ -175,9 +145,8 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
           />
           <p className="text-xs text-ink-500">{charCount.toLocaleString()}자</p>
           <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            <strong>요약만 저장</strong>하면 팩트체크·보고서는 그대로 두고 직접
-            고칩니다. <strong>자동 갱신</strong>하면 팩트체크를 요약에 맞춰 다시
-            만들고 보고서는 초기화합니다.
+            <strong>완료</strong>를 누르면 이 요약을 저장하고, 팩트체크 항목과
+            보고서를 새 요약에 맞춰 자동으로 다시 만듭니다.
           </p>
           {error && (
             <p className="text-sm text-verify-false" role="alert">
@@ -192,35 +161,20 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={saving !== null}
-              onClick={() => void saveManual(false)}
+              disabled={saving}
+              onClick={() => void completeManualOverview()}
               className="inline-flex items-center gap-1.5 min-h-10 rounded-xl bg-ink-900 px-4 text-sm font-medium text-white hover:bg-accent disabled:opacity-60"
             >
-              {saving === "only" ? (
+              {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Save className="h-4 w-4" />
+                <CheckCircle2 className="h-4 w-4" />
               )}
-              {saving === "only" ? "저장 중…" : "요약만 저장 (FC·보고서 직접 수정)"}
+              {saving ? "반영 중…" : "완료"}
             </button>
             <button
               type="button"
-              disabled={saving !== null}
-              onClick={() => void saveManual(true)}
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-200 bg-white px-4 text-sm font-medium hover:border-accent disabled:opacity-60"
-            >
-              {saving === "sync" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              {saving === "sync"
-                ? "자동 갱신 중…"
-                : "요약 저장 + 팩트체크 자동 갱신"}
-            </button>
-            <button
-              type="button"
-              disabled={saving !== null}
+              disabled={saving}
               onClick={() => {
                 setEditing(false);
                 setDraft(video.overview || "");

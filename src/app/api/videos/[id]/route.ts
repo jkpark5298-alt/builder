@@ -104,16 +104,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     updateOverview?: {
       overview: string;
       summaryBullets?: string[];
-      /**
-       * true: 팩트체크·보고서 초기화 후 요약 기준으로 FC 재생성
-       * false/omit: 요약만 저장, 기존 팩트체크·보고서는 유지 → 직접 수정
-       */
-      syncFactChecks?: boolean;
+      /** 수동 요약 완료 → 팩트체크·보고서 자동 갱신 */
+      complete?: boolean;
     };
     /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
     dismissFactCheckRevisionNotice?: boolean;
-    /** 수동 요약 저장 후 후속 수정 안내 닫기 */
-    dismissManualFollowUpNotice?: boolean;
   };
 
   let next = { ...video };
@@ -123,21 +118,6 @@ export async function PATCH(req: Request, ctx: Ctx) {
       ...next,
       factCheckRevisionNotice: next.factCheckRevisionNotice
         ? { ...next.factCheckRevisionNotice, dismissed: true }
-        : null,
-      updatedAt: new Date().toISOString(),
-    };
-    await upsertVideo(next);
-    return NextResponse.json({
-      video: next,
-      progress: factCheckProgress(next),
-    });
-  }
-
-  if (body.dismissManualFollowUpNotice) {
-    next = {
-      ...next,
-      manualFollowUpNotice: next.manualFollowUpNotice
-        ? { ...next.manualFollowUpNotice, dismissed: true }
         : null,
       updatedAt: new Date().toISOString(),
     };
@@ -292,37 +272,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       );
     }
 
-    const syncFactChecks = body.updateOverview.syncFactChecks === true;
-
-    if (!syncFactChecks) {
-      // 요약만 저장 — 팩트체크·보고서는 유지하고 직접 수정
-      const bullets =
-        body.updateOverview.summaryBullets?.filter((b) => b.trim()) ??
-        next.summaryBullets;
-      next = {
-        ...next,
-        overview,
-        summaryBullets: bullets,
-        summarySource: "manual",
-        factCheckRevisionNotice: null,
-        manualFollowUpNotice: {
-          at: new Date().toISOString(),
-        },
-        errorMessage: undefined,
-        updatedAt: new Date().toISOString(),
-        // ready면 보고서 직접 수정 가능하도록 유지, 그 외는 팩트체크 수동 편집
-        status:
-          next.status === "ready" ? "ready" : "awaiting_factcheck",
-      };
-      await upsertVideo(next);
-      return NextResponse.json({
-        video: next,
-        progress: factCheckProgress(next),
-        mode: "overview_only",
-      });
-    }
-
-    // 요약 + 팩트체크 자동 연동 갱신
+    // 수동 요약 완료: 팩트체크·보고서를 새 요약에 맞춰 자동 갱신
     const rebuilt = rebuildFactChecksFromOverview(
       overview,
       next.videoId,
@@ -337,6 +287,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+
     next = {
       ...next,
       overview,
@@ -349,18 +300,21 @@ export async function PATCH(req: Request, ctx: Ctx) {
         itemCount: rebuilt.items.filter((i) => i.needsFactCheck).length,
         reason: "summary_edit",
       },
-      manualFollowUpNotice: null,
-      report: null,
-      infographic: null,
-      status: "awaiting_factcheck",
       errorMessage: undefined,
       updatedAt: new Date().toISOString(),
     };
+
+    // 변경된 요약 기준으로 보고서·인포그래픽도 자동 재생성
+    next.report = buildTypedReport(next);
+    next.infographic = await buildInfographic(next);
+    // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
+    next.status = "awaiting_factcheck";
+
     await upsertVideo(next);
     return NextResponse.json({
       video: next,
       progress: factCheckProgress(next),
-      mode: "sync_factchecks",
+      mode: "overview_complete",
     });
   }
 
