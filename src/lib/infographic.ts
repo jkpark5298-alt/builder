@@ -190,15 +190,15 @@ export async function buildInfographic(
   const sectionHints = (() => {
     const raw =
       video.report?.sections
-        .filter((s) => s.heading !== "팩트체크")
+        .filter((s) => s.heading !== "추가 검증")
         .map((s) => ({
-    heading: s.heading,
+          heading: s.heading,
           short: htmlToPlain(s.body) || "",
         }))
         .filter((s) => s.short) ?? [];
 
     const order = (h: string) =>
-      h === "요약" ? 0 : h === "결론" ? 1 : 2;
+      h === "결론" ? 0 : h === "도입" ? 1 : h === "요약" ? 2 : 3;
     return [...raw].sort((a, b) => order(a.heading) - order(b.heading));
   })();
 

@@ -60,7 +60,7 @@ export function EditableReportPanel({
 
   // 구형식(TYPE별) → 일반 형식 자동 재생성
   useEffect(() => {
-    if (!video.report || video.report.format === "general_v3") return;
+    if (!video.report || video.report.format === "general_v4") return;
     let cancelled = false;
     (async () => {
       setRebuilding(true);
@@ -314,6 +314,7 @@ export function EditableReportPanel({
             )
           )}
 
+          {/* 소주제 본문 바로 아래 관련 이미지 */}
           {sec.images?.map((src, i) => (
             <div
               key={i}
@@ -336,6 +337,10 @@ export function EditableReportPanel({
               )}
             </div>
           ))}
+
+          {sec.entries && sec.entries.length > 0 && (
+            <p className="text-xs text-ink-500 pt-1">이 소주제 관련 팩트체크</p>
+          )}
 
           {sec.entries?.map((entry) => {
             const fc = entry.itemId ? fcByItem.get(entry.itemId) : undefined;
