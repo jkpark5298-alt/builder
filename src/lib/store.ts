@@ -88,12 +88,25 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
     "none",
   ]);
   const rt = (raw.reportType ?? "C") as ReportType;
+  const summaryAllowed = new Set(["ai", "manual", "fallback", "none"]);
+  let summarySource = String(raw.summarySource ?? "");
+  if (!summaryAllowed.has(summarySource)) {
+    const ov = raw.overview ?? "";
+    if (!ov.trim()) summarySource = "none";
+    else if (
+      /OPENAI_API_KEY|발췌 메모|다시 시도|구간 발췌/i.test(ov) ||
+      ov.length < 350
+    )
+      summarySource = "fallback";
+    else summarySource = "ai";
+  }
   return {
     ...raw,
     description: raw.description ?? "",
     chapters: raw.chapters ?? [],
     summaryBullets: raw.summaryBullets ?? [],
     scriptNotice: raw.scriptNotice,
+    summarySource: summarySource as VideoRecord["summarySource"],
     reportType: ["H", "S", "C", "P"].includes(rt) ? rt : "C",
     report: raw.report ?? null,
     transcriptSource: (allowed.has(source)
@@ -131,7 +144,7 @@ async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
   const auth = blobCommandOpts();
   const order: Array<"public" | "private"> = preferredBlobAccess
     ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
-    : ["public", "private"];
+    : ["private", "public"];
 
   for (const access of order) {
     try {
@@ -167,7 +180,7 @@ async function writeBlobVideo(video: VideoRecord): Promise<void> {
 
   const order: Array<"public" | "private"> = preferredBlobAccess
     ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
-    : ["public", "private"];
+    : ["private", "public"];
 
   let lastError: unknown;
   let writtenAccess: "public" | "private" | null = null;

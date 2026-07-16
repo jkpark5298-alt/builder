@@ -1,7 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Link2 } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  Loader2,
+  Link2,
+} from "lucide-react";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { extractVideoId } from "@/lib/youtube";
 import { ScriptCopyHelper } from "./ScriptCopyHelper";
@@ -9,7 +15,7 @@ import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
 
 const STORAGE_KEY = "yfc-form-v1";
 const POST_TIMEOUT_MS = 20_000;
-const POST_SCRIPT_TIMEOUT_MS = 90_000;
+const POST_SCRIPT_TIMEOUT_MS = 150_000;
 
 type SavedForm = {
   url: string;
@@ -37,6 +43,7 @@ function saveForm(data: SavedForm) {
 
 export function UrlPasteForm() {
   const feedbackRef = useRef<HTMLDivElement>(null);
+  const scriptBoxRef = useRef<HTMLTextAreaElement>(null);
   const [url, setUrl] = useState("");
   const [creatorNotes, setCreatorNotes] = useState("");
   const [pastedScript, setPastedScript] = useState("");
@@ -44,6 +51,10 @@ export function UrlPasteForm() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [scriptNotice, setScriptNotice] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     const saved = loadSaved();
@@ -58,11 +69,38 @@ export function UrlPasteForm() {
     saveForm({ url, creatorNotes, pastedScript });
   }, [url, creatorNotes, pastedScript, hydrated]);
 
+  const videoId = extractVideoId(url.trim());
   const scriptLen = normalizePastedText(pastedScript).length;
   const hasScript = hasUsablePastedScript(pastedScript);
+  const step1Done = Boolean(videoId);
+  const step2Done = hasScript;
+  const nextStep: 1 | 2 | 3 = !step1Done ? 1 : !step2Done ? 2 : 3;
 
   function goToVideo(id: string) {
     window.location.assign(`/videos/${id}`);
+  }
+
+  function onScriptFetched(script: string) {
+    setPastedScript(script);
+    const len = normalizePastedText(script).length;
+    setScriptNotice({
+      ok: true,
+      text: `자막 복사 완료 · ${len.toLocaleString()}자를 ② 스크립트(자막) 칸에 넣었습니다.`,
+    });
+    setError(null);
+    requestAnimationFrame(() => {
+      scriptBoxRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  }
+
+  function onScriptFetchError(message: string) {
+    setScriptNotice({
+      ok: false,
+      text: `자막 복사 실패 · ${message}`,
+    });
   }
 
   async function startAnalyze(withScript: boolean) {
@@ -70,10 +108,13 @@ export function UrlPasteForm() {
     setLoading(true);
     setStatus(
       withScript
-        ? "스크립트로 요약·검증 중… (최대 1~2분, 화면을 끄지 마세요)"
+        ? "상세 요약·검증 중… (1~3분 걸릴 수 있어요. 화면을 끄지 마세요)"
         : "요청 접수 중… 자막 자동 수집을 시도합니다."
     );
-    feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    feedbackRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
 
     const controller = new AbortController();
     const timer = setTimeout(
@@ -139,7 +180,10 @@ export function UrlPasteForm() {
         }
       }
       setStatus(null);
-      feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     } finally {
       clearTimeout(timer);
       setLoading(false);
@@ -155,14 +199,20 @@ export function UrlPasteForm() {
       setError(
         "유튜브 주소가 비어 있습니다. 유튜브 앱에서 링크 복사 후 ① 주소 칸에 붙여넣어 주세요."
       );
-      feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
       return;
     }
     if (!extractVideoId(trimmedUrl)) {
       setError(
         "유효한 유튜브 URL이 아닙니다. 공유 → 링크 복사로 다시 붙여넣어 주세요."
       );
-      feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
       return;
     }
 
@@ -170,11 +220,25 @@ export function UrlPasteForm() {
       setError(
         `스크립트가 ${scriptLen}자입니다. 80자 이상 붙여넣은 뒤 다시 눌러 주세요.`
       );
-      feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
       return;
     }
 
-    await startAnalyze(hasScript);
+    if (!hasScript) {
+      setError(
+        "아직 자막이 없습니다. ②「자막 자동 가져오기」를 먼저 눌러 주세요."
+      );
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      return;
+    }
+
+    await startAnalyze(true);
   }
 
   const busy = loading;
@@ -203,27 +267,90 @@ export function UrlPasteForm() {
           <h1 className="font-display text-2xl sm:text-3xl md:text-4xl text-ink-900 mb-2">
             YouTube FactCheck
           </h1>
-          <div className="mt-3 rounded-xl border border-ink-200 bg-white/90 overflow-hidden text-sm">
-            <div className="px-3 py-2 bg-ink-50 border-b border-ink-200 text-ink-700 text-xs sm:text-sm">
-              배포(아이폰)에서는 <strong>자동 자막 버튼이 없습니다</strong>.
-              주소 + 스크립트(또는 AI 요약)를 넣고 하단 버튼으로 진행하세요.
-            </div>
-            <div className="grid grid-cols-[1fr_1.2fr] bg-ink-50 border-b border-ink-200 font-medium text-ink-800">
-              <div className="px-3 py-2">어디에 붙여넣나</div>
-              <div className="px-3 py-2">무엇을 붙여넣나</div>
-            </div>
-            <div className="grid grid-cols-[1fr_1.2fr] border-b border-ink-100">
-              <div className="px-3 py-2.5 text-accent font-medium">① 유튜브 주소</div>
-              <div className="px-3 py-2.5 text-ink-700">
-                공유 → <strong>링크 복사</strong> (앱 전환해도 주소 유지)
-              </div>
-            </div>
-            <div className="grid grid-cols-[1fr_1.2fr]">
-              <div className="px-3 py-2.5 text-accent font-medium">② 스크립트</div>
-              <div className="px-3 py-2.5 text-ink-700">
-                「자막 요청」→ youtubetranscript.com → 복사 → 붙여넣기 (80자+)
-              </div>
-            </div>
+
+          {/* 사용자가 할 일 — 순서 안내 */}
+          <div className="mt-3 rounded-xl border border-ink-200 bg-white/95 p-4 space-y-3">
+            <p className="text-sm font-semibold text-ink-900">
+              이렇게 진행하세요 (순서대로)
+            </p>
+            <ol className="space-y-2.5 text-sm">
+              <li
+                className={`flex gap-2.5 rounded-lg px-2.5 py-2 ${
+                  nextStep === 1
+                    ? "bg-accent-muted/50 ring-1 ring-accent/30"
+                    : "bg-ink-50/80"
+                }`}
+              >
+                {step1Done ? (
+                  <CheckCircle2 className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+                ) : (
+                  <Circle className="h-5 w-5 text-ink-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-medium text-ink-900">
+                    1. 유튜브 주소 붙여넣기
+                  </p>
+                  <p className="text-xs text-ink-600 mt-0.5">
+                    유튜브 공유 → 링크 복사 → 아래 ① 칸에 붙여넣기
+                    {step1Done ? " · 완료" : ""}
+                  </p>
+                </div>
+              </li>
+              <li
+                className={`flex gap-2.5 rounded-lg px-2.5 py-2 ${
+                  nextStep === 2
+                    ? "bg-accent-muted/50 ring-1 ring-accent/30"
+                    : "bg-ink-50/80"
+                }`}
+              >
+                {step2Done ? (
+                  <CheckCircle2 className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+                ) : (
+                  <Circle className="h-5 w-5 text-ink-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-medium text-ink-900">
+                    2. 자막 자동 가져오기
+                  </p>
+                  <p className="text-xs text-ink-600 mt-0.5">
+                    「자막 자동 가져오기」버튼 →{" "}
+                    <strong>② 스크립트(자막)</strong> 칸에 채워짐 (팩트체크 칸
+                    아님)
+                    {step2Done
+                      ? ` · 완료 (${scriptLen.toLocaleString()}자)`
+                      : ""}
+                  </p>
+                </div>
+              </li>
+              <li
+                className={`flex gap-2.5 rounded-lg px-2.5 py-2 ${
+                  nextStep === 3
+                    ? "bg-accent-muted/50 ring-1 ring-accent/30"
+                    : "bg-ink-50/80"
+                }`}
+              >
+                {step1Done && step2Done ? (
+                  <CheckCircle2 className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+                ) : (
+                  <Circle className="h-5 w-5 text-ink-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-medium text-ink-900">
+                    3. 스크립트로 요약 · 검증
+                  </p>
+                  <p className="text-xs text-ink-600 mt-0.5">
+                    하단 초록/주황 버튼을 누르면 요약이 시작됩니다
+                  </p>
+                </div>
+              </li>
+            </ol>
+            <p className="text-xs font-medium text-accent" role="status">
+              {nextStep === 1 && "👉 지금: ① 유튜브 주소를 붙여넣으세요."}
+              {nextStep === 2 &&
+                "👉 지금: 「자막 자동 가져오기」를 눌러 주세요."}
+              {nextStep === 3 &&
+                "👉 지금: 하단 「스크립트로 요약 · 검증」을 누르세요."}
+            </p>
           </div>
         </div>
 
@@ -231,7 +358,10 @@ export function UrlPasteForm() {
           ① 유튜브 주소
           <input
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setScriptNotice(null);
+            }}
             placeholder="유튜브에서 공유 → 링크 붙여넣기"
             inputMode="url"
             enterKeyHint="go"
@@ -243,21 +373,59 @@ export function UrlPasteForm() {
         </label>
 
         <div className="space-y-2">
-          <ScriptCopyHelper youtubeUrl={url || undefined} />
+          <ScriptCopyHelper
+            youtubeUrl={url || undefined}
+            onScriptFetched={onScriptFetched}
+            onFetchError={onScriptFetchError}
+          />
+
+          {/* 자막 복사 완료/실패 알림 */}
+          {scriptNotice && (
+            <div
+              className={`rounded-xl border px-4 py-3 text-sm font-medium flex gap-2 ${
+                scriptNotice.ok
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                  : "border-verify-false/30 bg-verify-false/5 text-verify-false"
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              {scriptNotice.ok ? (
+                <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              )}
+              <p>{scriptNotice.text}</p>
+            </div>
+          )}
+
           <label className="block text-sm text-ink-600">
-            ② 스크립트(자막) · AI 요약
+            ② 스크립트(자막)
             <textarea
+              ref={scriptBoxRef}
               value={pastedScript}
-              onChange={(e) => setPastedScript(e.target.value)}
+              onChange={(e) => {
+                setPastedScript(e.target.value);
+                if (!e.target.value.trim()) setScriptNotice(null);
+              }}
               rows={5}
-              placeholder="자막 또는 AI 요약을 여기에 붙여넣기 (80자 이상)"
-              className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              placeholder="「자막 자동 가져오기」후 여기에 채워집니다 (팩트체크 칸 아님)"
+              className={`mt-1.5 w-full rounded-xl border bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 ${
+                hasScript
+                  ? "border-emerald-300 ring-1 ring-emerald-200"
+                  : "border-ink-200"
+              }`}
             />
           </label>
           {scriptLen > 0 && (
-            <p className="text-xs text-ink-500">
-              {scriptLen}자
-              {hasScript ? " · 검증 가능" : " · 80자 이상 필요"}
+            <p
+              className={`text-xs font-medium ${
+                hasScript ? "text-emerald-700" : "text-ink-500"
+              }`}
+            >
+              {hasScript
+                ? `✓ 자막 준비됨 · ${scriptLen.toLocaleString()}자`
+                : `${scriptLen}자 · 80자 이상 필요`}
             </p>
           )}
         </div>
@@ -293,7 +461,6 @@ export function UrlPasteForm() {
         )}
       </div>
 
-      {/* 아이폰: 항상 보이는 하단 버튼 */}
       <div className="fixed bottom-0 inset-x-0 z-40 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4">
         <button
           type="submit"
@@ -306,9 +473,11 @@ export function UrlPasteForm() {
               접수 중…
             </>
           ) : hasScript ? (
-            "스크립트로 요약 · 검증"
+            "3. 스크립트로 요약 · 검증"
+          ) : step1Done ? (
+            "먼저 2. 자막 자동 가져오기"
           ) : (
-            "조회 · 검증 시작"
+            "먼저 1. 유튜브 주소 입력"
           )}
         </button>
       </div>

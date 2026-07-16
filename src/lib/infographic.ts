@@ -184,7 +184,7 @@ export async function buildInfographic(
       video.report?.sections
         .filter((s) => s.heading !== "팩트체크")
         .map((s) => ({
-          heading: s.heading,
+    heading: s.heading,
           short: htmlToPlain(s.body) || "",
         }))
         .filter((s) => s.short) ?? [];

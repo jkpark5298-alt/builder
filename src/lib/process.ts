@@ -2,7 +2,7 @@ import { v4 as uuid } from "uuid";
 import { buildInfographic } from "./infographic";
 import { autoFactCheck, hasLlm, summarizeContent } from "./pipeline";
 import { buildTypedReport } from "./report";
-import { getVideo, upsertVideo, deleteVideo } from "./store";
+import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
 import type { ReportType, VideoRecord } from "./types";
 import {
@@ -36,6 +36,7 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
     transcriptSource: "none",
     scriptNotice: undefined,
     overview: "",
+    summarySource: "none",
     summaryBullets: [],
     items: [],
     factChecks: [],
@@ -144,6 +145,7 @@ export async function runVideoPipeline(
       ...record,
       overview: summary.overview,
       summaryBullets: summary.summaryBullets,
+      summarySource: summary.summarySource,
       items: summary.items,
       reportType: summary.reportType,
       tags: Array.from(new Set([...record.tags, `type-${summary.reportType}`])),
@@ -230,10 +232,27 @@ export async function reprocessFromId(
   id: string,
   pastedScriptOverride?: string
 ): Promise<VideoRecord> {
+  const prepared = await prepareReprocess(id, pastedScriptOverride);
+  return runVideoPipeline(
+    prepared.video.id,
+    prepared.creatorNotes,
+    prepared.script
+  );
+}
+
+/** 재요약 준비: 같은 ID 유지, 요약·FC·보고서만 초기화 */
+export async function prepareReprocess(
+  id: string,
+  pastedScriptOverride?: string
+): Promise<{
+  video: VideoRecord;
+  script?: string;
+  creatorNotes?: string;
+}> {
   const existing = await getVideo(id);
   if (!existing) throw new Error("영상을 찾을 수 없습니다.");
 
-  const pastedScript = hasUsablePastedScript(pastedScriptOverride)
+  const script = hasUsablePastedScript(pastedScriptOverride)
     ? normalizePastedText(pastedScriptOverride!)
     : existing.transcript &&
         hasUsablePastedScript(existing.transcript) &&
@@ -241,11 +260,37 @@ export async function reprocessFromId(
       ? existing.transcript
       : undefined;
 
-  const youtubeUrl = existing.youtubeUrl;
+  if (!script && !hasUsablePastedScript(existing.transcript)) {
+    // 스크립트 없이도 메타 기준 재요약은 가능 — 다만 사용자에게 안내
+  }
+
   const creatorNotes = existing.description?.trim() || undefined;
-  await deleteVideo(id);
-  const job = await createVideoJob(youtubeUrl);
-  return runVideoPipeline(job.id, creatorNotes, pastedScript);
+  const reset: VideoRecord = {
+    ...existing,
+    overview: "",
+    summaryBullets: [],
+    summarySource: "none",
+    items: [],
+    factChecks: [],
+    report: null,
+    infographic: null,
+    status: "queued",
+    errorMessage: undefined,
+    ...(script
+      ? {
+          transcript: script,
+          transcriptSource: "pasted" as const,
+          scriptNotice: `스크립트 전체(${script.length.toLocaleString()}자)로 상세 재요약 중…`,
+        }
+      : {
+          scriptNotice:
+            existing.scriptNotice ||
+            "저장된 스크립트/메타로 재요약합니다. 자막이 없으면 결과가 부실할 수 있습니다.",
+        }),
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertVideo(reset);
+  return { video: reset, script, creatorNotes };
 }
 
 function normalizeUrl(videoId: string, original: string) {

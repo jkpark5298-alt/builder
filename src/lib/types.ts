@@ -154,6 +154,8 @@ export interface VideoRecord {
   scriptNotice?: string;
   /** 일반 요약 본문 */
   overview: string;
+  /** 요약 출처: AI API / 수동 입력 / 휴리스틱 폴백 */
+  summarySource?: "ai" | "manual" | "fallback" | "none";
   /** 일반 요약 단락 (핵심 포인트) */
   summaryBullets: string[];
   items: SummaryItem[];

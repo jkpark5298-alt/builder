@@ -54,19 +54,24 @@ export function PasteScriptPanel({
             스크립트를 붙여넣어 재요약하세요
           </p>
           <p className="text-xs text-ink-600 mt-1 leading-relaxed">
-            「자막 앱」에서 자막 요청 → youtubetranscript.com에서 복사 → 아래에
-            붙여넣으면 요약·팩트체크가 진행됩니다.
+            <strong>자막 자동 가져오기</strong>로 youtube-transcript.ai 자막을{" "}
+            <strong>아래 스크립트(자막) 칸</strong>에 넣으세요. (팩트체크 AI
+            답변 칸이 아닙니다.)
           </p>
         </div>
       </div>
 
-      <ScriptCopyHelper youtubeUrl={youtubeUrl} />
+      <ScriptCopyHelper
+        youtubeUrl={youtubeUrl}
+        onScriptFetched={(text) => setScript(text)}
+        onFetchError={(msg) => setError(`자막 복사 실패 · ${msg}`)}
+      />
 
       <textarea
         value={script}
         onChange={(e) => setScript(e.target.value)}
         rows={6}
-        placeholder="여기에 스크립트 붙여넣기 (Ctrl+V)…"
+        placeholder="스크립트(자막)를 여기에 붙여넣기 (팩트체크 칸 아님)"
         className="w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
       />
       {error && (
@@ -85,7 +90,7 @@ export function PasteScriptPanel({
             스크립트로 재요약 중…
           </>
         ) : (
-          "붙여넣은 스크립트로 재요약"
+          "붙여넣은 스크립트로 재요약 시작"
         )}
       </button>
     </form>

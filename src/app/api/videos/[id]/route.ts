@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { factCheckProgress } from "@/lib/factcheck";
 import { buildInfographic } from "@/lib/infographic";
+import {
+  itemsFromManualOverview,
+  syncFactCheckGuides,
+} from "@/lib/pipeline";
 import { finalizeReport } from "@/lib/process";
 import { buildTypedReport } from "@/lib/report";
 import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
@@ -97,6 +101,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     answerImage?: { itemId: string; imageUrl: string | null };
     /** 보고서 직접 수정 */
     updateReport?: TypedReport;
+    /** 유튜브 내용 요약 수동 저장 */
+    updateOverview?: {
+      overview: string;
+      summaryBullets?: string[];
+    };
   };
 
   let next = { ...video };
@@ -234,6 +243,47 @@ export async function PATCH(req: Request, ctx: Ctx) {
       updatedAt: new Date().toISOString(),
     };
     next.infographic = await buildInfographic(next);
+  }
+
+  if (typeof body.updateOverview?.overview === "string") {
+    const overview = body.updateOverview.overview.trim();
+    if (overview.length < 40) {
+      return NextResponse.json(
+        { error: "요약을 조금 더 자세히 입력해 주세요. (40자 이상)" },
+        { status: 400 }
+      );
+    }
+    // 인포그래픽/LLM 재생성 없이 즉시 저장 (느린 원인 제거)
+    const parsed = itemsFromManualOverview(overview, next.videoId);
+    const bullets =
+      body.updateOverview.summaryBullets?.filter((b) => b.trim()) ??
+      (parsed.summaryBullets.length
+        ? parsed.summaryBullets
+        : overview
+            .split(/\n+/)
+            .map((l) => l.trim())
+            .filter((l) => /^\d+\.\s+/.test(l))
+            .slice(0, 12));
+    const items = parsed.items.length ? parsed.items : next.items;
+    const factChecks = syncFactCheckGuides(items);
+    next = {
+      ...next,
+      overview,
+      summaryBullets: bullets,
+      summarySource: "manual",
+      items,
+      factChecks,
+      report: null,
+      infographic: null,
+      status: "awaiting_factcheck",
+      errorMessage: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertVideo(next);
+    return NextResponse.json({
+      video: next,
+      progress: factCheckProgress(next),
+    });
   }
 
   if (body.factCheck) {

@@ -3,9 +3,11 @@ import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
 import { InfographicSharePanel } from "@/components/InfographicSharePanel";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
+import { OverviewSummaryPanel } from "@/components/OverviewSummaryPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
+import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
@@ -139,6 +141,7 @@ export default async function VideoDetailPage({
           <div className="flex flex-wrap gap-2">
             <ReprocessButton videoId={video.id} />
           </div>
+          <SavedTranscriptPanel video={video} />
           {ready && <ReopenAsDraftButton videoId={video.id} />}
           <ActionBar video={video} />
           {awaiting && (
@@ -162,17 +165,7 @@ export default async function VideoDetailPage({
           </h2>
         </div>
         <div className="p-4 sm:p-5 space-y-3">
-          <p className="text-xs text-ink-500">
-            {video.transcriptSource === "pasted" ||
-            video.transcriptSource === "youtube" ||
-            video.transcriptSource === "youtube_auto" ||
-            video.transcriptSource === "speech_text"
-              ? "스크립트·방송 순서 기준 주요 내용 요약입니다."
-              : "챕터·설명 기준 주요 내용 요약입니다. (스크립트 미확보)"}
-          </p>
-          <div className="text-ink-800 leading-relaxed whitespace-pre-wrap text-[15px]">
-            {video.overview}
-          </div>
+          <OverviewSummaryPanel video={video} />
           {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") && (
             <PasteScriptPanel
