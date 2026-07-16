@@ -29,6 +29,31 @@ export async function compressImageFile(
   return out;
 }
 
+export async function compressImageFiles(files: File[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const file of files) {
+    if (!file.type.startsWith("image/")) continue;
+    out.push(await compressImageFile(file));
+  }
+  return out;
+}
+
+/** 클립보드·드래그에서 이미지 파일 추출 */
+export function extractImageFilesFromDataTransfer(
+  data: DataTransfer
+): File[] {
+  const fromItems: File[] = [];
+  for (let i = 0; i < data.items.length; i++) {
+    const item = data.items[i];
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const f = item.getAsFile();
+      if (f) fromItems.push(f);
+    }
+  }
+  if (fromItems.length) return fromItems;
+  return Array.from(data.files).filter((f) => f.type.startsWith("image/"));
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

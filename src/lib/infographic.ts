@@ -1,5 +1,6 @@
 import type { InfographicData, VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
+import { normalizeImageUrls } from "./image-urls";
 import { isFailedVerdict, verdictBadge, normalizeAiAnswer } from "./text-format";
 
 const imageCache = new Map<string, string | null>();
@@ -163,10 +164,17 @@ export async function buildInfographic(
       : normalizeAiAnswer(answer);
 
     let related: string | null = null;
-    if (fc?.answerImageUrl && !isYoutubeThumb(fc.answerImageUrl)) {
-      related = await fetchImageDataUrl(fc.answerImageUrl);
-    } else if (item.imageUrl && !isYoutubeThumb(item.imageUrl)) {
-      related = await fetchImageDataUrl(item.imageUrl);
+    const answerImages = normalizeImageUrls(
+      fc?.answerImageUrl,
+      fc?.answerImageUrls
+    ).filter((u) => !isYoutubeThumb(u));
+    const itemImages = normalizeImageUrls(
+      item.imageUrl,
+      item.imageUrls
+    ).filter((u) => !isYoutubeThumb(u));
+    const pick = answerImages[0] ?? itemImages[0];
+    if (pick) {
+      related = await fetchImageDataUrl(pick);
     }
 
     cards.push({

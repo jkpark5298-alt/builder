@@ -8,6 +8,7 @@ import { finalizeReport } from "@/lib/process";
 import { buildTypedReport } from "@/lib/report";
 import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
+import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import type { FactCheckResult, ReportType, SummaryItem, TypedReport } from "@/lib/types";
 
 function buildFactCheckGuide(statement: string, detail?: string): string {
@@ -80,6 +81,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       explanation: string;
       sources?: string[];
       answerImageUrl?: string;
+      answerImageUrls?: string[];
     };
     reportType?: ReportType;
     draft?: boolean;
@@ -87,7 +89,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
     reopenAsDraft?: boolean;
     completeManual?: boolean;
     rebuild?: boolean;
-    itemImage?: { itemId: string; imageUrl: string | null };
+    itemImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
+    itemImages?: { itemId: string; imageUrls: string[] };
     /** 팩트체크 대상(주장) 문구 수정 */
     updateItem?: {
       itemId: string;
@@ -97,7 +100,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
     /** 팩트체크 대상 삭제 */
     deleteItem?: { itemId: string };
     /** AI 답변 참고 이미지 */
-    answerImage?: { itemId: string; imageUrl: string | null };
+    answerImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
+    answerImages?: { itemId: string; imageUrls: string[] };
     /** 보고서 직접 수정 */
     updateReport?: TypedReport;
     /** 유튜브 내용 요약 수동 저장 */
@@ -149,22 +153,35 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
   }
 
-  if (body.itemImage?.itemId) {
-    next = {
-      ...next,
-      items: next.items.map((item) =>
-        item.id === body.itemImage!.itemId
-          ? {
-              ...item,
-              imageUrl: body.itemImage!.imageUrl || undefined,
-            }
-          : item
-      ),
-      updatedAt: new Date().toISOString(),
-    };
-    if (next.status === "ready") {
-      next.report = buildTypedReport(next);
-      next.infographic = await buildInfographic(next);
+  if (body.itemImages?.itemId || body.itemImage?.itemId) {
+    const itemId = (body.itemImages ?? body.itemImage)!.itemId;
+    const urls =
+      body.itemImages?.imageUrls ??
+      (body.itemImage?.imageUrls ??
+        (body.itemImage?.imageUrl === null
+          ? []
+          : body.itemImage?.imageUrl
+            ? [body.itemImage.imageUrl]
+            : undefined));
+    if (urls) {
+      const split = splitPrimaryImage(urls);
+      next = {
+        ...next,
+        items: next.items.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                imageUrl: split.imageUrl,
+                imageUrls: urls.length ? urls : undefined,
+              }
+            : item
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      if (next.status === "ready") {
+        next.report = buildTypedReport(next);
+        next.infographic = await buildInfographic(next);
+      }
     }
   }
 
@@ -235,22 +252,47 @@ export async function PATCH(req: Request, ctx: Ctx) {
     };
   }
 
-  if (body.answerImage?.itemId) {
-    next = {
-      ...next,
-      factChecks: next.factChecks.map((fc) =>
-        fc.itemId === body.answerImage!.itemId
-          ? {
-              ...fc,
-              answerImageUrl: body.answerImage!.imageUrl || undefined,
-            }
-          : fc
-      ),
-      updatedAt: new Date().toISOString(),
-    };
-    if (next.status === "ready") {
-      next.report = buildTypedReport(next);
-      next.infographic = await buildInfographic(next);
+  if (body.answerImages?.itemId || body.answerImage?.itemId) {
+    const itemId = (body.answerImages ?? body.answerImage)!.itemId;
+    const urls =
+      body.answerImages?.imageUrls ??
+      (body.answerImage?.imageUrls ??
+        (body.answerImage?.imageUrl === null
+          ? []
+          : body.answerImage?.imageUrl
+            ? [body.answerImage.imageUrl]
+            : undefined));
+    if (urls) {
+      const split = splitPrimaryImage(urls);
+      const existing = next.factChecks.find((f) => f.itemId === itemId);
+      const fc: FactCheckResult = existing
+        ? {
+            ...existing,
+            answerImageUrl: split.imageUrl,
+            answerImageUrls: urls.length ? urls : undefined,
+          }
+        : {
+            itemId,
+            mode: "manual",
+            verdict: "pending",
+            explanation: "",
+            sources: [],
+            checkedAt: new Date().toISOString(),
+            answerImageUrl: split.imageUrl,
+            answerImageUrls: urls.length ? urls : undefined,
+          };
+      next = {
+        ...next,
+        factChecks: [
+          ...next.factChecks.filter((f) => f.itemId !== itemId),
+          fc,
+        ],
+        updatedAt: new Date().toISOString(),
+      };
+      if (next.status === "ready") {
+        next.report = buildTypedReport(next);
+        next.infographic = await buildInfographic(next);
+      }
     }
   }
 
@@ -326,6 +368,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
       );
     }
 
+    const prev = next.factChecks.find((f) => f.itemId === body.factCheck!.itemId);
+    const prevImages = normalizeImageUrls(
+      prev?.answerImageUrl,
+      prev?.answerImageUrls
+    );
+    const nextImages =
+      body.factCheck.answerImageUrls ??
+      (body.factCheck.answerImageUrl !== undefined
+        ? body.factCheck.answerImageUrl
+          ? [body.factCheck.answerImageUrl]
+          : []
+        : prevImages);
+    const split = splitPrimaryImage(nextImages);
+
     const fc: FactCheckResult = {
       itemId: body.factCheck.itemId,
       mode: "manual",
@@ -333,10 +389,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
       explanation: normalizeAiAnswer(body.factCheck.explanation.trim()),
       sources: body.factCheck.sources ?? [],
       checkedAt: new Date().toISOString(),
-      answerImageUrl:
-        body.factCheck.answerImageUrl ??
-        next.factChecks.find((f) => f.itemId === body.factCheck!.itemId)
-          ?.answerImageUrl,
+      answerImageUrl: split.imageUrl,
+      answerImageUrls: nextImages.length ? nextImages : undefined,
     };
     const others = next.factChecks.filter((f) => f.itemId !== fc.itemId);
     next = {

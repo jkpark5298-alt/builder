@@ -4,6 +4,7 @@ import type {
   VideoRecord,
 } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
+import { normalizeImageUrls } from "./image-urls";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
@@ -94,7 +95,8 @@ export function buildTypedReport(
       statement: i.statement,
       verdict: fc?.verdict ?? ("pending" as const),
       checkGuide: isPrompt ? "" : normalizeAiAnswer(raw),
-      answerImageUrl: fc?.answerImageUrl,
+      answerImageUrl: normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls)[0],
+      answerImageUrls: normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
     };
   });
 
@@ -125,11 +127,11 @@ export function buildTypedReport(
       fcItems
         .flatMap((item) => {
           const fc = fcMap.get(item.id);
-          return [fc?.answerImageUrl].filter(Boolean) as string[];
+          return normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls);
         })
         .filter((u) => !isYoutubeThumb(u))
     )
-  ).slice(0, 4);
+  ).slice(0, 8);
 
   const sections = [
     {
@@ -153,16 +155,16 @@ export function buildTypedReport(
       rich: true,
       entries: fcItems.map((item) => {
         const fc = fcMap.get(item.id);
-        const attached =
-          fc?.answerImageUrl && !isYoutubeThumb(fc.answerImageUrl)
-            ? fc.answerImageUrl
-            : undefined;
+        const attached = normalizeImageUrls(
+          fc?.answerImageUrl,
+          fc?.answerImageUrls
+        ).filter((u) => !isYoutubeThumb(u));
         return {
           itemId: item.id,
           text: item.statement,
-          // 유튜브 썸네일은 항목에 반복 넣지 않음
           imageUrl: undefined,
-          answerImageUrl: attached,
+          answerImageUrl: attached[0],
+          answerImageUrls: attached.length ? attached : undefined,
         };
       }),
     },
@@ -189,6 +191,7 @@ export function buildTypedReport(
       checkGuide: f.checkGuide,
       verdict: f.verdict,
       answerImageUrl: f.answerImageUrl,
+      answerImageUrls: f.answerImageUrls,
     })),
   };
 }

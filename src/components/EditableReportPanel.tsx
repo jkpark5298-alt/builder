@@ -25,7 +25,8 @@ import type {
   TypedReport,
   VideoRecord,
 } from "@/lib/types";
-import { compressImageFile } from "@/lib/image-client";
+import { compressImageFiles, extractImageFilesFromDataTransfer } from "@/lib/image-client";
+import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 
 const COLORS = [
@@ -114,27 +115,31 @@ export function EditableReportPanel({
     });
   }
 
-  async function addImageToSection(idx: number, file: File | null) {
-    if (!file) return;
+  async function addImagesToSection(idx: number, files: File[]) {
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (!imageFiles.length) return;
     try {
-      const dataUrl = await compressImageFile(file);
+      const dataUrls = await compressImageFiles(imageFiles);
+      if (!dataUrls.length) return;
       setDraft((prev) => {
         if (!prev) return prev;
         const sections = [...prev.sections];
-        const images = [...(sections[idx].images ?? [])];
-        if (sections[idx].imageUrl) {
-          /* keep hero */
-        } else {
-          sections[idx] = { ...sections[idx], imageUrl: dataUrl };
-          return { ...prev, sections };
-        }
-        images.push(dataUrl);
-        sections[idx] = { ...sections[idx], images };
+        const sec = sections[idx];
+        const images = [...(sec.images ?? []), ...dataUrls];
+        sections[idx] = { ...sec, images };
         return { ...prev, sections };
       });
     } catch {
       alert("이미지 추가에 실패했습니다.");
     }
+  }
+
+  function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
+    if (!editing) return;
+    const files = extractImageFilesFromDataTransfer(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    void addImagesToSection(idx, files);
   }
 
   function insertHandwriting(idx: number, dataUrl: string) {
@@ -197,7 +202,12 @@ export function EditableReportPanel({
       </div>
 
       {draft.sections.map((sec, idx) => (
-        <div key={`${sec.heading}-${idx}`} className="space-y-3">
+        <div
+          key={`${sec.heading}-${idx}`}
+          className="space-y-3"
+          tabIndex={editing ? 0 : undefined}
+          onPaste={editing ? (e) => handleSectionPaste(idx, e) : undefined}
+        >
           <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
 
           {editing && (
@@ -220,12 +230,19 @@ export function EditableReportPanel({
             id={`sec-img-${idx}`}
             type="file"
             accept="image/*"
+            multiple
             className="hidden"
             onChange={(e) => {
-              void addImageToSection(idx, e.target.files?.[0] ?? null);
+              void addImagesToSection(idx, Array.from(e.target.files ?? []));
               e.target.value = "";
             }}
           />
+
+          {editing && (
+            <p className="text-xs text-ink-500">
+              이미지: 파일 복수 선택 또는 Ctrl+V 붙여넣기
+            </p>
+          )}
 
           {sec.imageUrl && (
             <div className="overflow-hidden rounded-xl border border-ink-100">
@@ -284,13 +301,22 @@ export function EditableReportPanel({
             const open = openFc === entry.itemId;
             const failed = isFailedVerdict(verdict);
             // 첨부된 관련 이미지만 (대표 유튜브 썸네일 반복 제외)
-            const reportImages = [entry.answerImageUrl, fc?.answerImageUrl]
-              .filter((u): u is string => Boolean(u))
-              .filter(
-                (u, i, arr) =>
-                  arr.indexOf(u) === i &&
-                  !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
-              );
+            const reportImages = Array.from(
+              new Set(
+                [
+                  ...normalizeImageUrls(
+                    entry.answerImageUrl,
+                    entry.answerImageUrls
+                  ),
+                  ...normalizeImageUrls(
+                    fc?.answerImageUrl,
+                    fc?.answerImageUrls
+                  ),
+                ].filter(
+                  (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+                )
+              )
+            );
 
             return (
               <div

@@ -35,7 +35,10 @@ export interface SummaryItem {
   statement: string;
   /** 왜/무엇을 검증할지 상세 (선택) */
   detail?: string;
+  /** 대상 관련 이미지 (첫 장 — 하위 호환) */
   imageUrl?: string;
+  /** 대상 관련 이미지 (복수) */
+  imageUrls?: string[];
   chapterTimestamp?: string;
   evidence: Evidence[];
   needsFactCheck: boolean;
@@ -49,8 +52,10 @@ export interface FactCheckResult {
   explanation: string;
   sources: string[];
   checkedAt: string;
-  /** AI 답변 참고 이미지 (data URL 또는 URL) */
+  /** AI 답변 참고 이미지 (첫 장 — 하위 호환) */
   answerImageUrl?: string;
+  /** AI 답변 참고 이미지 (복수) */
+  answerImageUrls?: string[];
 }
 
 export interface ReportEntry {
@@ -59,8 +64,10 @@ export interface ReportEntry {
   /** HTML 가능 */
   html?: string;
   imageUrl?: string;
-  /** 팩트체크 답변 이미지 */
+  /** 팩트체크 답변 이미지 (첫 장 — 하위 호환) */
   answerImageUrl?: string;
+  /** 팩트체크 답변 이미지 (복수) */
+  answerImageUrls?: string[];
 }
 
 export interface ReportSectionBlock {
@@ -97,6 +104,7 @@ export interface TypedReport {
     checkGuide: string;
     verdict?: FactCheckVerdict;
     answerImageUrl?: string;
+    answerImageUrls?: string[];
   }>;
 }
 

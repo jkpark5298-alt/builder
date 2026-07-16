@@ -19,11 +19,12 @@ import type {
   VideoRecord,
 } from "@/lib/types";
 import { factCheckProgress, isItemChecked } from "@/lib/factcheck-client";
-import { compressImageFile } from "@/lib/image-client";
+import { normalizeImageUrls } from "@/lib/image-urls";
 import { factCheckGuideForItem } from "@/lib/report";
 import { normalizeAiAnswer } from "@/lib/text-format";
 import { ReportTypePicker } from "@/components/ReportTypePicker";
 import { FactCheckRevisedBanner } from "@/components/FactCheckRevisedBanner";
+import { ImageAttachArea } from "@/components/ImageAttachArea";
 
 function promptOf(item: SummaryItem, fc?: FactCheckResult): string {
   const fromEvidence = item.evidence.find(
@@ -88,7 +89,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     itemId: string,
     answer: string,
     verdict: FactCheckVerdict,
-    answerImageUrl?: string
+    answerImageUrls?: string[]
   ) {
     setSaving(true);
     setError(null);
@@ -104,10 +105,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             verdict,
             explanation: normalizeAiAnswer(answer),
             sources: [],
-            answerImageUrl:
-              answerImageUrl ??
-              localVideo.factChecks.find((f) => f.itemId === itemId)
-                ?.answerImageUrl,
+            answerImageUrls:
+              answerImageUrls ??
+              normalizeImageUrls(
+                localVideo.factChecks.find((f) => f.itemId === itemId)
+                  ?.answerImageUrl,
+                localVideo.factChecks.find((f) => f.itemId === itemId)
+                  ?.answerImageUrls
+              ),
           },
         }),
       });
@@ -474,7 +479,7 @@ function StepEditor({
   onSave: (
     answer: string,
     verdict: FactCheckVerdict,
-    answerImageUrl?: string
+    answerImageUrls?: string[]
   ) => Promise<void>;
 }) {
   const router = useRouter();
@@ -488,25 +493,38 @@ function StepEditor({
     fc?.verdict && fc.verdict !== "pending" ? fc.verdict : "unverifiable"
   );
   const [copied, setCopied] = useState(false);
-  const [imageUrl, setImageUrl] = useState(item.imageUrl || "");
-  const [imageBusy, setImageBusy] = useState(false);
+  const [itemImages, setItemImages] = useState<string[]>(() =>
+    normalizeImageUrls(item.imageUrl, item.imageUrls)
+  );
+  const [itemImageBusy, setItemImageBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editStatement, setEditStatement] = useState(item.statement);
   const [editDetail, setEditDetail] = useState(item.detail || "");
 
-  const [answerImageUrl, setAnswerImageUrl] = useState(fc?.answerImageUrl || "");
+  const [answerImages, setAnswerImages] = useState<string[]>(() =>
+    normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls)
+  );
   const [answerImageBusy, setAnswerImageBusy] = useState(false);
 
-  async function onPickImage(file: File | null) {
-    if (!file) return;
-    setImageBusy(true);
+  useEffect(() => {
+    setItemImages(normalizeImageUrls(item.imageUrl, item.imageUrls));
+    setAnswerImages(normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls));
+  }, [
+    item.id,
+    item.imageUrl,
+    item.imageUrls,
+    fc?.answerImageUrl,
+    fc?.answerImageUrls,
+  ]);
+
+  async function persistItemImages(urls: string[]) {
+    setItemImageBusy(true);
     try {
-      const dataUrl = await compressImageFile(file);
       const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          itemImage: { itemId: item.id, imageUrl: dataUrl },
+          itemImages: { itemId: item.id, imageUrls: urls },
         }),
       });
       const data = (await res.json()) as {
@@ -514,45 +532,24 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      setImageUrl(dataUrl);
+      setItemImages(urls);
       if (data.video) onVideoUpdate(data.video);
       router.refresh();
     } catch {
       alert("이미지 저장에 실패했습니다. 다시 시도해 주세요.");
     } finally {
-      setImageBusy(false);
+      setItemImageBusy(false);
     }
   }
 
-  async function removeImage() {
-    setImageBusy(true);
-    try {
-      const res = await fetch(`/api/videos/${videoId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          itemImage: { itemId: item.id, imageUrl: null },
-        }),
-      });
-      const data = (await res.json()) as { video?: VideoRecord };
-      setImageUrl("");
-      if (data.video) onVideoUpdate(data.video);
-      router.refresh();
-    } finally {
-      setImageBusy(false);
-    }
-  }
-
-  async function onPickAnswerImage(file: File | null) {
-    if (!file) return;
+  async function persistAnswerImages(urls: string[]) {
     setAnswerImageBusy(true);
     try {
-      const dataUrl = await compressImageFile(file);
       const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          answerImage: { itemId: item.id, imageUrl: dataUrl },
+          answerImages: { itemId: item.id, imageUrls: urls },
         }),
       });
       const data = (await res.json()) as {
@@ -560,30 +557,11 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      setAnswerImageUrl(dataUrl);
+      setAnswerImages(urls);
       if (data.video) onVideoUpdate(data.video);
       router.refresh();
     } catch {
       alert("AI 답변 이미지 저장에 실패했습니다.");
-    } finally {
-      setAnswerImageBusy(false);
-    }
-  }
-
-  async function removeAnswerImage() {
-    setAnswerImageBusy(true);
-    try {
-      const res = await fetch(`/api/videos/${videoId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          answerImage: { itemId: item.id, imageUrl: null },
-        }),
-      });
-      const data = (await res.json()) as { video?: VideoRecord };
-      setAnswerImageUrl("");
-      if (data.video) onVideoUpdate(data.video);
-      router.refresh();
     } finally {
       setAnswerImageBusy(false);
     }
@@ -643,38 +621,18 @@ function StepEditor({
       <div className="overflow-hidden rounded-xl border border-ink-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={imageUrl || imageFallback}
+          src={itemImages[0] || imageFallback}
           alt=""
           className="w-full aspect-video object-cover bg-ink-900"
         />
-        <div className="p-3 bg-ink-50 border-t border-ink-100 flex flex-wrap gap-2 items-center">
-          <label className="inline-flex items-center gap-2 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium cursor-pointer hover:border-accent">
-            <input
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              disabled={imageBusy}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                void onPickImage(f ?? null);
-                e.target.value = "";
-              }}
-            />
-            {imageBusy ? "저장 중…" : "이미지 첨부 (수정)"}
-          </label>
-          {imageUrl && (
-            <button
-              type="button"
-              disabled={imageBusy}
-              onClick={() => void removeImage()}
-              className="min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs text-ink-600 hover:border-verify-false"
-            >
-              이미지 제거
-            </button>
-          )}
-          <span className="text-xs text-ink-500">
-            아이폰·PC 모두 사진 앨범 선택 가능
-          </span>
+        <div className="p-3 bg-ink-50 border-t border-ink-100">
+          <ImageAttachArea
+            images={itemImages}
+            busy={itemImageBusy}
+            label="대상 이미지 추가"
+            hint="복수 선택·Ctrl+V 붙여넣기"
+            onChange={(urls) => void persistItemImages(urls)}
+          />
         </div>
         <div className="p-3 sm:p-4 bg-ink-50/80 space-y-3">
           {editing ? (
@@ -787,41 +745,13 @@ function StepEditor({
         <p className="text-xs font-medium text-ink-600">
           AI 답변 참고 이미지 (선택)
         </p>
-        <div className="flex flex-wrap gap-2 items-center">
-          <label className="inline-flex items-center gap-2 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium cursor-pointer hover:border-accent">
-            <input
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              disabled={answerImageBusy}
-              onChange={(e) => {
-                void onPickAnswerImage(e.target.files?.[0] ?? null);
-                e.target.value = "";
-              }}
-            />
-            {answerImageBusy ? "저장 중…" : "이미지 첨부"}
-          </label>
-          {answerImageUrl && (
-            <button
-              type="button"
-              disabled={answerImageBusy}
-              onClick={() => void removeAnswerImage()}
-              className="min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs text-ink-600"
-            >
-              제거
-            </button>
-          )}
-        </div>
-        {answerImageUrl && (
-          <div className="overflow-hidden rounded-lg border border-ink-100 max-h-40">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={answerImageUrl}
-              alt=""
-              className="w-full object-cover max-h-40"
-            />
-          </div>
-        )}
+        <ImageAttachArea
+          images={answerImages}
+          busy={answerImageBusy}
+          label="이미지 추가"
+          hint="복수 선택·Ctrl+V 붙여넣기"
+          onChange={(urls) => void persistAnswerImages(urls)}
+        />
         <p className="text-xs text-ink-500">
           큰 사진도 자동 압축되어 저장됩니다.
         </p>
@@ -859,7 +789,13 @@ function StepEditor({
       <button
         type="button"
         disabled={saving || editing || answer.trim().length < 20}
-        onClick={() => onSave(answer, verdict, answerImageUrl || undefined)}
+        onClick={() =>
+          onSave(
+            answer,
+            verdict,
+            answerImages.length ? answerImages : undefined
+          )
+        }
         className="w-full min-h-12 rounded-xl bg-ink-900 text-white font-medium hover:bg-accent disabled:opacity-50 transition-colors"
       >
         {saving ? "저장 중…" : "이 항목 저장하고 다음"}
