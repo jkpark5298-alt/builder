@@ -170,6 +170,13 @@ export interface VideoRecord {
     reason: "summary_edit" | "resummary";
     dismissed?: boolean;
   } | null;
+  /**
+   * 수동 요약만 저장했을 때: 팩트체크·보고서는 직접 수정하라는 안내.
+   */
+  manualFollowUpNotice?: {
+    at: string;
+    dismissed?: boolean;
+  } | null;
   reportType: ReportType;
   report: TypedReport | null;
   /** legacy */
