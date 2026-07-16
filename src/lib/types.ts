@@ -160,6 +160,16 @@ export interface VideoRecord {
   summaryBullets: string[];
   items: SummaryItem[];
   factChecks: FactCheckResult[];
+  /**
+   * 요약 수정으로 팩트체크 항목이 다시 만들어진 경우 안내.
+   * dismissed면 배너 숨김.
+   */
+  factCheckRevisionNotice?: {
+    at: string;
+    itemCount: number;
+    reason: "summary_edit" | "resummary";
+    dismissed?: boolean;
+  } | null;
   reportType: ReportType;
   report: TypedReport | null;
   /** legacy */

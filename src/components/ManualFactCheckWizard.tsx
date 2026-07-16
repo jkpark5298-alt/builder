@@ -23,6 +23,7 @@ import { compressImageFile } from "@/lib/image-client";
 import { factCheckGuideForItem } from "@/lib/report";
 import { normalizeAiAnswer } from "@/lib/text-format";
 import { ReportTypePicker } from "@/components/ReportTypePicker";
+import { FactCheckRevisedBanner } from "@/components/FactCheckRevisedBanner";
 
 function promptOf(item: SummaryItem, fc?: FactCheckResult): string {
   const fromEvidence = item.evidence.find(
@@ -53,11 +54,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     const serverMoreChecks =
       video.updatedAt === localVideo.updatedAt &&
       video.factChecks.length > localVideo.factChecks.length;
-    if (serverNewer || serverMoreChecks) {
+    const noticeChanged =
+      video.factCheckRevisionNotice?.at !==
+      localVideo.factCheckRevisionNotice?.at;
+    if (serverNewer || serverMoreChecks || noticeChanged) {
       setLocalVideo(video);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only when server props change
-  }, [video.updatedAt, video.factChecks]);
+  }, [video.updatedAt, video.factChecks, video.factCheckRevisionNotice?.at]);
 
   const required = useMemo(
     () => localVideo.items.filter((i) => i.needsFactCheck),
@@ -289,7 +293,11 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           2. 팩트체크 정리
         </h2>
       </div>
-      <div className="bg-accent-muted/40 px-4 sm:px-5 py-4 border-b border-accent/20">
+      <div className="bg-accent-muted/40 px-4 sm:px-5 py-4 border-b border-accent/20 space-y-3">
+        <FactCheckRevisedBanner
+          video={localVideo}
+          onDismissed={setLocalVideo}
+        />
         <p className="text-sm text-ink-600">
           아래 <strong>AI 질문</strong>을 복사해 제미나이 등에 물어본 뒤,{" "}
           <strong>AI 답변·팩트체크 결과</strong>를 이 화면에 붙여넣으세요.

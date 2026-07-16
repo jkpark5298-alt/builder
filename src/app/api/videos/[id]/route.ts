@@ -105,9 +105,26 @@ export async function PATCH(req: Request, ctx: Ctx) {
       overview: string;
       summaryBullets?: string[];
     };
+    /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
+    dismissFactCheckRevisionNotice?: boolean;
   };
 
   let next = { ...video };
+
+  if (body.dismissFactCheckRevisionNotice) {
+    next = {
+      ...next,
+      factCheckRevisionNotice: next.factCheckRevisionNotice
+        ? { ...next.factCheckRevisionNotice, dismissed: true }
+        : null,
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertVideo(next);
+    return NextResponse.json({
+      video: next,
+      progress: factCheckProgress(next),
+    });
+  }
 
   if (body.reopenAsDraft) {
     next = {
@@ -274,6 +291,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
       summarySource: "manual",
       items: rebuilt.items,
       factChecks: rebuilt.factChecks,
+      factCheckRevisionNotice: {
+        at: new Date().toISOString(),
+        itemCount: rebuilt.items.filter((i) => i.needsFactCheck).length,
+        reason: "summary_edit",
+      },
       report: null,
       infographic: null,
       status: "awaiting_factcheck",

@@ -76,6 +76,12 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       );
       setEditing(false);
       router.refresh();
+      // 팩트체크 섹션의 ‘변경됨’ 안내로 스크롤
+      window.setTimeout(() => {
+        document
+          .getElementById("manual-factcheck")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 200);
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장 실패");
     } finally {
