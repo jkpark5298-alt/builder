@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useRef } from "react";
-import { ClipboardPaste, Loader2, X } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { ClipboardPaste, Loader2, Type, X } from "lucide-react";
 import {
   compressImageFiles,
   extractImageFilesFromDataTransfer,
   readImagesFromClipboard,
 } from "@/lib/image-client";
+import { TextToImageModal } from "@/components/TextToImageModal";
 
 type Props = {
   images: string[];
@@ -17,6 +18,9 @@ type Props = {
   maxImages?: number;
   /** 붙여넣기·드래그 활성화 */
   pasteEnabled?: boolean;
+  /** 텍스트→이미지 버튼 */
+  textImageEnabled?: boolean;
+  initialText?: string;
 };
 
 export function ImageAttachArea({
@@ -24,12 +28,28 @@ export function ImageAttachArea({
   onChange,
   busy = false,
   label = "이미지 추가",
-  hint = "PC: Ctrl+V · 아이폰: 「붙여넣기」 버튼",
+  hint = "PC: Ctrl+V · 아이폰: 「붙여넣기」 · 텍스트→이미지",
   maxImages = 12,
   pasteEnabled = true,
+  textImageEnabled = true,
+  initialText = "",
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const pasteRef = useRef<HTMLTextAreaElement>(null);
+  const [textModal, setTextModal] = useState(false);
+
+  const addDataUrls = useCallback(
+    async (dataUrls: string[]) => {
+      if (!dataUrls.length) return;
+      const remaining = maxImages - images.length;
+      if (remaining <= 0) {
+        alert(`이미지는 최대 ${maxImages}장까지 추가할 수 있습니다.`);
+        return;
+      }
+      await onChange([...images, ...dataUrls.slice(0, remaining)]);
+    },
+    [images, maxImages, onChange]
+  );
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -137,7 +157,18 @@ export function ImageAttachArea({
             붙여넣기
           </button>
         )}
-        {pasteEnabled && (
+        {textImageEnabled && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setTextModal(true)}
+            className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+          >
+            <Type className="h-3.5 w-3.5" />
+            텍스트→이미지
+          </button>
+        )}
+        {(pasteEnabled || textImageEnabled) && (
           <span className="text-xs text-ink-500">{hint}</span>
         )}
       </div>
@@ -177,6 +208,17 @@ export function ImageAttachArea({
             </div>
           ))}
         </div>
+      )}
+
+      {textModal && (
+        <TextToImageModal
+          initialText={initialText}
+          onCancel={() => setTextModal(false)}
+          onInsert={(dataUrl) => {
+            setTextModal(false);
+            void addDataUrls([dataUrl]);
+          }}
+        />
       )}
     </div>
   );

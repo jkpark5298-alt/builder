@@ -14,9 +14,10 @@ import {
   ChevronUp,
   ClipboardPaste,
   ImagePlus,
-  Pencil,
   PenLine,
+  Pencil,
   Save,
+  Type,
   Underline,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import type {
 import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
+import { TextToImageModal } from "@/components/TextToImageModal";
 
 const COLORS = [
   { id: "yellow", label: "노랑", color: "#b45309", bg: "#fef08a" },
@@ -49,6 +51,7 @@ export function EditableReportPanel({
   const [draft, setDraft] = useState<TypedReport | null>(report);
   const [openFc, setOpenFc] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
+  const [textImageFor, setTextImageFor] = useState<number | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
 
   useEffect(() => {
@@ -172,6 +175,17 @@ export function EditableReportPanel({
     setHandwritingFor(null);
   }
 
+  function insertTextImage(idx: number, dataUrl: string) {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const sections = [...prev.sections];
+      const images = [...(sections[idx].images ?? []), dataUrl];
+      sections[idx] = { ...sections[idx], images };
+      return { ...prev, sections };
+    });
+    setTextImageFor(null);
+  }
+
   return (
     <section
       id="report"
@@ -242,6 +256,7 @@ export function EditableReportPanel({
                 input?.click();
               }}
               onPasteImage={() => void pasteImagesToSection(idx)}
+              onTextImage={() => setTextImageFor(idx)}
               onHandwriting={() => setHandwritingFor(idx)}
             />
           )}
@@ -260,7 +275,7 @@ export function EditableReportPanel({
 
           {editing && (
             <p className="text-xs text-ink-500">
-              이미지: 파일 선택 · PC Ctrl+V · 아이폰 「붙여넣기」 버튼
+              이미지: 파일 · 붙여넣기 · 텍스트→이미지 · 손글씨
             </p>
           )}
 
@@ -439,6 +454,23 @@ export function EditableReportPanel({
           onInsert={(dataUrl) => insertHandwriting(handwritingFor, dataUrl)}
         />
       )}
+
+      {textImageFor !== null && (
+        <TextToImageModal
+          initialText={
+            draft.sections[textImageFor]?.body
+              ? draft.sections[textImageFor].body
+                  .replace(/<br\s*\/?>/gi, "\n")
+                  .replace(/<[^>]+>/g, "")
+                  .replace(/&nbsp;/g, " ")
+                  .trim()
+                  .slice(0, 800)
+              : ""
+          }
+          onCancel={() => setTextImageFor(null)}
+          onInsert={(dataUrl) => insertTextImage(textImageFor, dataUrl)}
+        />
+      )}
     </section>
   );
 }
@@ -450,6 +482,7 @@ function FormatToolbar({
   onHighlight,
   onImage,
   onPasteImage,
+  onTextImage,
   onHandwriting,
 }: {
   onBold: () => void;
@@ -458,6 +491,7 @@ function FormatToolbar({
   onHighlight: (c: string) => void;
   onImage: () => void;
   onPasteImage: () => void;
+  onTextImage: () => void;
   onHandwriting: () => void;
 }) {
   return (
@@ -496,6 +530,10 @@ function FormatToolbar({
       <ToolBtn onClick={onPasteImage} title="클립보드에서 붙여넣기 (아이폰)">
         <ClipboardPaste className="h-4 w-4" />
         <span className="text-xs">붙여넣기</span>
+      </ToolBtn>
+      <ToolBtn onClick={onTextImage} title="텍스트를 이미지로">
+        <Type className="h-4 w-4" />
+        <span className="text-xs">텍스트→이미지</span>
       </ToolBtn>
       <ToolBtn onClick={onHandwriting} title="손글씨">
         <PenLine className="h-4 w-4" />
