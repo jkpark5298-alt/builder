@@ -279,7 +279,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return NextResponse.json(
         {
           error:
-            "요약에서 팩트체크 항목을 만들지 못했습니다. 번호 목록(1. 2. …)이나 문장 단위로 조금 더 구체적으로 적어 주세요.",
+            "요약에서 ‘근거 확인이 필요한’ 사실 단정·주장·의견을 찾지 못했습니다. 수치·시기·인명·인과가 드러나는 문장으로 조금 더 구체적으로 적어 주세요.",
         },
         { status: 400 }
       );
