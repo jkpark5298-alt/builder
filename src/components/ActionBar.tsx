@@ -54,7 +54,7 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         video.overview,
         "",
         `상세: ${window.location.href}`,
-        `PDF: ${window.location.origin}/api/videos/${video.id}/pdf`,
+        `PDF: ${window.location.origin}/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`,
         `인포그래픽: ${window.location.origin}/api/videos/${video.id}/infographic`,
       ].join("\n")
     );
@@ -167,13 +167,22 @@ export function ActionBar({ video }: { video: VideoRecord }) {
       )}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
         <a
-          href={ready ? `/api/videos/${video.id}/pdf` : undefined}
+          href={
+            ready
+              ? `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`
+              : undefined
+          }
           aria-disabled={!ready}
           className={`${btn} ${ready ? enabled : disabled}`}
         >
           <FileDown className="h-4 w-4 shrink-0" />
           PDF 보고서
         </a>
+        {ready && (
+          <p className="col-span-2 text-xs text-ink-500 sm:w-full">
+            보고서에서 텍스트·이미지를 수정·저장하면 PDF에 바로 반영됩니다.
+          </p>
+        )}
         <button
           type="button"
           disabled={!ready}

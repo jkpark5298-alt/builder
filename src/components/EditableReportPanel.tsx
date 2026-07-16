@@ -204,12 +204,12 @@ export function EditableReportPanel({
           {editing ? (
             <>
               <Save className="h-4 w-4" />
-              {saving ? "저장 중…" : "저장"}
+              {saving ? "저장 중…" : "저장 (PDF 반영)"}
             </>
           ) : (
             <>
               <Pencil className="h-4 w-4" />
-              수정
+              수정 (텍스트·이미지)
             </>
           )}
         </button>

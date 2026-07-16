@@ -158,7 +158,7 @@ export function VideoListCard({
         )}
         {listKind === "report-complete" && ready && (
           <a
-            href={`/api/videos/${video.id}/pdf`}
+            href={`/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`}
             onClick={(e) => e.stopPropagation()}
             className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
           >

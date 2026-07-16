@@ -5,7 +5,7 @@ import {
   rebuildFactChecksFromOverview,
 } from "@/lib/pipeline";
 import { finalizeReport } from "@/lib/process";
-import { buildTypedReport } from "@/lib/report";
+import { buildTypedReport, reportBodyPlain } from "@/lib/report";
 import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
@@ -297,9 +297,22 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
 
   if (body.updateReport) {
+    const updated = body.updateReport;
+    // 요약 섹션 본문이 바뀌면 PDF·발췌도 같은 내용으로 맞춤
+    const summarySec = updated.sections.find((s) => s.heading === "요약");
+    const summaryPlain = summarySec
+      ? reportBodyPlain(summarySec.body, summarySec.rich).trim()
+      : "";
     next = {
       ...next,
-      report: body.updateReport,
+      report: {
+        ...updated,
+        summaryExcerpt:
+          summaryPlain ||
+          updated.summaryExcerpt ||
+          next.report?.summaryExcerpt ||
+          "",
+      },
       updatedAt: new Date().toISOString(),
     };
     next.infographic = await buildInfographic(next);
