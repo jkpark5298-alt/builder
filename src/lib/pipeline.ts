@@ -186,7 +186,10 @@ export function itemsFromManualOverview(
       current = null;
       continue;
     }
-    const numbered = line.match(/^\d+\.\s+(.+)$/);
+    // 1. / 1) / 1、 / ## 제목
+    const numbered = line.match(
+      /^(?:#{1,3}\s+)?(?:\d+[\.\)]\s+|[\u2460-\u2473]\s*)(.+)$/
+    );
     if (numbered) {
       current = { title: numbered[1].trim(), details: [] };
       sections.push(current);
@@ -219,7 +222,17 @@ export function itemsFromManualOverview(
       .map((s) => stripSpokenCruff(s))
       .filter((s) => s.length >= 24)
       .slice(0, 8);
-    const items = dens.map((s, idx) => {
+    const seed =
+      dens.length > 0
+        ? dens
+        : [
+            overview
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 180),
+          ].filter((s) => s.length >= 20);
+
+    const items = seed.map((s, idx) => {
       const statement = s.length > 140 ? `${s.slice(0, 137)}…` : s;
       const detail = "수치·시기·인명·학설 출처를 교차 확인";
       return toItem(
@@ -259,6 +272,38 @@ export function itemsFromManualOverview(
   return {
     summaryBullets: usable.map((s, i) => `${i + 1}. ${s.title}`),
     items,
+  };
+}
+
+/**
+ * 요약 본문이 바뀌면 팩트체크 대상·가이드를 요약 기준으로 전부 다시 맞춤.
+ * (이전 항목/답변은 유지하지 않음 — 요약과 어긋나지 않게)
+ */
+export function rebuildFactChecksFromOverview(
+  overview: string,
+  videoId?: string,
+  summaryBullets?: string[]
+): {
+  summaryBullets: string[];
+  items: SummaryItem[];
+  factChecks: FactCheckResult[];
+} {
+  const parsed = itemsFromManualOverview(overview, videoId);
+  const bullets =
+    summaryBullets?.map((b) => b.trim()).filter(Boolean) ??
+    (parsed.summaryBullets.length
+      ? parsed.summaryBullets
+      : overview
+          .split(/\n+/)
+          .map((l) => l.trim())
+          .filter((l) => /^\d+[\.\)]\s+/.test(l))
+          .slice(0, 12));
+
+  const items = parsed.items;
+  return {
+    summaryBullets: bullets.length ? bullets : parsed.summaryBullets,
+    items,
+    factChecks: syncFactCheckGuides(items),
   };
 }
 

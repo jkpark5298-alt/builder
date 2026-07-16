@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { factCheckProgress } from "@/lib/factcheck";
 import { buildInfographic } from "@/lib/infographic";
 import {
-  itemsFromManualOverview,
-  syncFactCheckGuides,
+  rebuildFactChecksFromOverview,
 } from "@/lib/pipeline";
 import { finalizeReport } from "@/lib/process";
 import { buildTypedReport } from "@/lib/report";
@@ -253,26 +252,28 @@ export async function PATCH(req: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    // 인포그래픽/LLM 재생성 없이 즉시 저장 (느린 원인 제거)
-    const parsed = itemsFromManualOverview(overview, next.videoId);
-    const bullets =
-      body.updateOverview.summaryBullets?.filter((b) => b.trim()) ??
-      (parsed.summaryBullets.length
-        ? parsed.summaryBullets
-        : overview
-            .split(/\n+/)
-            .map((l) => l.trim())
-            .filter((l) => /^\d+\.\s+/.test(l))
-            .slice(0, 12));
-    const items = parsed.items.length ? parsed.items : next.items;
-    const factChecks = syncFactCheckGuides(items);
+    // 요약이 바뀌면 팩트체크 대상·가이드도 요약 기준으로 전부 다시 생성
+    const rebuilt = rebuildFactChecksFromOverview(
+      overview,
+      next.videoId,
+      body.updateOverview.summaryBullets
+    );
+    if (!rebuilt.items.length) {
+      return NextResponse.json(
+        {
+          error:
+            "요약에서 팩트체크 항목을 만들지 못했습니다. 번호 목록(1. 2. …)이나 문장 단위로 조금 더 구체적으로 적어 주세요.",
+        },
+        { status: 400 }
+      );
+    }
     next = {
       ...next,
       overview,
-      summaryBullets: bullets,
+      summaryBullets: rebuilt.summaryBullets,
       summarySource: "manual",
-      items,
-      factChecks,
+      items: rebuilt.items,
+      factChecks: rebuilt.factChecks,
       report: null,
       infographic: null,
       status: "awaiting_factcheck",

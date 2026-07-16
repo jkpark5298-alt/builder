@@ -71,8 +71,8 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       const n = data.progress?.total ?? data.video?.items?.length;
       setHint(
         n
-          ? `요약을 저장했고, 팩트체크 항목 ${n}건을 새로 맞췄습니다.`
-          : "요약을 저장했습니다. 팩트체크 항목을 갱신했습니다."
+          ? `요약을 저장했습니다. 팩트체크 항목 ${n}건을 요약 내용에 맞춰 다시 만들었습니다.`
+          : "요약을 저장했고, 팩트체크도 요약에 맞춰 갱신했습니다."
       );
       setEditing(false);
       router.refresh();
