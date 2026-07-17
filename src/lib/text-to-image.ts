@@ -103,14 +103,15 @@ function loadImageEl(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 텍스트 + (아래) 이미지 → 한 장의 PNG 데이터 URL */
-export async function renderTextWithImageToDataUrl(
+/** 텍스트 + (아래) 이미지 1장 이상 → 한 장의 PNG 데이터 URL */
+export async function renderTextWithImagesToDataUrl(
   text: string,
-  imageDataUrl: string | null,
+  imageDataUrls: string[],
   style: TextImageStyle = {}
 ): Promise<string> {
   const trimmed = text.trim();
-  if (!imageDataUrl) return renderTextToImageDataUrl(trimmed, style);
+  const urls = imageDataUrls.filter(Boolean);
+  if (!urls.length) return renderTextToImageDataUrl(trimmed, style);
 
   const fontSize = style.fontSize ?? 28;
   const padding = style.padding ?? 36;
@@ -119,9 +120,9 @@ export async function renderTextWithImageToDataUrl(
   const textColor = style.textColor ?? "#1a2430";
   const backgroundColor = style.backgroundColor ?? "#ffffff";
   const align = style.align ?? "left";
-  const gap = trimmed ? 20 : 0;
+  const gap = 20;
 
-  const img = await loadImageEl(imageDataUrl);
+  const imgs = await Promise.all(urls.map(loadImageEl));
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
@@ -133,12 +134,19 @@ export async function renderTextWithImageToDataUrl(
   const linePx = Math.round(fontSize * lineHeight);
   const textBlock = lines.length * linePx;
 
-  const scale = Math.min(1, contentWidth / Math.max(img.width, 1));
-  const imgW = Math.round(img.width * scale);
-  const imgH = Math.round(img.height * scale);
+  const sizes = imgs.map((img) => {
+    const scale = Math.min(1, contentWidth / Math.max(img.width, 1));
+    return {
+      w: Math.round(img.width * scale),
+      h: Math.round(img.height * scale),
+    };
+  });
+  const imagesBlock =
+    sizes.reduce((sum, s) => sum + s.h, 0) + gap * (imgs.length - 1);
 
   canvas.width = maxWidth;
-  canvas.height = padding * 2 + textBlock + gap + imgH;
+  canvas.height =
+    padding * 2 + textBlock + (textBlock ? gap : 0) + imagesBlock;
 
   ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -160,9 +168,14 @@ export async function renderTextWithImageToDataUrl(
     ctx.fillText(line || " ", x, y);
     y += linePx;
   }
+  if (textBlock) y += gap;
 
-  const imgX = Math.round((canvas.width - imgW) / 2);
-  ctx.drawImage(img, imgX, padding + textBlock + gap, imgW, imgH);
+  for (let i = 0; i < imgs.length; i++) {
+    const { w, h } = sizes[i];
+    const imgX = Math.round((canvas.width - w) / 2);
+    ctx.drawImage(imgs[i], imgX, y, w, h);
+    y += h + gap;
+  }
 
   return canvas.toDataURL("image/png");
 }

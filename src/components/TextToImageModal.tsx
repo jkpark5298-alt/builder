@@ -9,8 +9,10 @@ import {
 } from "@/lib/image-client";
 import {
   renderTextToImageDataUrl,
-  renderTextWithImageToDataUrl,
+  renderTextWithImagesToDataUrl,
 } from "@/lib/text-to-image";
+
+const MAX_ATTACH_IMAGES = 6;
 
 const BG_PRESETS = [
   { id: "white", label: "흰 배경", bg: "#ffffff", fg: "#1a2430" },
@@ -35,7 +37,7 @@ export function TextToImageModal({
   const [preset, setPreset] = useState<(typeof BG_PRESETS)[number]["id"]>("white");
   const [align, setAlign] = useState<"left" | "center">("left");
   const [busy, setBusy] = useState(false);
-  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const colors = useMemo(
@@ -45,13 +47,13 @@ export function TextToImageModal({
 
   useEffect(() => {
     let cancelled = false;
-    if (!text.trim() && !attachedImage) {
+    if (!text.trim() && !attachedImages.length) {
       setPreviewUrl(null);
       return;
     }
     void (async () => {
       try {
-        const url = await renderTextWithImageToDataUrl(text, attachedImage, {
+        const url = await renderTextWithImagesToDataUrl(text, attachedImages, {
           fontSize,
           backgroundColor: colors.bg,
           textColor: colors.fg,
@@ -66,14 +68,21 @@ export function TextToImageModal({
     return () => {
       cancelled = true;
     };
-  }, [text, attachedImage, fontSize, colors, align]);
+  }, [text, attachedImages, fontSize, colors, align]);
 
   async function attachFiles(files: File[]) {
     const imgs = files.filter((f) => f.type.startsWith("image/"));
     if (!imgs.length) return;
+    const remaining = MAX_ATTACH_IMAGES - attachedImages.length;
+    if (remaining <= 0) {
+      alert(`이미지는 최대 ${MAX_ATTACH_IMAGES}장까지 붙일 수 있습니다.`);
+      return;
+    }
     try {
-      const [dataUrl] = await compressImageFiles(imgs.slice(0, 1));
-      if (dataUrl) setAttachedImage(dataUrl);
+      const dataUrls = await compressImageFiles(imgs.slice(0, remaining));
+      if (dataUrls.length) {
+        setAttachedImages((prev) => [...prev, ...dataUrls]);
+      }
     } catch {
       alert("이미지 추가에 실패했습니다.");
     }
@@ -102,14 +111,14 @@ export function TextToImageModal({
   }
 
   async function insert() {
-    if (!text.trim() && !attachedImage) {
+    if (!text.trim() && !attachedImages.length) {
       alert("텍스트를 입력하거나 이미지를 붙여넣어 주세요.");
       return;
     }
     setBusy(true);
     try {
-      const url = attachedImage
-        ? await renderTextWithImageToDataUrl(text, attachedImage, {
+      const url = attachedImages.length
+        ? await renderTextWithImagesToDataUrl(text, attachedImages, {
             fontSize,
             backgroundColor: colors.bg,
             textColor: colors.fg,
@@ -161,7 +170,8 @@ export function TextToImageModal({
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium text-ink-600 inline-flex items-center gap-1">
                 <ImagePlus className="h-3.5 w-3.5" />
-                텍스트 아래 이미지 (선택)
+                텍스트 아래 이미지 (선택 ·{" "}
+                {attachedImages.length}/{MAX_ATTACH_IMAGES}장)
               </span>
               <button
                 type="button"
@@ -175,6 +185,7 @@ export function TextToImageModal({
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   className="sr-only"
                   onChange={(e) => {
                     void attachFiles(Array.from(e.target.files ?? []));
@@ -183,27 +194,52 @@ export function TextToImageModal({
                 />
                 파일 선택
               </label>
-              {attachedImage && (
+              {attachedImages.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setAttachedImage(null)}
+                  onClick={() => setAttachedImages([])}
                   className="inline-flex items-center gap-1 min-h-9 rounded-lg border border-ink-200 bg-white px-2.5 text-xs font-medium text-verify-false hover:border-verify-false"
                 >
                   <X className="h-3.5 w-3.5" />
-                  이미지 제거
+                  전체 제거
                 </button>
               )}
             </div>
             <p className="text-[11px] text-ink-500">
-              캡처·복사한 이미지를 Ctrl+V로 붙여넣으면 텍스트 아래에 합쳐집니다.
+              캡처·복사한 이미지를 Ctrl+V로 여러 번 붙여넣으면 텍스트 아래에
+              순서대로 합쳐집니다. (최대 {MAX_ATTACH_IMAGES}장)
             </p>
-            {attachedImage && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={attachedImage}
-                alt="첨부 이미지"
-                className="max-h-40 rounded-lg border border-ink-200 bg-white"
-              />
+            {attachedImages.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {attachedImages.map((src, i) => (
+                  <div
+                    key={`${i}-${src.slice(0, 24)}`}
+                    className="relative overflow-hidden rounded-lg border border-ink-200 bg-white"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt={`첨부 이미지 ${i + 1}`}
+                      className="w-full aspect-video object-cover"
+                    />
+                    <span className="absolute top-1 left-1 rounded bg-ink-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                      {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAttachedImages((prev) =>
+                          prev.filter((_, j) => j !== i)
+                        )
+                      }
+                      className="absolute top-1 right-1 rounded-md bg-white/90 border border-ink-200 p-0.5 hover:border-verify-false"
+                      title={`이미지 ${i + 1} 제거`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 
@@ -287,7 +323,7 @@ export function TextToImageModal({
           </button>
           <button
             type="button"
-            disabled={busy || (!text.trim() && !attachedImage)}
+            disabled={busy || (!text.trim() && !attachedImages.length)}
             onClick={() => void insert()}
             className="flex-1 min-h-11 rounded-xl bg-ink-900 text-white font-medium disabled:opacity-50"
           >
