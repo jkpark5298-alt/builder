@@ -348,8 +348,13 @@ export function EditableReportPanel({
             const badge = verdictBadge(verdict);
             const open = openFc === entry.itemId;
             const failed = isFailedVerdict(verdict);
-            // 첨부된 관련 이미지만 (대표 유튜브 썸네일 반복 제외)
-            const reportImages = Array.from(
+            const parts =
+              entry.answerParts?.length
+                ? entry.answerParts
+                : fc?.answerParts?.length
+                  ? fc.answerParts
+                  : null;
+            const flatFallback = Array.from(
               new Set(
                 [
                   ...normalizeImageUrls(
@@ -376,22 +381,61 @@ export function EditableReportPanel({
                     <mark className="hl-yellow">{entry.text}</mark>
                   </p>
 
-                  {reportImages.map((src) => (
-                    <div
-                      key={src.slice(0, 48)}
-                      className="overflow-hidden rounded-lg border border-ink-100"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={src}
-                        alt=""
-                        className="w-full max-h-64 object-contain bg-ink-50"
-                      />
-                      <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
-                        관련 이미지
-                      </p>
+                  {parts?.length ? (
+                    <div className="space-y-3">
+                      {parts.map((part) => (
+                        <div
+                          key={part.number}
+                          className="rounded-lg border border-ink-100 bg-ink-50/80 p-2.5 space-y-2"
+                        >
+                          <p className="text-sm text-ink-800 leading-relaxed whitespace-pre-wrap">
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white mr-1.5 align-middle">
+                              {part.number}
+                            </span>
+                            {part.text}
+                          </p>
+                          {(part.imageUrls ?? [])
+                            .filter(
+                              (u) =>
+                                !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+                            )
+                            .map((src) => (
+                              <div
+                                key={src.slice(0, 48)}
+                                className="overflow-hidden rounded-lg border border-ink-100 bg-white"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={src}
+                                  alt={`${part.number}번 이미지`}
+                                  className="w-full max-h-64 object-contain bg-ink-50"
+                                />
+                                <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
+                                  {part.number}번 이미지
+                                </p>
+                              </div>
+                            ))}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : (
+                    flatFallback.map((src) => (
+                      <div
+                        key={src.slice(0, 48)}
+                        className="overflow-hidden rounded-lg border border-ink-100"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt=""
+                          className="w-full max-h-64 object-contain bg-ink-50"
+                        />
+                        <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
+                          관련 이미지
+                        </p>
+                      </div>
+                    ))
+                  )}
 
                   {fc && (
                     <div className="pt-1">
@@ -419,7 +463,6 @@ export function EditableReportPanel({
                         )}
                       </button>
 
-                      {/* 선택 시에만 세부 팩트체크 표시 */}
                       {open && (
                         <div className="mt-2 rounded-lg bg-ink-50 border border-ink-100 p-3 text-sm text-ink-700 whitespace-pre-wrap leading-relaxed">
                           {failed && (

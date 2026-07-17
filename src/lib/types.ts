@@ -44,18 +44,27 @@ export interface SummaryItem {
   needsFactCheck: boolean;
 }
 
+export interface AnswerPart {
+  /** 1부터 시작하는 번호 — 같은 번호의 텍스트·이미지를 묶음 */
+  number: number;
+  text: string;
+  imageUrls: string[];
+}
+
 export interface FactCheckResult {
   itemId: string;
   mode: FactCheckMode;
   verdict: FactCheckVerdict;
-  /** 어떤 내용을 팩트체크해야 하는지 */
+  /** 어떤 내용을 팩트체크해야 하는지 (번호 텍스트 평문) */
   explanation: string;
   sources: string[];
   checkedAt: string;
   /** AI 답변 참고 이미지 (첫 장 — 하위 호환) */
   answerImageUrl?: string;
-  /** AI 답변 참고 이미지 (복수) */
+  /** AI 답변 참고 이미지 (복수, 번호 순서 평탄화) */
   answerImageUrls?: string[];
+  /** 번호별 텍스트·이미지 묶음 */
+  answerParts?: AnswerPart[];
 }
 
 export interface ReportEntry {
@@ -68,6 +77,8 @@ export interface ReportEntry {
   answerImageUrl?: string;
   /** 팩트체크 답변 이미지 (복수) */
   answerImageUrls?: string[];
+  /** 번호별 텍스트·이미지 묶음 */
+  answerParts?: AnswerPart[];
 }
 
 export interface ReportSectionBlock {
@@ -105,6 +116,7 @@ export interface TypedReport {
     verdict?: FactCheckVerdict;
     answerImageUrl?: string;
     answerImageUrls?: string[];
+    answerParts?: AnswerPart[];
   }>;
 }
 

@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { jsPDF } from "jspdf";
+import { resolveAnswerParts } from "./answer-parts";
 import { normalizeImageUrls } from "./image-urls";
 import { reportBodyPlain } from "./report";
 import type { VideoRecord } from "./types";
@@ -292,25 +293,48 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
         writeWrapped(`  FACT CHECK: ${fc.verdict}`, 9, 2);
       }
 
-      if (fc?.checkGuide) {
-        setFace("normal");
-        writeWrapped(`  ${fc.checkGuide}`, 9, 6);
-      } else if (entry.html) {
-        setFace("normal");
-        writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
-      }
+      const parts = resolveAnswerParts({
+        explanation: fc?.checkGuide || entry.html || "",
+        answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
+        answerImageUrls: entry.answerImageUrls ?? fc?.answerImageUrls,
+        answerParts: entry.answerParts ?? fc?.answerParts,
+      });
 
-      const entryImages = normalizeImageUrls(
-        entry.answerImageUrl,
-        entry.answerImageUrls
-      ).filter((u) => !isYoutubeThumb(u));
-      const fcImages = normalizeImageUrls(
-        fc?.answerImageUrl,
-        fc?.answerImageUrls
-      ).filter((u) => !isYoutubeThumb(u));
-      const allEntryImgs = Array.from(new Set([...entryImages, ...fcImages]));
-      for (const src of allEntryImgs) {
-        await drawImage(src, "관련 이미지");
+      if (parts.length) {
+        for (const part of parts) {
+          setFace("normal");
+          if (part.text.trim()) {
+            writeWrapped(`  ${part.number}. ${part.text}`, 9, 4);
+          } else {
+            writeWrapped(`  ${part.number}.`, 9, 2);
+          }
+          for (const src of (part.imageUrls ?? []).filter(
+            (u) => !isYoutubeThumb(u)
+          )) {
+            await drawImage(src, `${part.number}번 이미지`);
+          }
+        }
+      } else {
+        if (fc?.checkGuide) {
+          setFace("normal");
+          writeWrapped(`  ${fc.checkGuide}`, 9, 6);
+        } else if (entry.html) {
+          setFace("normal");
+          writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
+        }
+
+        const entryImages = normalizeImageUrls(
+          entry.answerImageUrl,
+          entry.answerImageUrls
+        ).filter((u) => !isYoutubeThumb(u));
+        const fcImages = normalizeImageUrls(
+          fc?.answerImageUrl,
+          fc?.answerImageUrls
+        ).filter((u) => !isYoutubeThumb(u));
+        const allEntryImgs = Array.from(new Set([...entryImages, ...fcImages]));
+        for (const src of allEntryImgs) {
+          await drawImage(src, "관련 이미지");
+        }
       }
     }
     y += 8;

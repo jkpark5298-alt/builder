@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type {
+  AnswerPart,
   FactCheckResult,
   FactCheckVerdict,
   SummaryItem,
@@ -20,6 +21,12 @@ import type {
 } from "@/lib/types";
 import { factCheckProgress, isItemChecked } from "@/lib/factcheck-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
+import {
+  pairAnswerParts,
+  partsToExplanation,
+  partsToImageUrls,
+  resolveAnswerParts,
+} from "@/lib/answer-parts";
 import { factCheckGuideForItem } from "@/lib/report";
 import { normalizeAiAnswer } from "@/lib/text-format";
 import { ReportTypePicker } from "@/components/ReportTypePicker";
@@ -89,12 +96,29 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     itemId: string,
     answer: string,
     verdict: FactCheckVerdict,
-    answerImageUrls?: string[]
+    answerImageUrls?: string[],
+    answerParts?: AnswerPart[]
   ) {
     setSaving(true);
     setError(null);
     setSavedFlash(false);
     try {
+      const parts =
+        answerParts ??
+        pairAnswerParts(answer, answerImageUrls ?? []);
+      const explanation =
+        partsToExplanation(parts) || normalizeAiAnswer(answer);
+      const images =
+        partsToImageUrls(parts).length > 0
+          ? partsToImageUrls(parts)
+          : answerImageUrls ??
+            normalizeImageUrls(
+              localVideo.factChecks.find((f) => f.itemId === itemId)
+                ?.answerImageUrl,
+              localVideo.factChecks.find((f) => f.itemId === itemId)
+                ?.answerImageUrls
+            );
+
       const res = await fetch(`/api/videos/${localVideo.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -103,16 +127,10 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           factCheck: {
             itemId,
             verdict,
-            explanation: normalizeAiAnswer(answer),
+            explanation,
             sources: [],
-            answerImageUrls:
-              answerImageUrls ??
-              normalizeImageUrls(
-                localVideo.factChecks.find((f) => f.itemId === itemId)
-                  ?.answerImageUrl,
-                localVideo.factChecks.find((f) => f.itemId === itemId)
-                  ?.answerImageUrls
-              ),
+            answerImageUrls: images,
+            answerParts: parts,
           },
         }),
       });
@@ -129,9 +147,12 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           itemId,
           mode: "manual",
           verdict,
-          explanation: answer.trim(),
+          explanation,
           sources: [],
           checkedAt: new Date().toISOString(),
+          answerImageUrl: images[0],
+          answerImageUrls: images.length ? images : undefined,
+          answerParts: parts,
         };
         setLocalVideo((prev) => ({
           ...prev,
@@ -376,8 +397,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             updateTarget(current.id, { statement, detail })
           }
           onDeleteTarget={() => deleteTarget(current.id)}
-          onSave={async (answer, verdict, ansImg) => {
-            const ok = await saveItem(current.id, answer, verdict, ansImg);
+          onSave={async (answer, verdict, ansImg, parts) => {
+            const ok = await saveItem(
+              current.id,
+              answer,
+              verdict,
+              ansImg,
+              parts
+            );
             if (ok && step < required.length - 1) setStep(step + 1);
           }}
         />
@@ -479,7 +506,8 @@ function StepEditor({
   onSave: (
     answer: string,
     verdict: FactCheckVerdict,
-    answerImageUrls?: string[]
+    answerImageUrls?: string[],
+    answerParts?: AnswerPart[]
   ) => Promise<void>;
 }) {
   const router = useRouter();
@@ -501,21 +529,48 @@ function StepEditor({
   const [editStatement, setEditStatement] = useState(item.statement);
   const [editDetail, setEditDetail] = useState(item.detail || "");
 
-  const [answerImages, setAnswerImages] = useState<string[]>(() =>
-    normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls)
+  const [answerParts, setAnswerParts] = useState<AnswerPart[]>(() =>
+    resolveAnswerParts({
+      explanation: existingAnswer,
+      answerImageUrl: fc?.answerImageUrl,
+      answerImageUrls: fc?.answerImageUrls,
+      answerParts: fc?.answerParts,
+    })
   );
   const [answerImageBusy, setAnswerImageBusy] = useState(false);
 
   useEffect(() => {
     setItemImages(normalizeImageUrls(item.imageUrl, item.imageUrls));
-    setAnswerImages(normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls));
+    const nextAnswer =
+      fc?.explanation && !/^다음 주장을/.test(fc.explanation)
+        ? fc.explanation
+        : "";
+    setAnswer(nextAnswer);
+    setAnswerParts(
+      resolveAnswerParts({
+        explanation: nextAnswer,
+        answerImageUrl: fc?.answerImageUrl,
+        answerImageUrls: fc?.answerImageUrls,
+        answerParts: fc?.answerParts,
+      })
+    );
   }, [
     item.id,
     item.imageUrl,
     item.imageUrls,
+    fc?.explanation,
     fc?.answerImageUrl,
     fc?.answerImageUrls,
+    fc?.answerParts,
   ]);
+
+  function syncPartsFromAnswer(raw: string) {
+    const normalized = normalizeAiAnswer(raw);
+    setAnswer(normalized);
+    setAnswerParts((prev) =>
+      pairAnswerParts(normalized, partsToImageUrls(prev), prev)
+    );
+  }
 
   async function persistItemImages(urls: string[]) {
     setItemImageBusy(true);
@@ -542,14 +597,32 @@ function StepEditor({
     }
   }
 
-  async function persistAnswerImages(urls: string[]) {
+  async function persistPartImages(partNumber: number, urls: string[]) {
     setAnswerImageBusy(true);
     try {
+      const nextParts = answerParts.map((p) =>
+        p.number === partNumber ? { ...p, imageUrls: urls } : p
+      );
+      // 해당 번호가 없으면 추가
+      const has = nextParts.some((p) => p.number === partNumber);
+      const finalParts = has
+        ? nextParts
+        : [
+            ...nextParts,
+            { number: partNumber, text: "", imageUrls: urls },
+          ].sort((a, b) => a.number - b.number);
+
+      setAnswerParts(finalParts);
+      const flat = partsToImageUrls(finalParts);
       const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          answerImages: { itemId: item.id, imageUrls: urls },
+          answerImages: {
+            itemId: item.id,
+            imageUrls: flat,
+            answerParts: finalParts,
+          },
         }),
       });
       const data = (await res.json()) as {
@@ -557,7 +630,6 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      setAnswerImages(urls);
       if (data.video) onVideoUpdate(data.video);
       router.refresh();
     } catch {
@@ -729,34 +801,65 @@ function StepEditor({
         AI 답변 · 팩트체크 결과 입력{" "}
         <span className="text-verify-false">*</span>
         <span className="block text-xs text-ink-500 font-normal mt-0.5">
-          제미나이·ChatGPT 등에서 받은 답변을 여기에 붙여넣으세요. (사실/과장/
-          미확인·출처 포함)
+          제미나이·ChatGPT 답변을 붙여넣으세요.{" "}
+          <strong>1. 2. 번호</strong>로 쓰면 아래 이미지와 같은 번호로
+          묶입니다.
         </span>
         <textarea
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
-          onBlur={() => setAnswer((a) => normalizeAiAnswer(a))}
+          onBlur={() => syncPartsFromAnswer(answer)}
           rows={7}
           className="mt-1.5 w-full rounded-xl border border-ink-200 px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-          placeholder="예) AI 답변을 여기에 붙여넣기… (1. 2. 순서로 정리)"
+          placeholder={"예)\n1. 첫 번째 검증 결과…\n2. 두 번째 검증 결과…"}
         />
       </label>
 
-      <div className="rounded-xl border border-ink-100 bg-ink-50/80 p-3 space-y-2">
-        <p className="text-xs font-medium text-ink-600">
-          AI 답변 참고 이미지 (선택)
-        </p>
-        <ImageAttachArea
-          images={answerImages}
-          busy={answerImageBusy}
-          label="이미지 추가"
-          hint="붙여넣기 · 텍스트→이미지"
-          initialText={answer}
-          onChange={(urls) => void persistAnswerImages(urls)}
-        />
-        <p className="text-xs text-ink-500">
-          큰 사진도 자동 압축되어 저장됩니다.
-        </p>
+      <div className="rounded-xl border border-accent/25 bg-accent-muted/30 p-3 space-y-3">
+        <div>
+          <p className="text-xs font-medium text-accent">
+            번호별 텍스트 · 이미지 묶음
+          </p>
+          <p className="text-[11px] text-ink-500 mt-0.5">
+            같은 번호의 텍스트와 이미지가 보고서에도 함께 표시됩니다. 답변을
+            입력한 뒤 각 번호에 이미지를 붙이세요.
+          </p>
+        </div>
+
+        {answerParts.length === 0 ? (
+          <p className="text-sm text-ink-500 rounded-lg border border-dashed border-ink-200 bg-white px-3 py-4 text-center">
+            위에 답변을 붙여넣으면 번호 칸이 생깁니다.
+          </p>
+        ) : (
+          answerParts.map((part) => (
+            <div
+              key={part.number}
+              className="rounded-xl border border-ink-200 bg-white p-3 space-y-2"
+            >
+              <div className="flex items-start gap-2">
+                <span className="shrink-0 inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white">
+                  {part.number}
+                </span>
+                <p className="text-sm text-ink-800 leading-relaxed whitespace-pre-wrap flex-1">
+                  {part.text || (
+                    <span className="text-ink-400">
+                      (이 번호 텍스트 없음 — 이미지만)
+                    </span>
+                  )}
+                </p>
+              </div>
+              <ImageAttachArea
+                images={part.imageUrls}
+                busy={answerImageBusy}
+                label={`${part.number}번 이미지 추가`}
+                hint="같은 번호로 묶임 · 붙여넣기 · 텍스트→이미지"
+                initialText={part.text}
+                maxImages={6}
+                onChange={(urls) => void persistPartImages(part.number, urls)}
+              />
+            </div>
+          ))
+        )}
       </div>
 
       <div>
@@ -791,13 +894,19 @@ function StepEditor({
       <button
         type="button"
         disabled={saving || editing || answer.trim().length < 20}
-        onClick={() =>
-          onSave(
+        onClick={() => {
+          const parts = pairAnswerParts(
             answer,
+            partsToImageUrls(answerParts),
+            answerParts
+          );
+          void onSave(
+            partsToExplanation(parts) || answer,
             verdict,
-            answerImages.length ? answerImages : undefined
-          )
-        }
+            partsToImageUrls(parts),
+            parts
+          );
+        }}
         className="w-full min-h-12 rounded-xl bg-ink-900 text-white font-medium hover:bg-accent disabled:opacity-50 transition-colors"
       >
         {saving ? "저장 중…" : "이 항목 저장하고 다음"}

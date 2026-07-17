@@ -9,7 +9,18 @@ import { buildTypedReport, reportBodyPlain } from "@/lib/report";
 import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
-import type { FactCheckResult, ReportType, SummaryItem, TypedReport } from "@/lib/types";
+import type {
+  AnswerPart,
+  FactCheckResult,
+  ReportType,
+  SummaryItem,
+  TypedReport,
+} from "@/lib/types";
+import {
+  pairAnswerParts,
+  partsToExplanation,
+  partsToImageUrls,
+} from "@/lib/answer-parts";
 
 function buildFactCheckGuide(statement: string, detail?: string): string {
   return buildFactCheckPrompt(statement, detail);
@@ -82,6 +93,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
       sources?: string[];
       answerImageUrl?: string;
       answerImageUrls?: string[];
+      answerParts?: AnswerPart[];
     };
     reportType?: ReportType;
     draft?: boolean;
@@ -101,7 +113,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     deleteItem?: { itemId: string };
     /** AI 답변 참고 이미지 */
     answerImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
-    answerImages?: { itemId: string; imageUrls: string[] };
+    answerImages?: {
+      itemId: string;
+      imageUrls: string[];
+      answerParts?: AnswerPart[];
+    };
     /** 보고서 직접 수정 */
     updateReport?: TypedReport;
     /** 유튜브 내용 요약 수동 저장 */
@@ -263,13 +279,24 @@ export async function PATCH(req: Request, ctx: Ctx) {
             ? [body.answerImage.imageUrl]
             : undefined));
     if (urls) {
-      const split = splitPrimaryImage(urls);
       const existing = next.factChecks.find((f) => f.itemId === itemId);
+      const parts =
+        body.answerImages?.answerParts ??
+        pairAnswerParts(
+          existing?.explanation || "",
+          urls,
+          existing?.answerParts
+        );
+      const flat = partsToImageUrls(parts).length
+        ? partsToImageUrls(parts)
+        : urls;
+      const split = splitPrimaryImage(flat);
       const fc: FactCheckResult = existing
         ? {
             ...existing,
             answerImageUrl: split.imageUrl,
-            answerImageUrls: urls.length ? urls : undefined,
+            answerImageUrls: flat.length ? flat : undefined,
+            answerParts: parts,
           }
         : {
             itemId,
@@ -279,7 +306,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
             sources: [],
             checkedAt: new Date().toISOString(),
             answerImageUrl: split.imageUrl,
-            answerImageUrls: urls.length ? urls : undefined,
+            answerImageUrls: flat.length ? flat : undefined,
+            answerParts: parts,
           };
       next = {
         ...next,
@@ -393,17 +421,32 @@ export async function PATCH(req: Request, ctx: Ctx) {
           ? [body.factCheck.answerImageUrl]
           : []
         : prevImages);
-    const split = splitPrimaryImage(nextImages);
+    const parts =
+      body.factCheck.answerParts?.length
+        ? body.factCheck.answerParts
+        : pairAnswerParts(
+            body.factCheck.explanation,
+            nextImages,
+            prev?.answerParts
+          );
+    const explanation =
+      partsToExplanation(parts) ||
+      normalizeAiAnswer(body.factCheck.explanation.trim());
+    const flat = partsToImageUrls(parts).length
+      ? partsToImageUrls(parts)
+      : nextImages;
+    const split = splitPrimaryImage(flat);
 
     const fc: FactCheckResult = {
       itemId: body.factCheck.itemId,
       mode: "manual",
       verdict: body.factCheck.verdict ?? "unverifiable",
-      explanation: normalizeAiAnswer(body.factCheck.explanation.trim()),
+      explanation,
       sources: body.factCheck.sources ?? [],
       checkedAt: new Date().toISOString(),
       answerImageUrl: split.imageUrl,
-      answerImageUrls: nextImages.length ? nextImages : undefined,
+      answerImageUrls: flat.length ? flat : undefined,
+      answerParts: parts,
     };
     const others = next.factChecks.filter((f) => f.itemId !== fc.itemId);
     next = {

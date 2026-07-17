@@ -1,4 +1,5 @@
 import type {
+  AnswerPart,
   FactCheckResult,
   FactCheckVerdict,
   SummaryItem,
@@ -7,6 +8,10 @@ import type {
 } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls } from "./image-urls";
+import {
+  answerPartsToHtml,
+  resolveAnswerParts,
+} from "./answer-parts";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
@@ -199,7 +204,10 @@ function overlapScore(a: string, b: string): number {
 type FcBundle = {
   item: SummaryItem;
   fc?: FactCheckResult;
-  images: string[];
+  /** 팩트체크 대상(주장) 이미지 */
+  targetImages: string[];
+  /** 번호별 답변 텍스트·이미지 */
+  answerParts: AnswerPart[];
   textBlob: string;
 };
 
@@ -212,10 +220,19 @@ function collectFcBundles(
     .filter((i) => i.needsFactCheck)
     .map((item) => {
       const fc = fcMap.get(item.id);
-      const images = [
-        ...normalizeImageUrls(item.imageUrl, item.imageUrls),
-        ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
-      ].filter((u) => !isYoutubeThumb(u));
+      const targetImages = normalizeImageUrls(
+        item.imageUrl,
+        item.imageUrls
+      ).filter((u) => !isYoutubeThumb(u));
+      const answerParts = resolveAnswerParts({
+        explanation: fc?.explanation,
+        answerImageUrl: fc?.answerImageUrl,
+        answerImageUrls: fc?.answerImageUrls,
+        answerParts: fc?.answerParts,
+      }).map((p) => ({
+        ...p,
+        imageUrls: (p.imageUrls ?? []).filter((u) => !isYoutubeThumb(u)),
+      }));
       const textBlob = [
         item.statement,
         item.detail ?? "",
@@ -223,7 +240,7 @@ function collectFcBundles(
           ? fc.explanation
           : "",
       ].join(" ");
-      return { item, fc, images: Array.from(new Set(images)), textBlob };
+      return { item, fc, targetImages, answerParts, textBlob };
     });
 }
 
@@ -297,25 +314,33 @@ function sectionBodyHtml(
   matched: FcBundle[]
 ): string {
   const paras: string[] = [];
-  const lead = details.length
-    ? details.join(" ")
-    : title;
+  const lead = details.length ? details.join(" ") : title;
   paras.push(`<p>${escapeHtml(lead)}</p>`);
 
   for (const m of matched) {
     const v = (m.fc?.verdict ?? "pending") as FactCheckVerdict;
     const badge = verdictBadge(v);
-    const guide =
-      m.fc?.explanation && !/^다음 주장을/.test(m.fc.explanation)
-        ? normalizeAiAnswer(m.fc.explanation).slice(0, 420)
-        : "";
     paras.push(
       `<p><strong>관련 검증 · ${escapeHtml(badge.label)}</strong> — ${escapeHtml(
         m.item.statement
-      )}${guide ? `<br/><span class="fc-note">${escapeHtml(guide)}</span>` : ""}</p>`
+      )}</p>`
     );
+    if (m.answerParts.length) {
+      paras.push(answerPartsToHtml(m.answerParts, escapeHtml));
+    }
   }
   return paras.join("");
+}
+
+function entryFromBundle(m: FcBundle) {
+  const flatImages = m.answerParts.flatMap((p) => p.imageUrls ?? []);
+  return {
+    itemId: m.item.id,
+    text: m.item.statement,
+    answerImageUrl: flatImages[0],
+    answerImageUrls: flatImages.length ? flatImages : undefined,
+    answerParts: m.answerParts.length ? m.answerParts : undefined,
+  };
 }
 
 /**
@@ -378,29 +403,22 @@ export function buildTypedReport(
     });
   }
 
-  // 3) 요약 소주제별 TEXT + 매칭 이미지 + FC
+  // 3) 요약 소주제별 TEXT + 대상 이미지 + FC(번호 묶음은 entries/본문에)
   parsed.sections.forEach((sec, si) => {
     const matched = bySection[si] ?? [];
-    const images = matched.flatMap((m) => m.images);
+    const images = matched.flatMap((m) => m.targetImages);
     sections.push({
       heading: sec.title.slice(0, 80),
       body: sectionBodyHtml(sec.title, sec.details, matched),
       rich: true,
       images: images.length ? Array.from(new Set(images)) : undefined,
-      entries: matched.map((m) => ({
-        itemId: m.item.id,
-        text: m.item.statement,
-        // 이미지는 섹션(images)에만 — 카드마다 중복 표시 방지
-        imageUrl: undefined,
-        answerImageUrl: undefined,
-        answerImageUrls: undefined,
-      })),
+      entries: matched.map(entryFromBundle),
     });
   });
 
   // 4) 매칭 안 된 FC·이미지
   if (leftover.length) {
-    const images = leftover.flatMap((m) => m.images);
+    const images = leftover.flatMap((m) => m.targetImages);
     sections.push({
       heading: "추가 검증",
       body: `<p>${escapeHtml(
@@ -408,12 +426,7 @@ export function buildTypedReport(
       )}</p>${sectionBodyHtml("추가 검증", [], leftover)}`,
       rich: true,
       images: images.length ? Array.from(new Set(images)) : undefined,
-      entries: leftover.map((m) => ({
-        itemId: m.item.id,
-        text: m.item.statement,
-        answerImageUrl: undefined,
-        answerImageUrls: undefined,
-      })),
+      entries: leftover.map(entryFromBundle),
     });
   }
 
@@ -430,19 +443,13 @@ export function buildTypedReport(
       body: `<p>${escapeHtml(video.overview || "")}</p>`,
       rich: true,
     });
-    // FC를 순서대로 소섹션처럼 펼치되 이미지는 항목에만
     for (const b of bundles) {
       sections.push({
         heading: b.item.statement.slice(0, 60),
         body: sectionBodyHtml(b.item.statement, [], [b]),
         rich: true,
-        images: b.images.length ? b.images : undefined,
-        entries: [
-          {
-            itemId: b.item.id,
-            text: b.item.statement,
-          },
-        ],
+        images: b.targetImages.length ? b.targetImages : undefined,
+        entries: [entryFromBundle(b)],
       });
     }
   }
@@ -453,13 +460,21 @@ export function buildTypedReport(
     const raw = fc?.explanation?.trim() ?? "";
     const isPrompt =
       !raw || (/^다음 주장을/.test(raw) && /팩트체크/.test(raw));
+    const parts = resolveAnswerParts({
+      explanation: isPrompt ? "" : raw,
+      answerImageUrl: fc?.answerImageUrl,
+      answerImageUrls: fc?.answerImageUrls,
+      answerParts: fc?.answerParts,
+    });
+    const flat = parts.flatMap((p) => p.imageUrls ?? []);
     return {
       itemId: i.id,
       statement: i.statement,
       verdict: fc?.verdict ?? ("pending" as const),
       checkGuide: isPrompt ? "" : normalizeAiAnswer(raw),
-      answerImageUrl: normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls)[0],
-      answerImageUrls: normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+      answerImageUrl: flat[0],
+      answerImageUrls: flat.length ? flat : undefined,
+      answerParts: parts.length ? parts : undefined,
     };
   });
 
@@ -487,6 +502,7 @@ export function buildTypedReport(
       verdict: f.verdict,
       answerImageUrl: f.answerImageUrl,
       answerImageUrls: f.answerImageUrls,
+      answerParts: f.answerParts,
     })),
   };
 }
