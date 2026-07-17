@@ -150,7 +150,9 @@ export function UrlPasteForm() {
       goToVideo(data.video.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "수동 요약 시작 실패";
-      if (/Blob|BLOB_|자격 증명/i.test(message)) {
+      if (/정지|suspended/i.test(message)) {
+        setError(message);
+      } else if (/Blob|BLOB_|자격 증명/i.test(message)) {
         setError(
           `${message}\n\n※ 저장소(Blob) 설정 문제입니다. AI 요약과 무관합니다. Vercel Environment Variables를 확인한 뒤 Redeploy 하세요.`
         );
@@ -214,9 +216,12 @@ export function UrlPasteForm() {
 
       if (!res.ok) {
         const errText = data.error || `처리 실패 (${res.status})`;
+        if (/정지|suspended/i.test(errText)) {
+          throw new Error(errText);
+        }
         if (/Blob|BLOB_|자격 증명|저장소/i.test(errText)) {
           throw new Error(
-            `${errText}\n\n※ 이 오류는 ‘AI 요약 API’ 문제가 아니라 저장소(Blob) 설정 문제입니다. 「수동 요약으로 시작」을 쓰거나, 잠시 후 다시 시도해 주세요.`
+            `${errText}\n\n※ 이 오류는 ‘AI 요약 API’ 문제가 아니라 저장소(Blob) 문제입니다. 잠시 후 다시 시도해 주세요.`
           );
         }
         throw new Error(errText);

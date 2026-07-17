@@ -200,6 +200,11 @@ async function writeBlobVideo(video: VideoRecord): Promise<void> {
   if (!writtenAccess) {
     const detail =
       lastError instanceof Error ? lastError.message : String(lastError ?? "");
+    if (/suspended/i.test(detail)) {
+      throw new Error(
+        "저장소(Vercel Blob)가 사용량 초과로 정지되었습니다. Vercel 대시보드 → Storage → Blob에서 사용량·결제 상태를 확인해 주세요. 해제 전까지 새 요약을 저장할 수 없습니다."
+      );
+    }
     throw new Error(
       `Vercel Blob 저장 실패: ${detail || "알 수 없는 오류"}. ${blobAuthHint()}`
     );
