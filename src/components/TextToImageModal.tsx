@@ -7,9 +7,10 @@ import {
   extractImageFilesFromDataTransfer,
   readImagesFromClipboard,
 } from "@/lib/image-client";
+import { pairAnswerParts } from "@/lib/answer-parts";
 import {
+  renderNumberedPartsToDataUrl,
   renderTextToImageDataUrl,
-  renderTextWithImagesToDataUrl,
 } from "@/lib/text-to-image";
 
 const MAX_ATTACH_IMAGES = 6;
@@ -45,6 +46,11 @@ export function TextToImageModal({
     [preset]
   );
 
+  const parts = useMemo(
+    () => pairAnswerParts(text, attachedImages),
+    [text, attachedImages]
+  );
+
   useEffect(() => {
     let cancelled = false;
     if (!text.trim() && !attachedImages.length) {
@@ -53,7 +59,7 @@ export function TextToImageModal({
     }
     void (async () => {
       try {
-        const url = await renderTextWithImagesToDataUrl(text, attachedImages, {
+        const url = await renderNumberedPartsToDataUrl(parts, {
           fontSize,
           backgroundColor: colors.bg,
           textColor: colors.fg,
@@ -68,7 +74,7 @@ export function TextToImageModal({
     return () => {
       cancelled = true;
     };
-  }, [text, attachedImages, fontSize, colors, align]);
+  }, [text, attachedImages, parts, fontSize, colors, align]);
 
   async function attachFiles(files: File[]) {
     const imgs = files.filter((f) => f.type.startsWith("image/"));
@@ -118,7 +124,7 @@ export function TextToImageModal({
     setBusy(true);
     try {
       const url = attachedImages.length
-        ? await renderTextWithImagesToDataUrl(text, attachedImages, {
+        ? await renderNumberedPartsToDataUrl(parts, {
             fontSize,
             backgroundColor: colors.bg,
             textColor: colors.fg,
@@ -206,8 +212,9 @@ export function TextToImageModal({
               )}
             </div>
             <p className="text-[11px] text-ink-500">
-              캡처·복사한 이미지를 Ctrl+V로 여러 번 붙여넣으면 텍스트 아래에
-              순서대로 합쳐집니다. (최대 {MAX_ATTACH_IMAGES}장)
+              텍스트를 <strong>1. 2.</strong> 번호로 쓰면{" "}
+              <strong>1번 이미지는 1번 텍스트 아래</strong>, 2번 이미지는 2번
+              텍스트 아래에 합쳐집니다. (최대 {MAX_ATTACH_IMAGES}장)
             </p>
             {attachedImages.length > 0 && (
               <div className="grid grid-cols-3 gap-2">
@@ -223,7 +230,7 @@ export function TextToImageModal({
                       className="w-full aspect-video object-cover"
                     />
                     <span className="absolute top-1 left-1 rounded bg-ink-900/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                      {i + 1}
+                      {i + 1}번
                     </span>
                     <button
                       type="button"

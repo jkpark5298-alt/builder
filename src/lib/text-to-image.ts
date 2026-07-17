@@ -103,15 +103,24 @@ function loadImageEl(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 텍스트 + (아래) 이미지 1장 이상 → 한 장의 PNG 데이터 URL */
-export async function renderTextWithImagesToDataUrl(
-  text: string,
-  imageDataUrls: string[],
+export type NumberedPart = {
+  number: number;
+  text: string;
+  imageUrls: string[];
+};
+
+/**
+ * 번호 묶음 → 한 장의 PNG.
+ * 각 번호의 텍스트 바로 아래에 같은 번호의 이미지가 붙습니다.
+ */
+export async function renderNumberedPartsToDataUrl(
+  parts: NumberedPart[],
   style: TextImageStyle = {}
 ): Promise<string> {
-  const trimmed = text.trim();
-  const urls = imageDataUrls.filter(Boolean);
-  if (!urls.length) return renderTextToImageDataUrl(trimmed, style);
+  const usable = parts.filter(
+    (p) => p.text.trim() || (p.imageUrls?.length ?? 0) > 0
+  );
+  if (!usable.length) return renderTextToImageDataUrl("", style);
 
   const fontSize = style.fontSize ?? 28;
   const padding = style.padding ?? 36;
@@ -120,9 +129,8 @@ export async function renderTextWithImagesToDataUrl(
   const textColor = style.textColor ?? "#1a2430";
   const backgroundColor = style.backgroundColor ?? "#ffffff";
   const align = style.align ?? "left";
-  const gap = 20;
-
-  const imgs = await Promise.all(urls.map(loadImageEl));
+  const gap = 16;
+  const partGap = 30;
 
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
@@ -130,23 +138,46 @@ export async function renderTextWithImagesToDataUrl(
 
   ctx.font = `${fontSize}px ${FONT}`;
   const contentWidth = maxWidth - padding * 2;
-  const lines = trimmed ? wrapLines(ctx, trimmed, contentWidth) : [];
   const linePx = Math.round(fontSize * lineHeight);
-  const textBlock = lines.length * linePx;
+  const showNumbers =
+    usable.length > 1 || usable.some((p) => /^\d+[.)]/.test(p.text.trim()));
 
-  const sizes = imgs.map((img) => {
-    const scale = Math.min(1, contentWidth / Math.max(img.width, 1));
-    return {
-      w: Math.round(img.width * scale),
-      h: Math.round(img.height * scale),
-    };
+  type Block = {
+    lines: string[];
+    imgs: Array<{ el: HTMLImageElement; w: number; h: number }>;
+  };
+  const blocks: Block[] = [];
+
+  for (const part of usable) {
+    const label =
+      showNumbers && part.text.trim() && !/^\d+[.)]\s/.test(part.text.trim())
+        ? `${part.number}. ${part.text.trim()}`
+        : part.text.trim();
+    const lines = label ? wrapLines(ctx, label, contentWidth) : [];
+    const els = await Promise.all(
+      (part.imageUrls ?? []).filter(Boolean).map(loadImageEl)
+    );
+    const imgs = els.map((el) => {
+      const scale = Math.min(1, contentWidth / Math.max(el.width, 1));
+      return {
+        el,
+        w: Math.round(el.width * scale),
+        h: Math.round(el.height * scale),
+      };
+    });
+    blocks.push({ lines, imgs });
+  }
+
+  let total = padding * 2;
+  blocks.forEach((b, i) => {
+    total += b.lines.length * linePx;
+    if (b.lines.length && b.imgs.length) total += gap;
+    total += b.imgs.reduce((s, im) => s + im.h, 0) + gap * Math.max(0, b.imgs.length - 1);
+    if (i < blocks.length - 1) total += partGap;
   });
-  const imagesBlock =
-    sizes.reduce((sum, s) => sum + s.h, 0) + gap * (imgs.length - 1);
 
   canvas.width = maxWidth;
-  canvas.height =
-    padding * 2 + textBlock + (textBlock ? gap : 0) + imagesBlock;
+  canvas.height = total;
 
   ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -164,18 +195,27 @@ export async function renderTextWithImagesToDataUrl(
   if (align === "right") x = canvas.width - padding;
 
   let y = padding;
-  for (const line of lines) {
-    ctx.fillText(line || " ", x, y);
-    y += linePx;
-  }
-  if (textBlock) y += gap;
-
-  for (let i = 0; i < imgs.length; i++) {
-    const { w, h } = sizes[i];
-    const imgX = Math.round((canvas.width - w) / 2);
-    ctx.drawImage(imgs[i], imgX, y, w, h);
-    y += h + gap;
-  }
+  blocks.forEach((b, i) => {
+    for (const line of b.lines) {
+      ctx.fillText(line || " ", x, y);
+      y += linePx;
+    }
+    if (b.lines.length && b.imgs.length) y += gap;
+    b.imgs.forEach((im, j) => {
+      const imgX = Math.round((canvas.width - im.w) / 2);
+      ctx.drawImage(im.el, imgX, y, im.w, im.h);
+      y += im.h + (j < b.imgs.length - 1 ? gap : 0);
+    });
+    if (i < blocks.length - 1) {
+      y += Math.round(partGap / 2);
+      ctx.strokeStyle = "#eef0f3";
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(canvas.width - padding, y);
+      ctx.stroke();
+      y += Math.round(partGap / 2);
+    }
+  });
 
   return canvas.toDataURL("image/png");
 }
