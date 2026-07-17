@@ -142,7 +142,7 @@ export function TextToImageModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink-900/50 p-3">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl overflow-hidden max-h-[92vh] flex flex-col">
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl overflow-hidden max-h-[82dvh] sm:max-h-[88dvh] flex flex-col">
         <div className="flex items-center justify-between px-4 py-3 border-b border-ink-100 shrink-0">
           <p className="font-medium text-ink-900 inline-flex items-center gap-1.5">
             <Type className="h-4 w-4" />
@@ -313,11 +313,11 @@ export function TextToImageModal({
           </div>
         </div>
 
-        <div className="flex gap-2 p-3 border-t border-ink-100 shrink-0">
+        <div className="flex gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-ink-100 shrink-0 bg-white">
           <button
             type="button"
             onClick={onCancel}
-            className="flex-1 min-h-11 rounded-xl border border-ink-200"
+            className="flex-1 min-h-12 rounded-xl border border-ink-200"
           >
             취소
           </button>
@@ -325,9 +325,9 @@ export function TextToImageModal({
             type="button"
             disabled={busy || (!text.trim() && !attachedImages.length)}
             onClick={() => void insert()}
-            className="flex-1 min-h-11 rounded-xl bg-ink-900 text-white font-medium disabled:opacity-50"
+            className="flex-[2] min-h-12 rounded-xl bg-accent text-white font-medium disabled:opacity-50 hover:bg-ink-900"
           >
-            {busy ? "생성 중…" : "이미지로 넣기"}
+            {busy ? "저장 중…" : "저장 (이미지로 넣기)"}
           </button>
         </div>
       </div>
