@@ -1,22 +1,10 @@
 import fs from "fs";
 import path from "path";
-import { del, get, list, put } from "@vercel/blob";
 import type { ReportType, VideoRecord } from "./types";
+import { databaseUrl, ensureSchema, hasDatabase, sql } from "./db";
 
 /**
- * Vercel `/var/task` 는 읽기 전용.
- * 공유 저장소(Blob)가 필수 — /tmp는 인스턴스마다 달라 404 원인이 됨.
- */
-function resolveDataDir(): string {
-  if (onVercel()) {
-    return path.join("/tmp", "youtube-factcheck", "data");
-  }
-  return path.join(process.cwd(), "data");
-}
-
-/**
- * Next.js는 `process.env.FOO`를 빌드 타임에 치환할 수 있음.
- * 동적 키로 읽어 런타임 Vercel 환경 변수를 반드시 사용.
+ * 저장소: Neon(Postgres)이 기본. DATABASE_URL 이 없으면 로컬 파일로 폴백(개발용).
  */
 function readEnv(name: string): string | undefined {
   const env = process.env as Record<string, string | undefined>;
@@ -30,38 +18,15 @@ function onVercel(): boolean {
   return Boolean(readEnv("VERCEL") || readEnv("AWS_LAMBDA_FUNCTION_NAME"));
 }
 
+function resolveDataDir(): string {
+  if (onVercel()) {
+    return path.join("/tmp", "youtube-factcheck", "data");
+  }
+  return path.join(process.cwd(), "data");
+}
+
 const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, "videos.json");
-const BLOB_PREFIX = "videos/";
-
-/** put/get access 고정 — public으로 쓰고 private로 읽으면 '저장 안 됨'처럼 보임 */
-let preferredBlobAccess: "public" | "private" | null = null;
-
-function blobToken(): string | undefined {
-  return readEnv("BLOB_READ_WRITE_TOKEN");
-}
-
-function blobStoreId(): string | undefined {
-  return readEnv("BLOB_STORE_ID");
-}
-
-/** 배포에서는 항상 Blob 시도 */
-function useBlob(): boolean {
-  if (onVercel()) return true;
-  return Boolean(blobToken() || blobStoreId());
-}
-
-function blobCommandOpts(): {
-  token?: string;
-  storeId?: string;
-} {
-  const token = blobToken();
-  const storeId = blobStoreId();
-  return {
-    ...(token ? { token } : {}),
-    ...(storeId ? { storeId } : {}),
-  };
-}
 
 function ensureLocalDb() {
   try {
@@ -115,183 +80,15 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* 로컬 파일 (개발용 폴백)                                             */
+/* ------------------------------------------------------------------ */
+
 function readLocalVideos(): VideoRecord[] {
   ensureLocalDb();
   const raw = fs.readFileSync(DB_FILE, "utf-8");
   const parsed = JSON.parse(raw) as { videos: VideoRecord[] };
   return (parsed.videos ?? []).map(normalizeVideo);
-}
-
-function writeLocalVideos(videos: VideoRecord[]) {
-  ensureLocalDb();
-  fs.writeFileSync(DB_FILE, JSON.stringify({ videos }, null, 2), "utf-8");
-}
-
-function blobPath(id: string) {
-  return `${BLOB_PREFIX}${id}.json`;
-}
-
-async function streamToJson<T>(stream: ReadableStream<Uint8Array>): Promise<T> {
-  const text = await new Response(stream).text();
-  return JSON.parse(text) as T;
-}
-
-function blobAuthHint(): string {
-  return `진단: BLOB_READ_WRITE_TOKEN=${blobToken() ? "있음" : "없음"}, BLOB_STORE_ID=${blobStoreId() ? "있음" : "없음"}. Vercel 프로젝트 Settings → Environment Variables에 BLOB_READ_WRITE_TOKEN이 Production에 있는지 확인 후 Redeploy 하세요.`;
-}
-
-async function readBlobVideo(id: string): Promise<VideoRecord | undefined> {
-  const auth = blobCommandOpts();
-  const order: Array<"public" | "private"> = preferredBlobAccess
-    ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
-    : ["private", "public"];
-
-  for (const access of order) {
-    try {
-      const result = await get(blobPath(id), {
-        access,
-        useCache: false,
-        ...auth,
-      });
-      if (!result?.stream) continue;
-      const raw = await streamToJson<VideoRecord>(result.stream);
-      preferredBlobAccess = access;
-      return normalizeVideo(raw);
-    } catch (e) {
-      console.warn(`[store] blob get(${access}) failed for ${id}`, e);
-    }
-  }
-  return undefined;
-}
-
-async function writeBlobVideo(video: VideoRecord): Promise<void> {
-  const auth = blobCommandOpts();
-  if (!auth.token && !auth.storeId && !readEnv("VERCEL_OIDC_TOKEN")) {
-    throw new Error(`Vercel Blob 자격 증명이 없습니다. ${blobAuthHint()}`);
-  }
-
-  const body = JSON.stringify(video);
-  const base = {
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json" as const,
-    ...auth,
-  };
-
-  const order: Array<"public" | "private"> = preferredBlobAccess
-    ? [preferredBlobAccess, preferredBlobAccess === "public" ? "private" : "public"]
-    : ["private", "public"];
-
-  let lastError: unknown;
-  let writtenAccess: "public" | "private" | null = null;
-
-  for (const access of order) {
-    try {
-      await put(blobPath(video.id), body, { ...base, access });
-      writtenAccess = access;
-      preferredBlobAccess = access;
-      break;
-    } catch (e) {
-      lastError = e;
-      console.warn(`[store] blob put(${access}) failed`, e);
-    }
-  }
-
-  if (!writtenAccess) {
-    const detail =
-      lastError instanceof Error ? lastError.message : String(lastError ?? "");
-    if (/suspended/i.test(detail)) {
-      throw new Error(
-        "저장소(Vercel Blob)가 사용량 초과로 정지되었습니다. Vercel 대시보드 → Storage → Blob에서 사용량·결제 상태를 확인해 주세요. 해제 전까지 새 요약을 저장할 수 없습니다."
-      );
-    }
-    throw new Error(
-      `Vercel Blob 저장 실패: ${detail || "알 수 없는 오류"}. ${blobAuthHint()}`
-    );
-  }
-
-  // 저장 직후 확인 — 캐시/불일치 시 한 번 더 기록 (배포에서만; 로컬은 속도 우선)
-  if (onVercel()) {
-    const verified = await readBlobVideo(video.id);
-    if (!verified || verified.updatedAt !== video.updatedAt) {
-      await put(blobPath(video.id), body, { ...base, access: writtenAccess });
-    }
-  }
-}
-
-async function deleteBlobVideo(id: string): Promise<boolean> {
-  try {
-    await del(blobPath(id), blobCommandOpts());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function listBlobVideos(): Promise<VideoRecord[]> {
-  try {
-    const out: VideoRecord[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await list({
-        prefix: BLOB_PREFIX,
-        cursor,
-        limit: 100,
-        ...blobCommandOpts(),
-      });
-      for (const blob of page.blobs) {
-        if (!blob.pathname.endsWith(".json")) continue;
-        const id = blob.pathname
-          .slice(BLOB_PREFIX.length)
-          .replace(/\.json$/i, "");
-        const video = await readBlobVideo(id);
-        if (video) out.push(video);
-      }
-      cursor = page.hasMore ? page.cursor : undefined;
-    } while (cursor);
-
-    return out.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-  } catch (e) {
-    console.error("[store] listBlobVideos failed", e);
-    return [];
-  }
-}
-
-export function storageMode(): "blob" | "local" {
-  return useBlob() ? "blob" : "local";
-}
-
-export function storageDiagnostics() {
-  return {
-    mode: storageMode(),
-    onVercel: onVercel(),
-    hasBlobToken: Boolean(blobToken()),
-    hasBlobStoreId: Boolean(blobStoreId()),
-    hasOidc: Boolean(readEnv("VERCEL_OIDC_TOKEN")),
-  };
-}
-
-export async function readAllVideos(): Promise<VideoRecord[]> {
-  try {
-    if (useBlob()) {
-      const fromBlob = await listBlobVideos();
-      if (onVercel()) return fromBlob;
-      // 로컬 개발: Blob에 없는 로컬 저장분도 함께 표시
-      const seen = new Set(fromBlob.map((v) => v.id));
-      const locals = readLocalVideosSafe().filter((v) => !seen.has(v.id));
-      return [...fromBlob, ...locals].sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-    }
-    return readLocalVideos();
-  } catch (e) {
-    console.error("[store] readAllVideos failed", e);
-    return [];
-  }
 }
 
 function readLocalVideosSafe(): VideoRecord[] {
@@ -302,37 +99,18 @@ function readLocalVideosSafe(): VideoRecord[] {
   }
 }
 
-export async function getVideo(id: string): Promise<VideoRecord | undefined> {
-  if (useBlob()) {
-    const fromBlob = await readBlobVideo(id);
-    if (fromBlob || onVercel()) return fromBlob;
-    return readLocalVideosSafe().find((v) => v.id === id);
-  }
-  return readLocalVideos().find((v) => v.id === id);
+function writeLocalVideos(videos: VideoRecord[]) {
+  ensureLocalDb();
+  fs.writeFileSync(DB_FILE, JSON.stringify({ videos }, null, 2), "utf-8");
 }
 
 function upsertLocalVideo(video: VideoRecord): VideoRecord {
-  const videos = readLocalVideos();
+  const videos = readLocalVideosSafe();
   const idx = videos.findIndex((v) => v.id === video.id);
   if (idx >= 0) videos[idx] = video;
   else videos.unshift(video);
   writeLocalVideos(videos);
   return video;
-}
-
-export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
-  if (useBlob()) {
-    try {
-      await writeBlobVideo(video);
-      return video;
-    } catch (e) {
-      // Vercel(배포)에서는 로컬 디스크가 없어 그대로 실패 처리
-      if (onVercel()) throw e;
-      console.warn("[store] blob write failed → local file fallback", e);
-      return upsertLocalVideo(video);
-    }
-  }
-  return upsertLocalVideo(video);
 }
 
 function deleteLocalVideo(id: string): boolean {
@@ -343,16 +121,126 @@ function deleteLocalVideo(id: string): boolean {
   return true;
 }
 
-export async function deleteVideo(id: string): Promise<boolean> {
-  if (useBlob()) {
-    const existing = await readBlobVideo(id);
-    if (existing) {
-      const ok = await deleteBlobVideo(id);
-      if (!onVercel()) deleteLocalVideo(id);
-      return ok;
+/* ------------------------------------------------------------------ */
+/* Postgres (Neon)                                                    */
+/* ------------------------------------------------------------------ */
+
+function rowToVideo(row: { data: unknown }): VideoRecord {
+  const data =
+    typeof row.data === "string"
+      ? (JSON.parse(row.data) as VideoRecord)
+      : (row.data as VideoRecord);
+  return normalizeVideo(data);
+}
+
+async function dbReadAll(): Promise<VideoRecord[]> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    SELECT data FROM videos
+    ORDER BY (data->>'createdAt') DESC NULLS LAST
+  `) as Array<{ data: unknown }>;
+  return rows.map(rowToVideo);
+}
+
+async function dbGet(id: string): Promise<VideoRecord | undefined> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    SELECT data FROM videos WHERE id = ${id} LIMIT 1
+  `) as Array<{ data: unknown }>;
+  if (!rows.length) return undefined;
+  return rowToVideo(rows[0]);
+}
+
+async function dbUpsert(video: VideoRecord): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  const json = JSON.stringify(video);
+  await db`
+    INSERT INTO videos (id, data, created_at, updated_at)
+    VALUES (${video.id}, ${json}::jsonb, now(), now())
+    ON CONFLICT (id)
+    DO UPDATE SET data = ${json}::jsonb, updated_at = now()
+  `;
+}
+
+async function dbDelete(id: string): Promise<boolean> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    DELETE FROM videos WHERE id = ${id} RETURNING id
+  `) as Array<{ id: string }>;
+  return rows.length > 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* 진단                                                               */
+/* ------------------------------------------------------------------ */
+
+export function storageMode(): "postgres" | "local" {
+  return hasDatabase() ? "postgres" : "local";
+}
+
+export function storageDiagnostics() {
+  return {
+    mode: storageMode(),
+    onVercel: onVercel(),
+    hasDatabaseUrl: Boolean(databaseUrl()),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 공개 API                                                           */
+/* ------------------------------------------------------------------ */
+
+export async function readAllVideos(): Promise<VideoRecord[]> {
+  try {
+    if (hasDatabase()) return await dbReadAll();
+    return readLocalVideos();
+  } catch (e) {
+    console.error("[store] readAllVideos failed", e);
+    if (!onVercel()) return readLocalVideosSafe();
+    return [];
+  }
+}
+
+export async function getVideo(id: string): Promise<VideoRecord | undefined> {
+  if (hasDatabase()) {
+    try {
+      return await dbGet(id);
+    } catch (e) {
+      console.error("[store] getVideo failed", e);
+      if (!onVercel()) return readLocalVideosSafe().find((v) => v.id === id);
+      throw e;
     }
-    if (onVercel()) return false;
-    return deleteLocalVideo(id);
+  }
+  return readLocalVideos().find((v) => v.id === id);
+}
+
+export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
+  if (hasDatabase()) {
+    try {
+      await dbUpsert(video);
+      return video;
+    } catch (e) {
+      if (onVercel()) throw e;
+      console.warn("[store] db write failed → local file fallback", e);
+      return upsertLocalVideo(video);
+    }
+  }
+  return upsertLocalVideo(video);
+}
+
+export async function deleteVideo(id: string): Promise<boolean> {
+  if (hasDatabase()) {
+    try {
+      return await dbDelete(id);
+    } catch (e) {
+      if (onVercel()) throw e;
+      console.warn("[store] db delete failed → local file fallback", e);
+      return deleteLocalVideo(id);
+    }
   }
   return deleteLocalVideo(id);
 }
