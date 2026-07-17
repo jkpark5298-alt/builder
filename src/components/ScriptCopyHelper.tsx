@@ -26,6 +26,8 @@ type Props = {
   onScriptFetched?: (script: string) => void;
   onFetchError?: (message: string) => void;
   compact?: boolean;
+  /** 주소가 있으면 자동으로 자막 가져오기 시도 */
+  autoFetchOnUrl?: boolean;
 };
 
 type Step = "auto" | "app" | "easy" | "bookmark";
@@ -34,6 +36,7 @@ export function ScriptCopyHelper({
   youtubeUrl,
   onScriptFetched,
   onFetchError,
+  autoFetchOnUrl = false,
 }: Props) {
   const [copied, setCopied] = useState<"full" | null>(null);
   const [tab, setTab] = useState<"pc" | "ios">(() => {
@@ -45,6 +48,7 @@ export function ScriptCopyHelper({
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
   const [fetchErr, setFetchErr] = useState<string | null>(null);
   const dragHostRef = useRef<HTMLDivElement>(null);
+  const autoTriedRef = useRef<string | null>(null);
 
   const videoId = useMemo(
     () => (youtubeUrl?.trim() ? extractVideoId(youtubeUrl.trim()) : null),
@@ -163,6 +167,17 @@ export function ScriptCopyHelper({
       setFetching(false);
     }
   }
+
+  useEffect(() => {
+    if (!autoFetchOnUrl || !videoId) return;
+    if (autoTriedRef.current === videoId) return;
+    autoTriedRef.current = videoId;
+    const t = window.setTimeout(() => {
+      void fetchTranscriptAuto();
+    }, 400);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per videoId
+  }, [autoFetchOnUrl, videoId]);
 
   return (
     <div className="rounded-xl border border-ink-200 bg-white/90 p-4 space-y-4">

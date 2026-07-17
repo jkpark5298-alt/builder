@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 import {
+  createManualOverviewJob,
   createVideoJob,
   runVideoPipeline,
 } from "@/lib/process";
@@ -24,6 +25,8 @@ export async function POST(req: Request) {
       youtubeUrl?: string;
       creatorNotes?: string;
       pastedScript?: string;
+      /** AI 요약 건너뛰고 수동 요약 화면으로 */
+      manualOverview?: boolean;
     };
     const youtubeUrl = body.youtubeUrl?.trim();
     if (!youtubeUrl) {
@@ -43,6 +46,26 @@ export async function POST(req: Request) {
     const pastedScript = hasUsablePastedScript(body.pastedScript)
       ? normalizePastedText(body.pastedScript!)
       : undefined;
+
+    if (body.manualOverview) {
+      if (!pastedScript) {
+        return NextResponse.json(
+          {
+            error:
+              "수동 요약으로 시작하려면 ② 스크립트(자막)를 먼저 넣어 주세요.",
+          },
+          { status: 400 }
+        );
+      }
+      const video = await createManualOverviewJob(youtubeUrl, pastedScript);
+      return NextResponse.json({
+        video,
+        processing: false,
+        storage: storageMode(),
+        scriptNotice:
+          "AI 요약 없이 열었습니다. 요약란에 직접 입력한 뒤 완료를 누르세요.",
+      });
+    }
 
     // 붙여넣은 스크립트: 저장·요약을 끝까지 기다린 뒤 이동 (404 방지)
     if (pastedScript) {

@@ -93,3 +93,76 @@ export function renderTextToImageDataUrl(
 
   return canvas.toDataURL("image/png");
 }
+
+function loadImageEl(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("이미지를 불러오지 못했습니다."));
+    img.src = src;
+  });
+}
+
+/** 텍스트 + (아래) 이미지 → 한 장의 PNG 데이터 URL */
+export async function renderTextWithImageToDataUrl(
+  text: string,
+  imageDataUrl: string | null,
+  style: TextImageStyle = {}
+): Promise<string> {
+  const trimmed = text.trim();
+  if (!imageDataUrl) return renderTextToImageDataUrl(trimmed, style);
+
+  const fontSize = style.fontSize ?? 28;
+  const padding = style.padding ?? 36;
+  const lineHeight = style.lineHeight ?? 1.45;
+  const maxWidth = style.maxWidth ?? 720;
+  const textColor = style.textColor ?? "#1a2430";
+  const backgroundColor = style.backgroundColor ?? "#ffffff";
+  const align = style.align ?? "left";
+  const gap = trimmed ? 20 : 0;
+
+  const img = await loadImageEl(imageDataUrl);
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas 오류");
+
+  ctx.font = `${fontSize}px ${FONT}`;
+  const contentWidth = maxWidth - padding * 2;
+  const lines = trimmed ? wrapLines(ctx, trimmed, contentWidth) : [];
+  const linePx = Math.round(fontSize * lineHeight);
+  const textBlock = lines.length * linePx;
+
+  const scale = Math.min(1, contentWidth / Math.max(img.width, 1));
+  const imgW = Math.round(img.width * scale);
+  const imgH = Math.round(img.height * scale);
+
+  canvas.width = maxWidth;
+  canvas.height = padding * 2 + textBlock + gap + imgH;
+
+  ctx.fillStyle = backgroundColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#e5e7eb";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+  ctx.font = `${fontSize}px ${FONT}`;
+  ctx.fillStyle = textColor;
+  ctx.textBaseline = "top";
+  ctx.textAlign = align;
+
+  let x = padding;
+  if (align === "center") x = canvas.width / 2;
+  if (align === "right") x = canvas.width - padding;
+
+  let y = padding;
+  for (const line of lines) {
+    ctx.fillText(line || " ", x, y);
+    y += linePx;
+  }
+
+  const imgX = Math.round((canvas.width - imgW) / 2);
+  ctx.drawImage(img, imgX, padding + textBlock + gap, imgW, imgH);
+
+  return canvas.toDataURL("image/png");
+}

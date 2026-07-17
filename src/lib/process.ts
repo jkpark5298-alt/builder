@@ -15,7 +15,44 @@ import {
 
 import { hasUsablePastedScript, normalizePastedText } from "./paste";
 
-export { hasUsablePastedScript, normalizePastedText } from "./paste";
+export async function createManualOverviewJob(
+  youtubeUrl: string,
+  pastedScript: string
+): Promise<VideoRecord> {
+  const job = await createVideoJob(youtubeUrl);
+  const script = normalizePastedText(pastedScript);
+  let title = job.title;
+  let channel = job.channel;
+  try {
+    const meta = await fetchYoutubeMetaLite(job.youtubeUrl, job.videoId);
+    title = meta.title || title;
+    channel = meta.channel || channel;
+  } catch {
+    /* keep job defaults */
+  }
+
+  const record: VideoRecord = {
+    ...job,
+    title: title === "불러오는 중…" ? `YouTube ${job.videoId}` : title,
+    channel: channel || "알 수 없음",
+    transcript: script,
+    transcriptSource: "pasted",
+    scriptNotice:
+      "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
+    overview: "",
+    summarySource: "none",
+    summaryBullets: [],
+    items: [],
+    factChecks: [],
+    status: "awaiting_factcheck",
+    errorMessage: undefined,
+    tags: [channel || "youtube", "youtube", "has-script", "manual-overview"],
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertVideo(record);
+  return record;
+}
+
 export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
@@ -185,6 +222,31 @@ export async function runVideoPipeline(
     return record;
   } catch (e) {
     const message = e instanceof Error ? e.message : "처리 실패";
+    // 스크립트가 있으면 AI 요약 실패해도 수동 요약 화면으로 넘김
+    const hasScript =
+      Boolean(script) ||
+      (record.transcript?.trim().length ?? 0) >= 80;
+    if (hasScript) {
+      record = {
+        ...record,
+        transcript: script || record.transcript,
+        transcriptSource: script ? "pasted" : record.transcriptSource,
+        overview: record.overview || "",
+        summarySource: "none",
+        summaryBullets: record.summaryBullets?.length
+          ? record.summaryBullets
+          : [],
+        items: record.items?.length ? record.items : [],
+        factChecks: record.factChecks?.length ? record.factChecks : [],
+        status: "awaiting_factcheck",
+        errorMessage: undefined,
+        scriptNotice:
+          `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertVideo(record);
+      return record;
+    }
     record = {
       ...record,
       status: "error",

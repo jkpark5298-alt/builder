@@ -205,10 +205,12 @@ async function writeBlobVideo(video: VideoRecord): Promise<void> {
     );
   }
 
-  // 저장 직후 확인 — 캐시/불일치 시 한 번 더 기록
-  const verified = await readBlobVideo(video.id);
-  if (!verified || verified.updatedAt !== video.updatedAt) {
-    await put(blobPath(video.id), body, { ...base, access: writtenAccess });
+  // 저장 직후 확인 — 캐시/불일치 시 한 번 더 기록 (배포에서만; 로컬은 속도 우선)
+  if (onVercel()) {
+    const verified = await readBlobVideo(video.id);
+    if (!verified || verified.updatedAt !== video.updatedAt) {
+      await put(blobPath(video.id), body, { ...base, access: writtenAccess });
+    }
   }
 }
 
@@ -269,7 +271,17 @@ export function storageDiagnostics() {
 
 export async function readAllVideos(): Promise<VideoRecord[]> {
   try {
-    if (useBlob()) return await listBlobVideos();
+    if (useBlob()) {
+      const fromBlob = await listBlobVideos();
+      if (onVercel()) return fromBlob;
+      // 로컬 개발: Blob에 없는 로컬 저장분도 함께 표시
+      const seen = new Set(fromBlob.map((v) => v.id));
+      const locals = readLocalVideosSafe().filter((v) => !seen.has(v.id));
+      return [...fromBlob, ...locals].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+    }
     return readLocalVideos();
   } catch (e) {
     console.error("[store] readAllVideos failed", e);
@@ -277,16 +289,24 @@ export async function readAllVideos(): Promise<VideoRecord[]> {
   }
 }
 
+function readLocalVideosSafe(): VideoRecord[] {
+  try {
+    return readLocalVideos();
+  } catch {
+    return [];
+  }
+}
+
 export async function getVideo(id: string): Promise<VideoRecord | undefined> {
-  if (useBlob()) return readBlobVideo(id);
+  if (useBlob()) {
+    const fromBlob = await readBlobVideo(id);
+    if (fromBlob || onVercel()) return fromBlob;
+    return readLocalVideosSafe().find((v) => v.id === id);
+  }
   return readLocalVideos().find((v) => v.id === id);
 }
 
-export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
-  if (useBlob()) {
-    await writeBlobVideo(video);
-    return video;
-  }
+function upsertLocalVideo(video: VideoRecord): VideoRecord {
   const videos = readLocalVideos();
   const idx = videos.findIndex((v) => v.id === video.id);
   if (idx >= 0) videos[idx] = video;
@@ -295,17 +315,41 @@ export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
   return video;
 }
 
-export async function deleteVideo(id: string): Promise<boolean> {
+export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
   if (useBlob()) {
-    const existing = await readBlobVideo(id);
-    if (!existing) return false;
-    return deleteBlobVideo(id);
+    try {
+      await writeBlobVideo(video);
+      return video;
+    } catch (e) {
+      // Vercel(배포)에서는 로컬 디스크가 없어 그대로 실패 처리
+      if (onVercel()) throw e;
+      console.warn("[store] blob write failed → local file fallback", e);
+      return upsertLocalVideo(video);
+    }
   }
-  const videos = readLocalVideos();
+  return upsertLocalVideo(video);
+}
+
+function deleteLocalVideo(id: string): boolean {
+  const videos = readLocalVideosSafe();
   const next = videos.filter((v) => v.id !== id);
   if (next.length === videos.length) return false;
   writeLocalVideos(next);
   return true;
+}
+
+export async function deleteVideo(id: string): Promise<boolean> {
+  if (useBlob()) {
+    const existing = await readBlobVideo(id);
+    if (existing) {
+      const ok = await deleteBlobVideo(id);
+      if (!onVercel()) deleteLocalVideo(id);
+      return ok;
+    }
+    if (onVercel()) return false;
+    return deleteLocalVideo(id);
+  }
+  return deleteLocalVideo(id);
 }
 
 export async function searchVideos(query: string): Promise<VideoRecord[]> {

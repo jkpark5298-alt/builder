@@ -45,44 +45,45 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
 
   return (
     <div className="rounded-xl border border-ink-200 bg-white overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-ink-50 transition-colors"
-        aria-expanded={open}
-      >
-        {open ? (
-          <ChevronDown className="h-4 w-4 text-accent shrink-0" />
-        ) : (
-          <ChevronRight className="h-4 w-4 text-ink-400 shrink-0" />
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-ink-900">
-            저장된 자막 (스크립트)
-          </p>
-          <p className="text-xs text-ink-500 mt-0.5">
-            {sourceLabel} · {text.length.toLocaleString()}자 · 눌러서{" "}
-            {open ? "접기" : "보기"}
-          </p>
-        </div>
-      </button>
+      <div className="flex items-stretch gap-1 px-2 py-1.5 sm:px-3 sm:py-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 min-w-0 flex items-center gap-2 px-2 py-2 text-left rounded-lg hover:bg-ink-50 transition-colors"
+          aria-expanded={open}
+        >
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-accent shrink-0" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-ink-400 shrink-0" />
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-ink-900">
+              저장된 자막 (스크립트)
+            </p>
+            <p className="text-xs text-ink-500 mt-0.5">
+              {sourceLabel} · {text.length.toLocaleString()}자 · 눌러서{" "}
+              {open ? "접기" : "보기"}
+            </p>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => void copyAll()}
+          className="self-center shrink-0 inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent"
+          aria-label="저장된 자막 복사"
+        >
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
+          {copied ? "복사됨" : "자막 복사"}
+        </button>
+      </div>
 
       {open && (
-        <div className="border-t border-ink-100 px-4 pb-4 space-y-3">
-          <div className="flex flex-wrap gap-2 pt-3">
-            <button
-              type="button"
-              onClick={() => void copyAll()}
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent"
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5 text-emerald-600" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" />
-              )}
-              {copied ? "복사됨" : "자막 전체 복사"}
-            </button>
-          </div>
+        <div className="border-t border-ink-100 px-4 pb-4 pt-3">
           <pre className="max-h-72 overflow-auto rounded-lg border border-ink-100 bg-ink-50/80 p-3 text-xs sm:text-sm text-ink-800 whitespace-pre-wrap leading-relaxed">
             {text}
           </pre>

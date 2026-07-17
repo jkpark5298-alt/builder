@@ -3,8 +3,10 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Circle,
+  Copy,
   Loader2,
   Link2,
 } from "lucide-react";
@@ -55,6 +57,19 @@ export function UrlPasteForm() {
     ok: boolean;
     text: string;
   } | null>(null);
+  const [scriptCopied, setScriptCopied] = useState(false);
+
+  async function copyScript() {
+    const text = normalizePastedText(pastedScript);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setScriptCopied(true);
+      setTimeout(() => setScriptCopied(false), 2500);
+    } catch {
+      setError("복사에 실패했습니다. 스크립트 칸에서 직접 선택·복사해 주세요.");
+    }
+  }
 
   useEffect(() => {
     const saved = loadSaved();
@@ -101,6 +116,51 @@ export function UrlPasteForm() {
       ok: false,
       text: `자막 복사 실패 · ${message}`,
     });
+  }
+
+  async function startManualOverview() {
+    setError(null);
+    if (!url.trim() || !extractVideoId(url.trim())) {
+      setError("① 유튜브 주소를 먼저 넣어 주세요.");
+      return;
+    }
+    if (!hasUsablePastedScript(pastedScript)) {
+      setError("② 스크립트(자막)를 먼저 넣은 뒤 수동 요약을 시작하세요.");
+      return;
+    }
+    setLoading(true);
+    setStatus("수동 요약 화면으로 여는 중…");
+    try {
+      const res = await fetch("/api/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          youtubeUrl: url.trim(),
+          pastedScript: normalizePastedText(pastedScript),
+          manualOverview: true,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: { id: string };
+      };
+      if (!res.ok) throw new Error(data.error || "수동 요약 시작 실패");
+      if (!data.video?.id) throw new Error("영상 ID를 받지 못했습니다.");
+      cacheVideoSnapshot(data.video);
+      goToVideo(data.video.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "수동 요약 시작 실패";
+      if (/Blob|BLOB_|자격 증명/i.test(message)) {
+        setError(
+          `${message}\n\n※ 저장소(Blob) 설정 문제입니다. AI 요약과 무관합니다. Vercel Environment Variables를 확인한 뒤 Redeploy 하세요.`
+        );
+      } else {
+        setError(message);
+      }
+    } finally {
+      setLoading(false);
+      setStatus(null);
+    }
   }
 
   async function startAnalyze(withScript: boolean) {
@@ -153,7 +213,13 @@ export function UrlPasteForm() {
       }
 
       if (!res.ok) {
-        throw new Error(data.error || `처리 실패 (${res.status})`);
+        const errText = data.error || `처리 실패 (${res.status})`;
+        if (/Blob|BLOB_|자격 증명|저장소/i.test(errText)) {
+          throw new Error(
+            `${errText}\n\n※ 이 오류는 ‘AI 요약 API’ 문제가 아니라 저장소(Blob) 설정 문제입니다. 「수동 요약으로 시작」을 쓰거나, 잠시 후 다시 시도해 주세요.`
+          );
+        }
+        throw new Error(errText);
       }
       if (!data.video?.id) {
         throw new Error("영상 ID를 받지 못했습니다. 다시 시도해 주세요.");
@@ -377,6 +443,7 @@ export function UrlPasteForm() {
             youtubeUrl={url || undefined}
             onScriptFetched={onScriptFetched}
             onFetchError={onScriptFetchError}
+            autoFetchOnUrl
           />
 
           {/* 자막 복사 완료/실패 알림 */}
@@ -418,15 +485,29 @@ export function UrlPasteForm() {
             />
           </label>
           {scriptLen > 0 && (
-            <p
-              className={`text-xs font-medium ${
-                hasScript ? "text-emerald-700" : "text-ink-500"
-              }`}
-            >
-              {hasScript
-                ? `✓ 자막 준비됨 · ${scriptLen.toLocaleString()}자`
-                : `${scriptLen}자 · 80자 이상 필요`}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p
+                className={`text-xs font-medium ${
+                  hasScript ? "text-emerald-700" : "text-ink-500"
+                }`}
+              >
+                {hasScript
+                  ? `✓ 자막 준비됨 · ${scriptLen.toLocaleString()}자`
+                  : `${scriptLen}자 · 80자 이상 필요`}
+              </p>
+              <button
+                type="button"
+                onClick={() => void copyScript()}
+                className="inline-flex items-center gap-1.5 min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium text-ink-700 hover:border-accent"
+              >
+                {scriptCopied ? (
+                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+                {scriptCopied ? "복사됨" : "자막 복사"}
+              </button>
+            </div>
           )}
         </div>
 
@@ -461,7 +542,7 @@ export function UrlPasteForm() {
         )}
       </div>
 
-      <div className="fixed bottom-0 inset-x-0 z-40 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4">
+      <div className="fixed bottom-0 inset-x-0 z-40 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4 space-y-2">
         <button
           type="submit"
           disabled={busy}
@@ -480,6 +561,16 @@ export function UrlPasteForm() {
             "먼저 1. 유튜브 주소 입력"
           )}
         </button>
+        {hasScript && step1Done && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void startManualOverview()}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-ink-300 bg-white min-h-11 px-5 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-60"
+          >
+            AI 요약 실패 시 · 수동 요약으로 시작
+          </button>
+        )}
       </div>
     </form>
   );
