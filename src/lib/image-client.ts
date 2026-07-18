@@ -1,32 +1,69 @@
-/** 클라이언트 이미지 압축 — Blob 저장 한도 내로 */
-export async function compressImageFile(
-  file: File,
-  maxBytes = 1_800_000,
-  maxWidth = 1280
+/** API/DB 요청 한도(약 4.5MB) 안에 여러 장을 넣기 위한 목표 크기 */
+const DEFAULT_MAX_BYTES = 450_000;
+const DEFAULT_MAX_WIDTH = 960;
+
+/** data URL → JPEG 압축 (텍스트→이미지 PNG 등) */
+export async function compressDataUrl(
+  dataUrl: string,
+  maxBytes = DEFAULT_MAX_BYTES,
+  maxWidth = DEFAULT_MAX_WIDTH
 ): Promise<string> {
-  const dataUrl = await readFileAsDataUrl(file);
-  if (file.size <= maxBytes && !file.type.includes("heic")) {
+  if (!dataUrl.startsWith("data:image/")) return dataUrl;
+  // 이미 충분히 작으면 그대로 (HEIC 제외)
+  if (
+    dataUrl.length <= maxBytes * 1.37 &&
+    /^data:image\/jpe?g/i.test(dataUrl)
+  ) {
     return dataUrl;
   }
 
   const img = await loadImage(dataUrl);
   const scale = Math.min(1, maxWidth / Math.max(img.width, 1));
-  const w = Math.round(img.width * scale);
-  const h = Math.round(img.height * scale);
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) return dataUrl;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
 
-  let quality = 0.88;
+  let quality = 0.82;
   let out = canvas.toDataURL("image/jpeg", quality);
-  while (out.length > maxBytes * 1.37 && quality > 0.45) {
+  while (out.length > maxBytes * 1.37 && quality > 0.4) {
     quality -= 0.08;
     out = canvas.toDataURL("image/jpeg", quality);
   }
+  // 여전히 크면 한 번 더 축소
+  if (out.length > maxBytes * 1.37 && maxWidth > 480) {
+    return compressDataUrl(out, maxBytes, Math.round(maxWidth * 0.7));
+  }
   return out;
+}
+
+export async function compressDataUrls(
+  urls: string[],
+  maxBytes = DEFAULT_MAX_BYTES,
+  maxWidth = DEFAULT_MAX_WIDTH
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const u of urls) {
+    if (!u) continue;
+    out.push(await compressDataUrl(u, maxBytes, maxWidth));
+  }
+  return out;
+}
+
+/** 클라이언트 이미지 압축 — API/DB 한도 내로 */
+export async function compressImageFile(
+  file: File,
+  maxBytes = DEFAULT_MAX_BYTES,
+  maxWidth = DEFAULT_MAX_WIDTH
+): Promise<string> {
+  const dataUrl = await readFileAsDataUrl(file);
+  return compressDataUrl(dataUrl, maxBytes, maxWidth);
 }
 
 export async function compressImageFiles(files: File[]): Promise<string[]> {

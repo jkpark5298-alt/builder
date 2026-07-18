@@ -79,13 +79,33 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
+  try {
+    return await patchVideo(req, ctx);
+  } catch (e) {
+    console.error("[PATCH /api/videos/:id]", e);
+    const msg = e instanceof Error ? e.message : "저장 실패";
+    const tooLarge =
+      /payload|body|too large|request entity|413|json/i.test(msg) ||
+      (typeof msg === "string" && msg.length > 0 && /ENOMEM|heap/i.test(msg));
+    return NextResponse.json(
+      {
+        error: tooLarge
+          ? "이미지가 너무 커서 저장하지 못했습니다. 장 수를 줄이거나 다시 시도해 주세요."
+          : msg || "저장 실패",
+      },
+      { status: tooLarge ? 413 : 500 }
+    );
+  }
+}
+
+async function patchVideo(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const video = await getVideo(id);
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
 
-  const body = (await req.json()) as {
+  let body: {
     factCheck?: {
       itemId: string;
       verdict?: FactCheckResult["verdict"];
@@ -130,6 +150,15 @@ export async function PATCH(req: Request, ctx: Ctx) {
     /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
     dismissFactCheckRevisionNotice?: boolean;
   };
+
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json(
+      { error: "요청 본문을 읽지 못했습니다. 이미지 용량이 너무 클 수 있습니다." },
+      { status: 400 }
+    );
+  }
 
   let next = { ...video };
 
@@ -193,11 +222,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
             : item
         ),
         updatedAt: new Date().toISOString(),
+        status:
+          next.status === "ready" ? "awaiting_factcheck" : next.status,
       };
-      if (next.status === "ready") {
-        next.report = buildTypedReport(next);
-        next.infographic = await buildInfographic(next);
-      }
     }
   }
 
@@ -316,11 +343,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
           fc,
         ],
         updatedAt: new Date().toISOString(),
+        // 이미지 중간 저장은 보고서 재생성하지 않음 (타임아웃·용량 실패 방지)
+        status:
+          next.status === "ready" ? "awaiting_factcheck" : next.status,
       };
-      if (next.status === "ready") {
-        next.report = buildTypedReport(next);
-        next.infographic = await buildInfographic(next);
-      }
     }
   }
 

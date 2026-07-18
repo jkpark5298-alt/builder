@@ -161,7 +161,7 @@ async function dbUpsert(video: VideoRecord): Promise<void> {
     INSERT INTO videos (id, data, created_at, updated_at)
     VALUES (${video.id}, ${json}::jsonb, now(), now())
     ON CONFLICT (id)
-    DO UPDATE SET data = ${json}::jsonb, updated_at = now()
+    DO UPDATE SET data = EXCLUDED.data, updated_at = now()
   `;
 }
 

@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { ClipboardPaste, Loader2, Type, X } from "lucide-react";
 import {
+  compressDataUrls,
   compressImageFiles,
   extractImageFilesFromDataTransfer,
   readImagesFromClipboard,
@@ -46,7 +47,15 @@ export function ImageAttachArea({
         alert(`이미지는 최대 ${maxImages}장까지 추가할 수 있습니다.`);
         return;
       }
-      await onChange([...images, ...dataUrls.slice(0, remaining)]);
+      try {
+        const compressed = await compressDataUrls(
+          dataUrls.slice(0, remaining)
+        );
+        if (!compressed.length) return;
+        await onChange([...images, ...compressed]);
+      } catch {
+        alert("이미지 추가에 실패했습니다.");
+      }
     },
     [images, maxImages, onChange]
   );

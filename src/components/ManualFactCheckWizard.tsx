@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Copy,
   FileText,
+  Loader2,
   Pencil,
   Save,
   Trash2,
@@ -20,6 +21,7 @@ import type {
   VideoRecord,
 } from "@/lib/types";
 import { factCheckProgress, isItemChecked } from "@/lib/factcheck-client";
+import { compressDataUrls } from "@/lib/image-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import {
   pairAnswerParts,
@@ -103,21 +105,36 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     setError(null);
     setSavedFlash(false);
     try {
-      const parts =
+      // 텍스트→이미지 PNG 등 대용량을 먼저 압축 (요청 한도·체크 미표시 원인)
+      const rawParts =
         answerParts ??
         pairAnswerParts(answer, answerImageUrls ?? []);
+      const compressedParts: AnswerPart[] = [];
+      for (const p of rawParts) {
+        compressedParts.push({
+          ...p,
+          imageUrls: await compressDataUrls(p.imageUrls ?? []),
+        });
+      }
+      const parts = compressedParts;
       const explanation =
         partsToExplanation(parts) || normalizeAiAnswer(answer);
       const images =
         partsToImageUrls(parts).length > 0
           ? partsToImageUrls(parts)
-          : answerImageUrls ??
-            normalizeImageUrls(
-              localVideo.factChecks.find((f) => f.itemId === itemId)
-                ?.answerImageUrl,
-              localVideo.factChecks.find((f) => f.itemId === itemId)
-                ?.answerImageUrls
+          : await compressDataUrls(
+              answerImageUrls ??
+                normalizeImageUrls(
+                  localVideo.factChecks.find((f) => f.itemId === itemId)
+                    ?.answerImageUrl,
+                  localVideo.factChecks.find((f) => f.itemId === itemId)
+                    ?.answerImageUrls
+                )
             );
+
+      if (explanation.trim().length < 20) {
+        throw new Error("AI 답변을 조금 더 자세히 입력해 주세요. (20자 이상)");
+      }
 
       const res = await fetch(`/api/videos/${localVideo.id}`, {
         method: "PATCH",
@@ -126,7 +143,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           draft: true,
           factCheck: {
             itemId,
-            verdict,
+            verdict: verdict === "pending" ? "unverifiable" : verdict,
             explanation,
             sources: [],
             answerImageUrls: images,
@@ -146,7 +163,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         const fc: FactCheckResult = {
           itemId,
           mode: "manual",
-          verdict,
+          verdict: verdict === "pending" ? "unverifiable" : verdict,
           explanation,
           sources: [],
           checkedAt: new Date().toISOString(),
@@ -165,7 +182,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       }
 
       setSavedFlash(true);
-      window.setTimeout(() => setSavedFlash(false), 1500);
+      window.setTimeout(() => setSavedFlash(false), 2500);
       router.refresh();
       return true;
     } catch (e) {
@@ -374,7 +391,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
                   }`}
                   aria-label={`${i + 1}번 항목`}
                 >
-                  {done ? <CheckCircle2 className="h-4 w-4 mx-auto" /> : i + 1}
+                  {done ? (
+                    <span className="inline-flex items-center justify-center gap-0.5">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span className="sr-only">완료</span>
+                    </span>
+                  ) : (
+                    i + 1
+                  )}
                 </button>
               );
             })}
@@ -411,9 +435,13 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       )}
 
       {savedFlash && (
-        <p className="px-4 sm:px-5 text-sm text-verify-true" role="status">
-          저장됐습니다.
-        </p>
+        <div
+          className="mx-4 sm:mx-5 mb-2 flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
+          role="status"
+        >
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+          저장됐습니다. 진행 표시에 ✓가 반영됩니다.
+        </div>
       )}
 
       {error && (
@@ -423,6 +451,15 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       )}
 
       <div className="sticky bottom-0 sm:static border-t border-ink-200 bg-white/95 backdrop-blur px-4 sm:px-5 py-3 flex flex-col gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        {savedFlash && (
+          <div
+            className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white sm:hidden"
+            role="status"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            저장 완료
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-2">
           <div className="flex gap-2 flex-1">
             <button
@@ -537,7 +574,6 @@ function StepEditor({
       answerParts: fc?.answerParts,
     })
   );
-  const [answerImageBusy, setAnswerImageBusy] = useState(false);
 
   useEffect(() => {
     setItemImages(normalizeImageUrls(item.imageUrl, item.imageUrls));
@@ -575,11 +611,12 @@ function StepEditor({
   async function persistItemImages(urls: string[]) {
     setItemImageBusy(true);
     try {
+      const compressed = await compressDataUrls(urls);
       const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          itemImages: { itemId: item.id, imageUrls: urls },
+          itemImages: { itemId: item.id, imageUrls: compressed },
         }),
       });
       const data = (await res.json()) as {
@@ -587,56 +624,35 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      setItemImages(urls);
+      setItemImages(compressed);
       if (data.video) onVideoUpdate(data.video);
       router.refresh();
-    } catch {
-      alert("이미지 저장에 실패했습니다. 다시 시도해 주세요.");
+    } catch (e) {
+      alert(
+        e instanceof Error
+          ? e.message
+          : "이미지 저장에 실패했습니다. 다시 시도해 주세요."
+      );
     } finally {
       setItemImageBusy(false);
     }
   }
 
   async function persistPartImages(partNumber: number, urls: string[]) {
-    setAnswerImageBusy(true);
-    try {
-      const nextParts = answerParts.map((p) =>
-        p.number === partNumber ? { ...p, imageUrls: urls } : p
-      );
-      // 해당 번호가 없으면 추가
-      const has = nextParts.some((p) => p.number === partNumber);
-      const finalParts = has
-        ? nextParts
-        : [
-            ...nextParts,
-            { number: partNumber, text: "", imageUrls: urls },
-          ].sort((a, b) => a.number - b.number);
+    // 이미지 첨부는 화면에만 반영 → 「이 항목 저장하고 다음」에서 한꺼번에 저장
+    // (중간 API 호출은 용량·타임아웃으로 실패해 체크 미표시의 원인이었음)
+    const nextParts = answerParts.map((p) =>
+      p.number === partNumber ? { ...p, imageUrls: urls } : p
+    );
+    const has = nextParts.some((p) => p.number === partNumber);
+    const finalParts = has
+      ? nextParts
+      : [
+          ...nextParts,
+          { number: partNumber, text: "", imageUrls: urls },
+        ].sort((a, b) => a.number - b.number);
 
-      setAnswerParts(finalParts);
-      const flat = partsToImageUrls(finalParts);
-      const res = await fetch(`/api/videos/${videoId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          answerImages: {
-            itemId: item.id,
-            imageUrls: flat,
-            answerParts: finalParts,
-          },
-        }),
-      });
-      const data = (await res.json()) as {
-        error?: string;
-        video?: VideoRecord;
-      };
-      if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      if (data.video) onVideoUpdate(data.video);
-      router.refresh();
-    } catch {
-      alert("AI 답변 이미지 저장에 실패했습니다.");
-    } finally {
-      setAnswerImageBusy(false);
-    }
+    setAnswerParts(finalParts);
   }
 
   async function copyPrompt() {
@@ -821,8 +837,8 @@ function StepEditor({
             번호별 텍스트 · 이미지 묶음
           </p>
           <p className="text-[11px] text-ink-500 mt-0.5">
-            같은 번호의 텍스트와 이미지가 보고서에도 함께 표시됩니다. 답변을
-            입력한 뒤 각 번호에 이미지를 붙이세요.
+            같은 번호의 텍스트와 이미지가 보고서에도 함께 표시됩니다. 이미지는
+            붙인 뒤 「이 항목 저장하고 다음」으로 함께 저장됩니다.
           </p>
         </div>
 
@@ -850,7 +866,6 @@ function StepEditor({
               </div>
               <ImageAttachArea
                 images={part.imageUrls}
-                busy={answerImageBusy}
                 label={`${part.number}번 이미지 추가`}
                 hint="같은 번호로 묶임 · 붙여넣기 · 텍스트→이미지"
                 initialText={part.text}
@@ -907,9 +922,16 @@ function StepEditor({
             parts
           );
         }}
-        className="w-full min-h-12 rounded-xl bg-ink-900 text-white font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+        className="w-full min-h-12 rounded-xl bg-ink-900 text-white font-medium hover:bg-accent disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-2"
       >
-        {saving ? "저장 중…" : "이 항목 저장하고 다음"}
+        {saving ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            저장 중… (이미지 포함)
+          </>
+        ) : (
+          "이 항목 저장하고 다음"
+        )}
       </button>
     </div>
   );
