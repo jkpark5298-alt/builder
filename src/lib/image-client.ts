@@ -1,6 +1,6 @@
 /** API/DB 요청 한도(약 4.5MB) 안에 여러 장을 넣기 위한 목표 크기 */
-const DEFAULT_MAX_BYTES = 450_000;
-const DEFAULT_MAX_WIDTH = 960;
+const DEFAULT_MAX_BYTES = 220_000;
+const DEFAULT_MAX_WIDTH = 720;
 
 /** data URL → JPEG 압축 (텍스트→이미지 PNG 등) */
 export async function compressDataUrl(

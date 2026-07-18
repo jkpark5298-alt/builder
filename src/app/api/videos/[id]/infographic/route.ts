@@ -18,20 +18,29 @@ export async function GET(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "인포그래픽 없음" }, { status: 404 });
   }
 
-  // 항상 최신 레이아웃으로 재생성 (하단 잘림·서식 수정 반영)
-  const infographic = await buildInfographic(video);
-  await upsertVideo({
-    ...video,
-    infographic,
-    updatedAt: new Date().toISOString(),
-  });
+  const url = new URL(req.url);
+  const download = url.searchParams.get("download") === "1";
+  const forceRebuild = url.searchParams.get("rebuild") === "1";
 
-  const download = new URL(req.url).searchParams.get("download") === "1";
+  // 기본적으로 저장된 SVG만 반환. 재생성은 ?rebuild=1 일 때만 (조회마다 DB 쓰기 금지)
+  let infographic = video.infographic;
+  if (forceRebuild || !infographic?.svgMarkup) {
+    if (video.status !== "ready" && !video.report) {
+      return NextResponse.json({ error: "인포그래픽 없음" }, { status: 404 });
+    }
+    infographic = await buildInfographic(video);
+    await upsertVideo({
+      ...video,
+      infographic,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
   return new NextResponse(infographic.svgMarkup, {
     headers: {
       "Content-Type": "image/svg+xml; charset=utf-8",
       "Content-Disposition": `${download ? "attachment" : "inline"}; filename="infographic-${video.videoId}.svg"`,
-      "Cache-Control": "no-store",
+      "Cache-Control": forceRebuild ? "no-store" : "private, max-age=60",
     },
   });
 }

@@ -65,6 +65,7 @@ async function chatJson<T>(
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(60_000),
     body: JSON.stringify({
       model,
       temperature: opts?.temperature ?? 0.25,
@@ -111,6 +112,7 @@ async function chatText(
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(60_000),
     body: JSON.stringify({
       model,
       temperature: opts?.temperature ?? 0.3,

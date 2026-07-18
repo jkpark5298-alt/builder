@@ -14,12 +14,15 @@ export function normalizeImageUrls(
   return out;
 }
 
-/** 저장용: 첫 장은 imageUrl, 나머지는 imageUrls */
+/**
+ * 저장용: 첫 장은 imageUrl, 나머지는 imageUrls.
+ * imageUrls에는 첫 장을 넣지 않는다 (중복 base64 방지).
+ */
 export function splitPrimaryImage(urls: string[]): {
   imageUrl?: string;
   imageUrls?: string[];
 } {
-  const clean = urls.filter(Boolean);
+  const clean = normalizeImageUrls(undefined, urls);
   if (!clean.length) return {};
   const [first, ...rest] = clean;
   return {

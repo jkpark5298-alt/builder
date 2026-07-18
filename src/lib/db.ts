@@ -54,6 +54,13 @@ export async function ensureSchema(): Promise<void> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `;
+      await db`
+        CREATE TABLE IF NOT EXISTS api_rate_limits (
+          bucket_key TEXT PRIMARY KEY,
+          request_count INTEGER NOT NULL DEFAULT 0,
+          expires_at TIMESTAMPTZ NOT NULL
+        )
+      `;
     })().catch((e) => {
       schemaReady = null;
       throw e;

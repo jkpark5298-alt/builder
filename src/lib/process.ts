@@ -270,7 +270,8 @@ export async function createAndProcessVideo(
 /** 3) 요약+팩트체크 → 유형별 보고서 + 인포그래픽 */
 export async function finalizeReport(
   video: VideoRecord,
-  reportType?: ReportType
+  reportType?: ReportType,
+  expectedUpdatedAt?: string
 ): Promise<VideoRecord> {
   const typed = {
     ...video,
@@ -286,8 +287,7 @@ export async function finalizeReport(
     status: "ready",
     updatedAt: new Date().toISOString(),
   };
-  await upsertVideo(next);
-  return next;
+  return upsertVideo(next, expectedUpdatedAt);
 }
 
 export async function reprocessFromId(

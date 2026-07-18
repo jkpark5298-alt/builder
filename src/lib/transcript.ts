@@ -117,6 +117,7 @@ async function trySupadataTranscript(videoId: string): Promise<string | null> {
     url.searchParams.set("mode", "native");
     const res = await fetch(url, {
       headers: { "x-api-key": key },
+      signal: AbortSignal.timeout(12_000),
       next: { revalidate: 0 },
     });
     if (!res.ok) return null;
@@ -291,6 +292,7 @@ async function getTracksFromInnertube(
             contentCheckOk: true,
             racyCheckOk: true,
           }),
+          signal: AbortSignal.timeout(12_000),
           next: { revalidate: 0 },
         }
       );
@@ -313,6 +315,7 @@ async function getTracksFromTimedTextList(
       `https://www.youtube.com/api/timedtext?type=list&v=${videoId}`,
       {
         headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" },
+        signal: AbortSignal.timeout(10_000),
         next: { revalidate: 0 },
       }
     );
@@ -445,6 +448,7 @@ async function fetchWatchHtml(videoId: string): Promise<string> {
       "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
       "User-Agent": UA,
     },
+    signal: AbortSignal.timeout(12_000),
     next: { revalidate: 0 },
   });
   if (!res.ok) throw new Error("watch page fetch failed");
@@ -468,6 +472,7 @@ async function fetchCaptionTrackText(baseUrl: string): Promise<string | null> {
       "Accept-Language": "ko-KR,ko;q=0.9",
       Referer: "https://www.youtube.com/",
     },
+    signal: AbortSignal.timeout(12_000),
     next: { revalidate: 0 },
   });
   if (!res.ok) return null;

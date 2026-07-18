@@ -6,7 +6,12 @@ import {
 } from "@/lib/pipeline";
 import { finalizeReport } from "@/lib/process";
 import { buildTypedReport, reportBodyPlain } from "@/lib/report";
-import { deleteVideo, getVideo, upsertVideo } from "@/lib/store";
+import {
+  deleteVideo,
+  getVideo,
+  StorageConflictError,
+  upsertVideo,
+} from "@/lib/store";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import type {
@@ -15,12 +20,23 @@ import type {
   ReportType,
   SummaryItem,
   TypedReport,
+  VideoRecord,
 } from "@/lib/types";
 import {
   pairAnswerParts,
   partsToExplanation,
   partsToImageUrls,
 } from "@/lib/answer-parts";
+import { slimVideoForClient } from "@/lib/media-budget";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+function jsonVideo(next: VideoRecord, extra: Record<string, unknown> = {}) {
+  return NextResponse.json({
+    video: slimVideoForClient(next),
+    progress: factCheckProgress(next),
+    ...extra,
+  });
+}
 
 function buildFactCheckGuide(statement: string, detail?: string): string {
   return buildFactCheckPrompt(statement, detail);
@@ -59,19 +75,40 @@ function applyItemEdit(
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+function rateLimited(retryAfter: number) {
+  return NextResponse.json(
+    { error: `요청이 너무 많습니다. ${retryAfter}초 후 다시 시도해 주세요.` },
+    { status: 429, headers: { "Retry-After": String(retryAfter) } }
+  );
+}
+
+export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const video = await getVideo(id);
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
-  return NextResponse.json({ video });
+  // 폴링은 상태만 — 전체 transcript/이미지 반복 전송 방지
+  if (new URL(req.url).searchParams.get("poll") === "1") {
+    return NextResponse.json({
+      video: {
+        id: video.id,
+        status: video.status,
+        errorMessage: video.errorMessage,
+        updatedAt: video.updatedAt,
+      },
+    });
+  }
+  return NextResponse.json({ video: slimVideoForClient(video) });
 }
 
-export async function DELETE(_req: Request, ctx: Ctx) {
+export async function DELETE(req: Request, ctx: Ctx) {
+  const rate = await checkRateLimit(req, "video-delete", 10, 10 * 60_000);
+  if (!rate.ok) return rateLimited(rate.retryAfter);
   const { id } = await ctx.params;
   const ok = await deleteVideo(id);
   if (!ok) return NextResponse.json({ error: "없음" }, { status: 404 });
@@ -79,10 +116,22 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 }
 
 export async function PATCH(req: Request, ctx: Ctx) {
+  const rate = await checkRateLimit(req, "video-patch", 90, 60_000);
+  if (!rate.ok) return rateLimited(rate.retryAfter);
   try {
     return await patchVideo(req, ctx);
   } catch (e) {
     console.error("[PATCH /api/videos/:id]", e);
+    if (e instanceof StorageConflictError) {
+      return NextResponse.json(
+        {
+          error:
+            "다른 저장 작업이 먼저 반영되었습니다. 화면을 새로고침한 뒤 다시 저장해 주세요.",
+          code: "STORAGE_CONFLICT",
+        },
+        { status: 409 }
+      );
+    }
     const msg = e instanceof Error ? e.message : "저장 실패";
     const tooLarge =
       /payload|body|too large|request entity|413|json/i.test(msg) ||
@@ -104,6 +153,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
   if (!video) {
     return NextResponse.json({ error: "없음" }, { status: 404 });
   }
+  const expectedUpdatedAt = video.updatedAt;
 
   let body: {
     factCheck?: {
@@ -170,11 +220,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
         : null,
       updatedAt: new Date().toISOString(),
     };
-    await upsertVideo(next);
-    return NextResponse.json({
-      video: next,
-      progress: factCheckProgress(next),
-    });
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved);
   }
 
   if (body.reopenAsDraft) {
@@ -183,11 +230,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
       status: "awaiting_factcheck",
       updatedAt: new Date().toISOString(),
     };
-    await upsertVideo(next);
-    return NextResponse.json({
-      video: next,
-      progress: factCheckProgress(next),
-    });
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved);
   }
 
   if (body.reportType && ["H", "S", "C", "P"].includes(body.reportType)) {
@@ -217,7 +261,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
             ? {
                 ...item,
                 imageUrl: split.imageUrl,
-                imageUrls: urls.length ? urls : undefined,
+                imageUrls: split.imageUrls,
               }
             : item
         ),
@@ -322,7 +366,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
         ? {
             ...existing,
             answerImageUrl: split.imageUrl,
-            answerImageUrls: flat.length ? flat : undefined,
+            answerImageUrls: split.imageUrls,
             answerParts: parts,
           }
         : {
@@ -333,7 +377,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
             sources: [],
             checkedAt: new Date().toISOString(),
             answerImageUrl: split.imageUrl,
-            answerImageUrls: flat.length ? flat : undefined,
+            answerImageUrls: split.imageUrls,
             answerParts: parts,
           };
       next = {
@@ -419,12 +463,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
     next.status = "awaiting_factcheck";
 
-    await upsertVideo(next);
-    return NextResponse.json({
-      video: next,
-      progress: factCheckProgress(next),
-      mode: "overview_complete",
-    });
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "overview_complete" });
   }
 
   if (body.factCheck) {
@@ -436,24 +476,34 @@ async function patchVideo(req: Request, ctx: Ctx) {
     }
 
     const prev = next.factChecks.find((f) => f.itemId === body.factCheck!.itemId);
-    const prevImages = normalizeImageUrls(
-      prev?.answerImageUrl,
-      prev?.answerImageUrls
-    );
-    const nextImages =
-      body.factCheck.answerImageUrls ??
-      (body.factCheck.answerImageUrl !== undefined
-        ? body.factCheck.answerImageUrl
-          ? [body.factCheck.answerImageUrl]
-          : []
-        : prevImages);
+    // 이미 레코드가 크면 새 이미지는 건너뛰고 텍스트·판정만 저장 (타임아웃 방지)
+    const currentBytes = JSON.stringify(next).length;
+    const skipNewImages = currentBytes > 900_000;
+
+    const prevImages = skipNewImages
+      ? []
+      : normalizeImageUrls(prev?.answerImageUrl, prev?.answerImageUrls);
+    const nextImages = skipNewImages
+      ? []
+      : body.factCheck.answerImageUrls ??
+        (body.factCheck.answerImageUrl !== undefined
+          ? body.factCheck.answerImageUrl
+            ? [body.factCheck.answerImageUrl]
+            : []
+          : prevImages);
+    const incomingParts = skipNewImages
+      ? (body.factCheck.answerParts ?? []).map((p) => ({
+          ...p,
+          imageUrls: [] as string[],
+        }))
+      : body.factCheck.answerParts;
     const parts =
-      body.factCheck.answerParts?.length
-        ? body.factCheck.answerParts
+      incomingParts?.length
+        ? incomingParts
         : pairAnswerParts(
             body.factCheck.explanation,
             nextImages,
-            prev?.answerParts
+            skipNewImages ? undefined : prev?.answerParts
           );
     const explanation =
       partsToExplanation(parts) ||
@@ -471,7 +521,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       sources: body.factCheck.sources ?? [],
       checkedAt: new Date().toISOString(),
       answerImageUrl: split.imageUrl,
-      answerImageUrls: flat.length ? flat : undefined,
+      answerImageUrls: split.imageUrls,
       answerParts: parts,
     };
     const others = next.factChecks.filter((f) => f.itemId !== fc.itemId);
@@ -487,6 +537,14 @@ async function patchVideo(req: Request, ctx: Ctx) {
     } else if (next.status !== "error") {
       next.status = "awaiting_factcheck";
     }
+
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, {
+      imagesSkipped: skipNewImages || undefined,
+      warning: skipNewImages
+        ? "용량 한도로 이미지는 제외하고 답변·판정만 저장했습니다."
+        : undefined,
+    });
   }
 
   if (body.completeManual) {
@@ -500,11 +558,12 @@ async function patchVideo(req: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    next = await finalizeReport(next, body.reportType ?? next.reportType);
-    return NextResponse.json({
-      video: next,
-      progress: factCheckProgress(next),
-    });
+    next = await finalizeReport(
+      next,
+      body.reportType ?? next.reportType,
+      expectedUpdatedAt
+    );
+    return jsonVideo(next);
   }
 
   if (body.rebuild && next.status === "ready") {
@@ -513,9 +572,6 @@ async function patchVideo(req: Request, ctx: Ctx) {
     next.updatedAt = new Date().toISOString();
   }
 
-  await upsertVideo(next);
-  return NextResponse.json({
-    video: next,
-    progress: factCheckProgress(next),
-  });
+  const saved = await upsertVideo(next, expectedUpdatedAt);
+  return jsonVideo(saved);
 }

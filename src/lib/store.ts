@@ -2,6 +2,14 @@ import fs from "fs";
 import path from "path";
 import type { ReportType, VideoRecord } from "./types";
 import { databaseUrl, ensureSchema, hasDatabase, sql } from "./db";
+import { compactVideoForStorage } from "./media-budget";
+
+export class StorageConflictError extends Error {
+  constructor() {
+    super("다른 저장 작업이 먼저 반영되었습니다. 화면을 새로고침한 뒤 다시 저장해 주세요.");
+    this.name = "StorageConflictError";
+  }
+}
 
 /**
  * 저장소: Neon(Postgres)이 기본. DATABASE_URL 이 없으면 로컬 파일로 폴백(개발용).
@@ -104,9 +112,18 @@ function writeLocalVideos(videos: VideoRecord[]) {
   fs.writeFileSync(DB_FILE, JSON.stringify({ videos }, null, 2), "utf-8");
 }
 
-function upsertLocalVideo(video: VideoRecord): VideoRecord {
+function upsertLocalVideo(
+  video: VideoRecord,
+  expectedUpdatedAt?: string
+): VideoRecord {
   const videos = readLocalVideosSafe();
   const idx = videos.findIndex((v) => v.id === video.id);
+  if (
+    expectedUpdatedAt &&
+    (idx < 0 || videos[idx].updatedAt !== expectedUpdatedAt)
+  ) {
+    throw new StorageConflictError();
+  }
   if (idx >= 0) videos[idx] = video;
   else videos.unshift(video);
   writeLocalVideos(videos);
@@ -153,10 +170,24 @@ async function dbGet(id: string): Promise<VideoRecord | undefined> {
   return rowToVideo(rows[0]);
 }
 
-async function dbUpsert(video: VideoRecord): Promise<void> {
+async function dbUpsert(
+  video: VideoRecord,
+  expectedUpdatedAt?: string
+): Promise<void> {
   await ensureSchema();
   const db = sql();
   const json = JSON.stringify(video);
+  if (expectedUpdatedAt) {
+    const rows = (await db`
+      UPDATE videos
+      SET data = ${json}::jsonb, updated_at = now()
+      WHERE id = ${video.id}
+        AND data->>'updatedAt' = ${expectedUpdatedAt}
+      RETURNING id
+    `) as Array<{ id: string }>;
+    if (!rows.length) throw new StorageConflictError();
+    return;
+  }
   await db`
     INSERT INTO videos (id, data, created_at, updated_at)
     VALUES (${video.id}, ${json}::jsonb, now(), now())
@@ -208,6 +239,8 @@ export async function readAllVideos(): Promise<VideoRecord[]> {
 export async function getVideo(id: string): Promise<VideoRecord | undefined> {
   if (hasDatabase()) {
     try {
+      // 읽기는 절대 저장 데이터를 변경하지 않는다.
+      // 대용량 정리는 명시적인 쓰기/마이그레이션 단계에서만 수행한다.
       return await dbGet(id);
     } catch (e) {
       console.error("[store] getVideo failed", e);
@@ -218,18 +251,23 @@ export async function getVideo(id: string): Promise<VideoRecord | undefined> {
   return readLocalVideos().find((v) => v.id === id);
 }
 
-export async function upsertVideo(video: VideoRecord): Promise<VideoRecord> {
+export async function upsertVideo(
+  video: VideoRecord,
+  expectedUpdatedAt?: string
+): Promise<VideoRecord> {
+  const { video: compact } = compactVideoForStorage(video);
   if (hasDatabase()) {
     try {
-      await dbUpsert(video);
-      return video;
+      await dbUpsert(compact, expectedUpdatedAt);
+      return compact;
     } catch (e) {
+      if (e instanceof StorageConflictError) throw e;
       if (onVercel()) throw e;
       console.warn("[store] db write failed → local file fallback", e);
-      return upsertLocalVideo(video);
+      return upsertLocalVideo(compact, expectedUpdatedAt);
     }
   }
-  return upsertLocalVideo(video);
+  return upsertLocalVideo(compact, expectedUpdatedAt);
 }
 
 export async function deleteVideo(id: string): Promise<boolean> {

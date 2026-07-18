@@ -40,7 +40,7 @@ export function VideoProcessingPoller({
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/videos/${videoId}`, {
+        const res = await fetch(`/api/videos/${videoId}?poll=1`, {
           cache: "no-store",
         });
         if (!res.ok) return;

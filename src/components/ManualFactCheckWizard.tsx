@@ -105,72 +105,129 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     setError(null);
     setSavedFlash(false);
     try {
-      // 텍스트→이미지 PNG 등 대용량을 먼저 압축 (요청 한도·체크 미표시 원인)
       const rawParts =
-        answerParts ??
-        pairAnswerParts(answer, answerImageUrls ?? []);
-      const compressedParts: AnswerPart[] = [];
-      for (const p of rawParts) {
-        compressedParts.push({
-          ...p,
-          imageUrls: await compressDataUrls(p.imageUrls ?? []),
-        });
-      }
-      const parts = compressedParts;
+        answerParts ?? pairAnswerParts(answer, answerImageUrls ?? []);
       const explanation =
-        partsToExplanation(parts) || normalizeAiAnswer(answer);
-      const images =
-        partsToImageUrls(parts).length > 0
-          ? partsToImageUrls(parts)
-          : await compressDataUrls(
-              answerImageUrls ??
-                normalizeImageUrls(
-                  localVideo.factChecks.find((f) => f.itemId === itemId)
-                    ?.answerImageUrl,
-                  localVideo.factChecks.find((f) => f.itemId === itemId)
-                    ?.answerImageUrls
-                )
-            );
-
+        partsToExplanation(rawParts) || normalizeAiAnswer(answer);
       if (explanation.trim().length < 20) {
         throw new Error("AI 답변을 조금 더 자세히 입력해 주세요. (20자 이상)");
       }
+      const safeVerdict =
+        verdict === "pending" ? "unverifiable" : verdict;
 
-      const res = await fetch(`/api/videos/${localVideo.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          draft: true,
-          factCheck: {
-            itemId,
-            verdict: verdict === "pending" ? "unverifiable" : verdict,
-            explanation,
-            sources: [],
-            answerImageUrls: images,
-            answerParts: parts,
-          },
-        }),
-      });
-      const data = (await res.json()) as {
+      // 1) 텍스트·판정만 먼저 저장 (대용량 이미지로 타임아웃 나지 않게)
+      const textParts = rawParts.map((p) => ({ ...p, imageUrls: [] as string[] }));
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 45000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/videos/${localVideo.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            draft: true,
+            factCheck: {
+              itemId,
+              verdict: safeVerdict,
+              explanation,
+              sources: [],
+              answerImageUrls: [],
+              answerParts: textParts,
+            },
+          }),
+        });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          throw new Error(
+            "저장 시간이 초과됐습니다. 네트워크를 확인한 뒤 다시 시도해 주세요."
+          );
+        }
+        throw e;
+      } finally {
+        window.clearTimeout(timer);
+      }
+
+      let data: {
         error?: string;
+        warning?: string;
         video?: VideoRecord;
+      } = {};
+      try {
+        data = (await res.json()) as typeof data;
+      } catch {
+        if (!res.ok) throw new Error(`저장 실패 (HTTP ${res.status})`);
+      }
+      if (!res.ok) throw new Error(data.error || `저장 실패 (HTTP ${res.status})`);
+
+      const fc: FactCheckResult = {
+        itemId,
+        mode: "manual",
+        verdict: safeVerdict,
+        explanation,
+        sources: [],
+        checkedAt: new Date().toISOString(),
+        answerParts: textParts,
       };
-      if (!res.ok) throw new Error(data.error || "저장 실패");
+
+      // 로컬에 이미지 유지(서버는 용량상 생략할 수 있음)
+      let compressedParts = textParts;
+      const hasImages = rawParts.some((p) => (p.imageUrls?.length ?? 0) > 0);
+      let imageWarning = data.warning;
+
+      if (hasImages) {
+        try {
+          compressedParts = [];
+          for (const p of rawParts) {
+            compressedParts.push({
+              ...p,
+              imageUrls: await compressDataUrls(p.imageUrls ?? [], 220_000, 720),
+            });
+          }
+          const images = partsToImageUrls(compressedParts);
+          const imgRes = await fetch(`/api/videos/${localVideo.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              answerImages: {
+                itemId,
+                imageUrls: images,
+                answerParts: compressedParts,
+              },
+            }),
+          });
+          if (imgRes.ok) {
+            const imgData = (await imgRes.json()) as {
+              video?: VideoRecord;
+              warning?: string;
+            };
+            if (imgData.video) data.video = imgData.video;
+            if (imgData.warning) imageWarning = imgData.warning;
+            fc.answerImageUrl = images[0];
+            fc.answerImageUrls = images.length ? images : undefined;
+            fc.answerParts = compressedParts;
+          } else {
+            imageWarning =
+              "답변은 저장됐습니다. 이미지는 용량 문제로 제외됐습니다.";
+          }
+        } catch {
+          imageWarning =
+            "답변은 저장됐습니다. 이미지는 용량 문제로 제외됐습니다.";
+          compressedParts = textParts;
+        }
+      }
 
       if (data.video) {
-        setLocalVideo(data.video);
+        // 서버 슬림 응답에 이미지가 없어도, 방금 저장한 항목은 로컬 이미지 유지
+        const mergedChecks = [
+          ...data.video.factChecks.filter((f) => f.itemId !== itemId),
+          {
+            ...(data.video.factChecks.find((f) => f.itemId === itemId) ?? fc),
+            ...fc,
+          },
+        ];
+        setLocalVideo({ ...data.video, factChecks: mergedChecks });
       } else {
-        const fc: FactCheckResult = {
-          itemId,
-          mode: "manual",
-          verdict: verdict === "pending" ? "unverifiable" : verdict,
-          explanation,
-          sources: [],
-          checkedAt: new Date().toISOString(),
-          answerImageUrl: images[0],
-          answerImageUrls: images.length ? images : undefined,
-          answerParts: parts,
-        };
         setLocalVideo((prev) => ({
           ...prev,
           factChecks: [
@@ -183,6 +240,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
 
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 2500);
+      if (imageWarning) {
+        // 성공이지만 이미지 제외 안내 — 빨간 에러가 아니라 상태 문구로
+        setError(null);
+        window.setTimeout(() => {
+          setError(imageWarning);
+          window.setTimeout(() => setError(null), 4000);
+        }, 100);
+      }
       router.refresh();
       return true;
     } catch (e) {
@@ -445,7 +510,14 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       )}
 
       {error && (
-        <p className="px-4 sm:px-5 text-sm text-verify-false" role="alert">
+        <p
+          className={`px-4 sm:px-5 text-sm ${
+            /저장됐습니다|제외/.test(error)
+              ? "text-amber-700"
+              : "text-verify-false"
+          }`}
+          role="status"
+        >
           {error}
         </p>
       )}

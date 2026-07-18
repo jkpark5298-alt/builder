@@ -7,7 +7,7 @@ import type {
   VideoRecord,
 } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
-import { normalizeImageUrls } from "./image-urls";
+import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import {
   answerPartsToHtml,
   resolveAnswerParts,
@@ -334,11 +334,12 @@ function sectionBodyHtml(
 
 function entryFromBundle(m: FcBundle) {
   const flatImages = m.answerParts.flatMap((p) => p.imageUrls ?? []);
+  const split = splitPrimaryImage(flatImages);
   return {
     itemId: m.item.id,
     text: m.item.statement,
-    answerImageUrl: flatImages[0],
-    answerImageUrls: flatImages.length ? flatImages : undefined,
+    answerImageUrl: split.imageUrl,
+    answerImageUrls: split.imageUrls,
     answerParts: m.answerParts.length ? m.answerParts : undefined,
   };
 }
@@ -467,13 +468,14 @@ export function buildTypedReport(
       answerParts: fc?.answerParts,
     });
     const flat = parts.flatMap((p) => p.imageUrls ?? []);
+    const split = splitPrimaryImage(flat);
     return {
       itemId: i.id,
       statement: i.statement,
       verdict: fc?.verdict ?? ("pending" as const),
       checkGuide: isPrompt ? "" : normalizeAiAnswer(raw),
-      answerImageUrl: flat[0],
-      answerImageUrls: flat.length ? flat : undefined,
+      answerImageUrl: split.imageUrl,
+      answerImageUrls: split.imageUrls,
       answerParts: parts.length ? parts : undefined,
     };
   });
