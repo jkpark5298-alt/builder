@@ -1,22 +1,17 @@
 import type {
   AnswerPart,
   FactCheckResult,
-  FactCheckVerdict,
   SummaryItem,
   TypedReport,
   VideoRecord,
 } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
-import {
-  answerPartsToHtml,
-  resolveAnswerParts,
-} from "./answer-parts";
+import { resolveAnswerParts } from "./answer-parts";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
   normalizeAiAnswer,
-  verdictBadge,
 } from "./text-format";
 
 export { detectReportType } from "./report-detect";
@@ -308,28 +303,14 @@ function matchBundlesToSections(
   return { bySection, leftover: still };
 }
 
-function sectionBodyHtml(
-  title: string,
-  details: string[],
-  matched: FcBundle[]
-): string {
-  const paras: string[] = [];
+/**
+ * 소주제 서술만 본문에 넣는다.
+ * 팩트체크 주장·답변·이미지는 entries로만 내려보내 화면/PDF 중복을 막는다.
+ */
+function sectionBodyHtml(title: string, details: string[]): string {
   const lead = details.length ? details.join(" ") : title;
-  paras.push(`<p>${escapeHtml(lead)}</p>`);
-
-  for (const m of matched) {
-    const v = (m.fc?.verdict ?? "pending") as FactCheckVerdict;
-    const badge = verdictBadge(v);
-    paras.push(
-      `<p><strong>관련 검증 · ${escapeHtml(badge.label)}</strong> — ${escapeHtml(
-        m.item.statement
-      )}</p>`
-    );
-    if (m.answerParts.length) {
-      paras.push(answerPartsToHtml(m.answerParts, escapeHtml));
-    }
-  }
-  return paras.join("");
+  if (!lead.trim()) return "";
+  return `<p>${escapeHtml(lead)}</p>`;
 }
 
 function entryFromBundle(m: FcBundle) {
@@ -404,34 +385,34 @@ export function buildTypedReport(
     });
   }
 
-  // 3) 요약 소주제별 TEXT + 대상 이미지 + FC(번호 묶음은 entries/본문에)
+  // 3) 요약 소주제: 서술(body) + 대상 이미지 + FC는 entries만
   parsed.sections.forEach((sec, si) => {
     const matched = bySection[si] ?? [];
     const images = matched.flatMap((m) => m.targetImages);
     sections.push({
       heading: sec.title.slice(0, 80),
-      body: sectionBodyHtml(sec.title, sec.details, matched),
+      body: sectionBodyHtml(sec.title, sec.details),
       rich: true,
       images: images.length ? Array.from(new Set(images)) : undefined,
       entries: matched.map(entryFromBundle),
     });
   });
 
-  // 4) 매칭 안 된 FC·이미지
+  // 4) 매칭 안 된 FC·이미지 — 본문은 안내만, FC는 entries
   if (leftover.length) {
     const images = leftover.flatMap((m) => m.targetImages);
     sections.push({
       heading: "추가 검증",
       body: `<p>${escapeHtml(
         "아래는 요약 소주제와 직접 묶이지 않은 검증 항목입니다."
-      )}</p>${sectionBodyHtml("추가 검증", [], leftover)}`,
+      )}</p>`,
       rich: true,
       images: images.length ? Array.from(new Set(images)) : undefined,
       entries: leftover.map(entryFromBundle),
     });
   }
 
-  // 소주제가 전혀 없으면 구형 폴백: 요약 본문 + FC 목록(이미지 분산)
+  // 소주제가 전혀 없으면 구형 폴백: 요약 본문 + FC는 entries만
   if (!parsed.sections.length) {
     sections.length = 0;
     sections.push({
@@ -447,7 +428,7 @@ export function buildTypedReport(
     for (const b of bundles) {
       sections.push({
         heading: b.item.statement.slice(0, 60),
-        body: sectionBodyHtml(b.item.statement, [], [b]),
+        body: "",
         rich: true,
         images: b.targetImages.length ? b.targetImages : undefined,
         entries: [entryFromBundle(b)],
@@ -494,7 +475,7 @@ export function buildTypedReport(
     },
     reportType: video.reportType,
     reportTypeLabel: "일반 보고서",
-    format: "general_v4" as const,
+    format: "general_v5" as const,
     sections,
     summaryExcerpt,
     factChecks: inlineFactChecks.map((f) => ({

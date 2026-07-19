@@ -109,9 +109,9 @@ export function EditableReportPanel({
     };
   }, [video.id]);
 
-  // 구형식(TYPE별) → 일반 형식 자동 재생성
+  // 구형식 → general_v5(서술 body + FC는 entries만) 자동 재생성
   useEffect(() => {
-    if (!video.report || video.report.format === "general_v4") return;
+    if (!video.report || video.report.format === "general_v5") return;
     let cancelled = false;
     (async () => {
       setRebuilding(true);
