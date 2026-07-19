@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "이미지 외부 저장에 실패했습니다. Vercel Blob(BLOB_READ_WRITE_TOKEN) 설정을 확인하세요.",
+            "이미지 외부 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.",
         },
         { status: 502 }
       );
@@ -61,8 +61,12 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[media/upload]", msg);
+    // 사용자에게 Blob 정지 같은 내부 문구는 짧게
+    const friendly = /suspended/i.test(msg)
+      ? "이미지 저장소(Blob)가 정지되어 Neon DB로 저장을 시도했으나 실패했습니다. 새로고침 후 다시 시도해 주세요."
+      : msg.replace(/^이미지 저장 실패:\s*/i, "");
     return NextResponse.json(
-      { error: `이미지 저장 실패: ${msg}` },
+      { error: `이미지 저장 실패: ${friendly}` },
       { status: 502 }
     );
   }

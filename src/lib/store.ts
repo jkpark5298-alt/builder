@@ -267,7 +267,7 @@ export async function upsertVideo(
     const hasHeavy = JSON.stringify(video).includes("data:image/");
     if (hasHeavy) {
       throw new Error(
-        `이미지 저장 실패: ${msg}. 잠시 후 다시 시도하거나 Blob 설정을 확인하세요.`
+        `이미지 저장 실패: ${msg}`
       );
     }
     prepared = video;
