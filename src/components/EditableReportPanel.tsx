@@ -566,6 +566,26 @@ export function EditableReportPanel({
                 </ul>
               )}
 
+              {/* 팩트체크 관련 이미지 — 텍스트 없이 이미지만 (F 바로 아래) */}
+              {reportFcImages.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs text-ink-500 print:hidden">관련 이미지</p>
+                  {reportFcImages.map((src) => (
+                    <div
+                      key={src.slice(0, 64)}
+                      className="overflow-hidden rounded-xl border border-ink-100 bg-white"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={src}
+                        alt=""
+                        className="w-full max-h-72 object-contain bg-white"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {sec.images?.map((src, i) => (
                 <div
                   key={i}
@@ -592,25 +612,6 @@ export function EditableReportPanel({
                   )}
                 </div>
               ))}
-
-              {/* 팩트체크 관련 이미지 — 텍스트 없이 이미지만 본문에 표시 */}
-              {reportFcImages.length > 0 && (
-                <div className="space-y-3">
-                  {reportFcImages.map((src) => (
-                    <div
-                      key={src.slice(0, 64)}
-                      className="overflow-hidden rounded-xl border border-ink-100 bg-white"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={src}
-                        alt=""
-                        className="w-full max-h-72 object-contain bg-white"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
 
               {/* 편집 모드: 연결된 FC 목록 (화면 전용, 본문 카드 아님) */}
               {editing && sectionMarkers.length > 0 && (

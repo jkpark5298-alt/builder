@@ -37,14 +37,21 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
   if (!url) return null;
   if (url.startsWith("data:")) return url;
 
-  // 로컬 미디어는 파일에서 직접 읽기 (서버 fetch 루프·실패 캐시 방지)
+  // /api/media — 로컬 파일 → Neon (Vercel Blob 중단 시 Neon만 존재)
   if (url.startsWith("/api/media/")) {
     try {
-      const { readLocalMedia } = await import("./media-store");
       const key = url.slice("/api/media/".length);
-      const file = readLocalMedia(key);
-      if (!file || file.buffer.length < 100) return null;
-      return `data:${file.contentType};base64,${file.buffer.toString("base64")}`;
+      const { readLocalMedia } = await import("./media-store");
+      const local = readLocalMedia(key);
+      if (local && local.buffer.length >= 100) {
+        return `data:${local.contentType};base64,${local.buffer.toString("base64")}`;
+      }
+      const { getNeonMedia } = await import("./neon-media");
+      const neon = await getNeonMedia(key);
+      if (neon && neon.buffer.length >= 100) {
+        return `data:${neon.contentType};base64,${neon.buffer.toString("base64")}`;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -53,16 +60,13 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
   if (imageCache.has(url)) return imageCache.get(url) ?? null;
 
   try {
-    const absolute = url.startsWith("http")
-      ? url
-      : undefined;
+    const absolute = url.startsWith("http") ? url : undefined;
     if (!absolute) return null;
     const res = await fetch(absolute, {
       signal: AbortSignal.timeout(10_000),
       headers: { Accept: "image/*" },
     });
     if (!res.ok) {
-      // 일시 실패는 캐시하지 않음 → 재생성 시 재시도
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
@@ -144,6 +148,27 @@ function renderLines(
   return { svg: parts.join("\n"), height: y - startY };
 }
 
+function concisePlain(text: string, maxChars = 160): string {
+  const plain = htmlToPlain(text).replace(/\s+/g, " ").trim();
+  if (!plain) return "";
+  if (plain.length <= maxChars) return plain;
+  const cut = plain.slice(0, maxChars);
+  const stops = [".", "。", "!", "?", "…"];
+  let best = -1;
+  for (const s of stops) {
+    const i = cut.lastIndexOf(s);
+    if (i > best) best = i;
+  }
+  // 한국어 문장 종결 대략 매칭
+  let daLast = -1;
+  const re = /다[.。]?(?=\s|$)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(cut))) daLast = m.index + m[0].length - 1;
+  if (daLast > best) best = daLast;
+  if (best > maxChars * 0.4) return cut.slice(0, best + 1).trim();
+  return cut.replace(/\s+\S*$/, "").trim() + "…";
+}
+
 export async function buildInfographic(
   video: VideoRecord
 ): Promise<InfographicData> {
@@ -173,15 +198,17 @@ export async function buildInfographic(
     const fail = isFailedVerdict(verdict);
     const answer = fc?.explanation?.trim() ?? "";
     const isPrompt = !answer || /^다음 주장을/.test(answer);
-    const summary = isPrompt
-      ? item.statement
-      : normalizeAiAnswer(answer);
+    const summary = concisePlain(
+      isPrompt ? item.statement : normalizeAiAnswer(answer),
+      140
+    );
 
     let related: string | null = null;
-    const answerImages = normalizeImageUrls(
-      fc?.answerImageUrl,
-      fc?.answerImageUrls
-    ).filter((u) => !isYoutubeThumb(u));
+    const partImgs = (fc?.answerParts ?? []).flatMap((p) => p.imageUrls ?? []);
+    const answerImages = [
+      ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+      ...partImgs,
+    ].filter((u) => !isYoutubeThumb(u));
     const itemImages = normalizeImageUrls(
       item.imageUrl,
       item.imageUrls
@@ -192,7 +219,7 @@ export async function buildInfographic(
     }
 
     cards.push({
-      statement: item.statement,
+      statement: concisePlain(item.statement, 90),
       summary,
       mark: fail ? "✗" : badge.mark,
       label: badge.label,
@@ -201,20 +228,59 @@ export async function buildInfographic(
     });
   }
 
-  const sectionHints = (() => {
-    const raw =
-      video.report?.sections
-        .filter((s) => s.heading !== "추가 검증")
-        .map((s) => ({
-          heading: s.heading,
-          short: htmlToPlain(s.body) || "",
-        }))
-        .filter((s) => s.short) ?? [];
+  type SectionHint = {
+    heading: string;
+    short: string;
+    kind: "intro" | "conclusion" | "body";
+    images: string[];
+  };
 
-    const order = (h: string) =>
-      h === "결론" ? 0 : h === "도입" ? 1 : h === "요약" ? 2 : 3;
-    return [...raw].sort((a, b) => order(a.heading) - order(b.heading));
-  })();
+  const sectionHints: SectionHint[] = [];
+  for (const s of video.report?.sections ?? []) {
+    if (s.heading === "추가 검증") continue;
+    const short = concisePlain(s.body || "", 170);
+    if (!short) continue;
+    const kind: SectionHint["kind"] =
+      s.heading === "도입"
+        ? "intro"
+        : s.heading === "결론"
+          ? "conclusion"
+          : "body";
+    const fromSec = [s.imageUrl, ...(s.images ?? [])].filter(
+      (u): u is string => Boolean(u) && !isYoutubeThumb(u)
+    );
+    const fromEntries = (s.entries ?? []).flatMap((e) => {
+      const fc = e.itemId ? fcMap.get(e.itemId) : undefined;
+      return [
+        ...normalizeImageUrls(e.answerImageUrl, e.answerImageUrls),
+        ...(e.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+        ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+        ...(fc?.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+      ].filter((u) => !isYoutubeThumb(u));
+    });
+    const images = Array.from(new Set([...fromSec, ...fromEntries]));
+    sectionHints.push({ heading: s.heading, short, kind, images });
+  }
+
+  const intro = sectionHints.filter((s) => s.kind === "intro");
+  const bodySecs = sectionHints.filter((s) => s.kind === "body");
+  const conclusions = sectionHints.filter((s) => s.kind === "conclusion");
+
+  // 도입↔내용 사이에 넣을 관련 이미지 (소주제·FC 이미지)
+  const bridgeImages: string[] = [];
+  const seenBridge = new Set<string>();
+  for (const s of [...bodySecs, ...conclusions, ...intro]) {
+    for (const u of s.images) {
+      if (seenBridge.has(u)) continue;
+      seenBridge.add(u);
+      bridgeImages.push(u);
+      if (bridgeImages.length >= 6) break;
+    }
+    if (bridgeImages.length >= 6) break;
+  }
+  const bridgeDataUrls = (
+    await Promise.all(bridgeImages.map((u) => fetchImageDataUrl(u)))
+  ).filter((u): u is string => Boolean(u));
 
   const highlights = cards.map((c) => ({
     label: c.fail ? "검증 ✗" : "검증",
@@ -256,40 +322,107 @@ export async function buildInfographic(
     y += 34;
   };
 
-  // 1) 보고서 요약 — 요약 → 결론
-  if (sectionHints.length) {
+  /** 간결 카드 — 사용자 참고 이미지 스타일(좌측 오렌지 바 + 배지) */
+  const renderConciseCard = async (
+    heading: string,
+    short: string,
+    imageUrls: string[] = []
+  ) => {
+    const lines = wrapSvgText(short, contentW - 44, 13);
+    const bodyH = textBlockHeight(lines, 20, 10);
+    const imgs = (
+      await Promise.all(
+        imageUrls.slice(0, 3).map((u) => fetchImageDataUrl(u))
+      )
+    ).filter((u): u is string => Boolean(u));
+    const imgRowH = imgs.length ? 110 : 0;
+    const padTop = 36;
+    const padBot = 16;
+    const gap = imgs.length ? 12 : 0;
+    const hgt = padTop + bodyH + gap + imgRowH + padBot;
+    const top = y;
+    const body = renderLines(
+      lines,
+      padX + 22,
+      top + padTop,
+      20,
+      `font-size="13" fill="#3a4a5c"`
+    );
+
+    let imgSvg = "";
+    if (imgs.length) {
+      const slotW = (contentW - 44 - (imgs.length - 1) * 10) / imgs.length;
+      const iy = top + padTop + bodyH + gap;
+      imgs.forEach((dataUrl, ii) => {
+        const ix = padX + 22 + ii * (slotW + 10);
+        const clip = `ic${y}_${ii}`;
+        imgSvg += `
+        <clipPath id="${clip}"><rect x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" rx="10"/></clipPath>
+        <image href="${dataUrl}" xlink:href="${dataUrl}" x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>
+        <rect x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" rx="10" fill="none" stroke="#d0d9e2"/>`;
+      });
+    }
+
+    blocks.push(`
+      <g>
+        <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="14" fill="#ffffff" stroke="#e5ebf0"/>
+        <rect x="${padX}" y="${top}" width="6" height="${hgt}" rx="3" fill="#c45c26"/>
+        <rect x="${padX + 18}" y="${top + 12}" width="${Math.max(48, heading.length * 14 + 20)}" height="22" rx="6" fill="#fff4ee"/>
+        <text x="${padX + 28}" y="${top + 27}" font-size="12" font-weight="700" fill="#c45c26">${escapeXml(heading)}</text>
+        ${body.svg}
+        ${imgSvg}
+      </g>`);
+    y += hgt + 14;
+  };
+
+  // 1) 도입 → (관련 이미지 브릿지) → 내용(소주제·결론)
+  if (intro.length || bodySecs.length || conclusions.length) {
     sectionHeader("보고서 요약", "1");
 
-    for (const h of sectionHints) {
-      const lines = wrapSvgText(h.short, contentW - 44, 12.5);
-      const bodyH = textBlockHeight(lines, 19, 10);
-      const padTop = 36;
-      const padBot = 18;
-      const hgt = padTop + bodyH + padBot;
-      const top = y;
-      const body = renderLines(
-        lines,
-        padX + 22,
-        top + padTop,
-        19,
-        `font-size="12.5" fill="#3a4a5c"`
-      );
+    for (const h of intro) {
+      await renderConciseCard(h.heading, h.short);
+    }
 
+    // 도입과 내용 사이: 관련 이미지 갤러리 + 짧은 안내
+    if (bridgeDataUrls.length) {
+      const top = y;
+      const cols = Math.min(3, bridgeDataUrls.length);
+      const rows = Math.ceil(bridgeDataUrls.length / cols);
+      const gap = 10;
+      const slotW = (contentW - 32 - (cols - 1) * gap) / cols;
+      const slotH = 100;
+      const labelH = 28;
+      const hgt = labelH + 12 + rows * slotH + (rows - 1) * gap + 16;
+      let gallery = "";
+      bridgeDataUrls.forEach((dataUrl, ii) => {
+        const col = ii % cols;
+        const row = Math.floor(ii / cols);
+        const ix = padX + 16 + col * (slotW + gap);
+        const iy = top + labelH + 8 + row * (slotH + gap);
+        const clip = `br${ii}`;
+        gallery += `
+        <clipPath id="${clip}"><rect x="${ix}" y="${iy}" width="${slotW}" height="${slotH}" rx="10"/></clipPath>
+        <image href="${dataUrl}" xlink:href="${dataUrl}" x="${ix}" y="${iy}" width="${slotW}" height="${slotH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>
+        <rect x="${ix}" y="${iy}" width="${slotW}" height="${slotH}" rx="10" fill="none" stroke="#d0d9e2"/>`;
+      });
       blocks.push(`
       <g>
         <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="14" fill="#ffffff" stroke="#e5ebf0"/>
         <rect x="${padX}" y="${top}" width="6" height="${hgt}" rx="3" fill="#c45c26"/>
-        <rect x="${padX + 18}" y="${top + 12}" width="${Math.max(48, h.heading.length * 14 + 20)}" height="22" rx="6" fill="#fff4ee"/>
-        <text x="${padX + 28}" y="${top + 27}" font-size="12" font-weight="700" fill="#c45c26">${escapeXml(h.heading)}</text>
-        ${body.svg}
+        <text x="${padX + 22}" y="${top + 22}" font-size="12" font-weight="700" fill="#c45c26">관련 이미지</text>
+        ${gallery}
       </g>`);
       y += hgt + 14;
     }
-    y += 10;
+
+    for (const h of [...bodySecs, ...conclusions]) {
+      await renderConciseCard(h.heading, h.short, h.images.slice(0, 2));
+    }
+    y += 6;
   }
 
-  // 2) 팩트체크 항목 (전체)
-  sectionHeader("팩트체크 항목", sectionHints.length ? "2" : "1");
+  // 2) 팩트체크 항목 (간결 + 관련 이미지)
+  sectionHeader("팩트체크 항목", intro.length || bodySecs.length || conclusions.length ? "2" : "1");
 
   cards.forEach((c, i) => {
     const hasImg = Boolean(c.img);
@@ -430,7 +563,7 @@ export async function buildInfographic(
     highlights,
     sectionHints: sectionHints.map((s) => ({
       heading: s.heading,
-      short: s.short.slice(0, 120) + (s.short.length > 120 ? "…" : ""),
+      short: s.short,
     })),
     svgMarkup,
   };
