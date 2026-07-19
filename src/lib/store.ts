@@ -3,6 +3,7 @@ import path from "path";
 import type { ReportType, VideoRecord } from "./types";
 import { databaseUrl, ensureSchema, hasDatabase, sql } from "./db";
 import { compactVideoForStorage } from "./media-budget";
+import { externalizeVideoMedia } from "./media-store";
 
 export class StorageConflictError extends Error {
   constructor() {
@@ -255,7 +256,19 @@ export async function upsertVideo(
   video: VideoRecord,
   expectedUpdatedAt?: string
 ): Promise<VideoRecord> {
-  const { video: compact } = compactVideoForStorage(video);
+  // data URL → 외부 미디어 URL로 치환 후 저장 (새로고침 시 이미지·인포그래픽 유지)
+  let prepared = video;
+  try {
+    prepared = await externalizeVideoMedia(video);
+  } catch (e) {
+    console.warn("[store] media externalize failed — storing as-is", e);
+  }
+  const { video: compact, droppedImages } = compactVideoForStorage(prepared);
+  if (droppedImages) {
+    console.warn(
+      `[store] compact dropped leftover data-URL images for video ${compact.id}`
+    );
+  }
   if (hasDatabase()) {
     try {
       await dbUpsert(compact, expectedUpdatedAt);

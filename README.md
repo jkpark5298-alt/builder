@@ -62,5 +62,16 @@ npx vercel login
 npx vercel --prod --name builder
 ```
 
-Vercel 서버리스에서는 영상 데이터가 `/tmp`에 저장되어 **재배포·재시작 시 초기될 수 있습니다**.
+### 필수(권장): Neon + Vercel Blob
+
+Vercel에 배포할 때는 아래를 설정하세요.
+
+| 환경 변수 | 용도 |
+|-----------|------|
+| `DATABASE_URL` | Neon Postgres — 영상·보고서 JSON 저장 |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob — 팩트체크 이미지·인포그래픽 SVG 저장 |
+
+`BLOB_READ_WRITE_TOKEN`이 없으면 이미지는 `data/media`(로컬) 또는 `/tmp`(Vercel)에 저장되며, **재배포·재시작 시 사라질 수 있습니다**.
+
+로컬 개발만 할 때는 Blob 없이도 `data/media` + `/api/media/...` 로 이미지가 유지됩니다.
 

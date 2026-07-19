@@ -1,11 +1,11 @@
-/** 단일 URL + 배열을 하나의 목록으로 (중복·빈값 제거) */
+/** 단일 URL + 배열을 하나의 목록으로 (중복·빈값 제거). 첫 장(single)을 우선 */
 export function normalizeImageUrls(
   single?: string | null,
   list?: string[] | null
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const url of [...(list ?? []), single ?? ""]) {
+  for (const url of [single ?? "", ...(list ?? [])]) {
     const u = url?.trim();
     if (!u || seen.has(u)) continue;
     seen.add(u);

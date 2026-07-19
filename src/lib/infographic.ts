@@ -36,28 +36,42 @@ function htmlToPlain(html: string): string {
 async function fetchImageDataUrl(url: string): Promise<string | null> {
   if (!url) return null;
   if (url.startsWith("data:")) return url;
+
+  // 로컬 미디어는 파일에서 직접 읽기 (서버 fetch 루프·실패 캐시 방지)
+  if (url.startsWith("/api/media/")) {
+    try {
+      const { readLocalMedia } = await import("./media-store");
+      const key = url.slice("/api/media/".length);
+      const file = readLocalMedia(key);
+      if (!file || file.buffer.length < 100) return null;
+      return `data:${file.contentType};base64,${file.buffer.toString("base64")}`;
+    } catch {
+      return null;
+    }
+  }
+
   if (imageCache.has(url)) return imageCache.get(url) ?? null;
 
   try {
-    const res = await fetch(url, {
+    const absolute = url.startsWith("http")
+      ? url
+      : undefined;
+    if (!absolute) return null;
+    const res = await fetch(absolute, {
       signal: AbortSignal.timeout(10_000),
       headers: { Accept: "image/*" },
     });
     if (!res.ok) {
-      imageCache.set(url, null);
+      // 일시 실패는 캐시하지 않음 → 재생성 시 재시도
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 3_000) {
-      imageCache.set(url, null);
-      return null;
-    }
+    if (buf.length < 100) return null;
     const ct = res.headers.get("content-type") || "image/jpeg";
     const dataUrl = `data:${ct};base64,${buf.toString("base64")}`;
     imageCache.set(url, dataUrl);
     return dataUrl;
   } catch {
-    imageCache.set(url, null);
     return null;
   }
 }

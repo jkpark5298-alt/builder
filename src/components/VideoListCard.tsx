@@ -2,15 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import {
-  Eye,
-  FileDown,
-  Pencil,
-  Share2,
-  Trash2,
-} from "lucide-react";
+import { Trash2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
+import { canExportArtifacts } from "@/lib/factcheck-client";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
+import { ReportActions } from "@/components/ReportActions";
 import { formatDistanceToNow } from "date-fns";
 import { ko } from "date-fns/locale";
 
@@ -26,7 +22,7 @@ export function VideoListCard({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const stage = libraryStage(video);
-  const ready = video.status === "ready" && video.report && video.infographic;
+  const ready = canExportArtifacts(video);
 
   async function remove(e: React.MouseEvent) {
     e.preventDefault();
@@ -38,27 +34,6 @@ export function VideoListCard({
       router.refresh();
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function share(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const url = `${window.location.origin}/videos/${video.id}#report`;
-    const text = `[FactCheck] ${video.title}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: video.title,
-          text,
-          url,
-        });
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      alert("링크를 복사했습니다.");
-    } catch {
-      /* cancelled */
     }
   }
 
@@ -121,22 +96,16 @@ export function VideoListCard({
       </a>
 
       <div className="px-4 pb-4 flex flex-wrap gap-2 border-t border-ink-100 pt-3">
-        {listKind === "report-complete" && ready && (
+        {listKind === "report-complete" && ready ? (
+          <ReportActions video={video} compact />
+        ) : (
           <a
-            href={`/videos/${video.id}#report`}
-            className={`${btn} border-accent/40 bg-accent-muted/40 text-ink-900 hover:bg-accent-muted`}
+            href={`/videos/${video.id}`}
+            className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
           >
-            <Eye className="h-3.5 w-3.5" />
-            보기
+            {listKind === "report-pending" ? "보고서 저장" : "이어서 하기"}
           </a>
         )}
-        <a
-          href={`/videos/${video.id}`}
-          className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          수정
-        </a>
         <button
           type="button"
           disabled={busy}
@@ -146,26 +115,6 @@ export function VideoListCard({
           <Trash2 className="h-3.5 w-3.5" />
           삭제
         </button>
-        {listKind !== "draft" && (
-          <button
-            type="button"
-            onClick={share}
-            className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
-          >
-            <Share2 className="h-3.5 w-3.5" />
-            공유
-          </button>
-        )}
-        {listKind === "report-complete" && ready && (
-          <a
-            href={`/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`}
-            onClick={(e) => e.stopPropagation()}
-            className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            PDF 저장
-          </a>
-        )}
       </div>
     </article>
   );

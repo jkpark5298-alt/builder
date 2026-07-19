@@ -63,3 +63,30 @@ h3,
 .report-body p {
   margin: 0.4em 0;
 }
+
+/* 보고서 인쇄: 본문·이미지 위주, 네비·액션 숨김 */
+@media print {
+  body {
+    background: white !important;
+  }
+
+  header,
+  nav,
+  footer,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  #report {
+    break-inside: avoid;
+  }
+
+  #report img {
+    max-width: 100%;
+    break-inside: avoid;
+  }
+
+  a[href]::after {
+    content: none !important;
+  }
+}

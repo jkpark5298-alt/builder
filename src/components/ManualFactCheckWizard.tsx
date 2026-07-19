@@ -276,7 +276,8 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       };
       if (!res.ok) throw new Error(data.error || "보고서 생성 실패");
       if (data.video) setLocalVideo(data.video);
-      router.push("/#reports");
+      // 완료 후 바로 보고서 보기 화면으로
+      router.push(`/videos/${localVideo.id}#report`);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "보고서 생성 실패");
@@ -696,8 +697,25 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      setItemImages(compressed);
-      if (data.video) onVideoUpdate(data.video);
+      // 서버가 외부 URL로 치환해 돌려주면 그 URL을 쓰고, 없으면 압축본 유지
+      const savedItem = data.video?.items.find((i) => i.id === item.id);
+      const savedUrls = savedItem
+        ? normalizeImageUrls(savedItem.imageUrl, savedItem.imageUrls)
+        : [];
+      setItemImages(savedUrls.length ? savedUrls : compressed);
+      if (data.video) {
+        // 슬림 응답에 이미지가 비어도 방금 저장한 URL은 로컬에 유지
+        const mergedItems = data.video.items.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                imageUrl: (savedUrls.length ? savedUrls : compressed)[0],
+                imageUrls: (savedUrls.length ? savedUrls : compressed).slice(1),
+              }
+            : i
+        );
+        onVideoUpdate({ ...data.video, items: mergedItems });
+      }
       router.refresh();
     } catch (e) {
       alert(

@@ -476,34 +476,26 @@ async function patchVideo(req: Request, ctx: Ctx) {
     }
 
     const prev = next.factChecks.find((f) => f.itemId === body.factCheck!.itemId);
-    // 이미 레코드가 크면 새 이미지는 건너뛰고 텍스트·판정만 저장 (타임아웃 방지)
-    const currentBytes = JSON.stringify(next).length;
-    const skipNewImages = currentBytes > 900_000;
-
-    const prevImages = skipNewImages
-      ? []
-      : normalizeImageUrls(prev?.answerImageUrl, prev?.answerImageUrls);
-    const nextImages = skipNewImages
-      ? []
-      : body.factCheck.answerImageUrls ??
-        (body.factCheck.answerImageUrl !== undefined
-          ? body.factCheck.answerImageUrl
-            ? [body.factCheck.answerImageUrl]
-            : []
-          : prevImages);
-    const incomingParts = skipNewImages
-      ? (body.factCheck.answerParts ?? []).map((p) => ({
-          ...p,
-          imageUrls: [] as string[],
-        }))
-      : body.factCheck.answerParts;
+    // 이미지는 upsert 시 외부 저장소로 빼므로, data URL이어도 여기서 건너뛰지 않음
+    const prevImages = normalizeImageUrls(
+      prev?.answerImageUrl,
+      prev?.answerImageUrls
+    );
+    const nextImages =
+      body.factCheck.answerImageUrls ??
+      (body.factCheck.answerImageUrl !== undefined
+        ? body.factCheck.answerImageUrl
+          ? [body.factCheck.answerImageUrl]
+          : []
+        : prevImages);
+    const incomingParts = body.factCheck.answerParts;
     const parts =
       incomingParts?.length
         ? incomingParts
         : pairAnswerParts(
             body.factCheck.explanation,
             nextImages,
-            skipNewImages ? undefined : prev?.answerParts
+            prev?.answerParts
           );
     const explanation =
       partsToExplanation(parts) ||
@@ -539,12 +531,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
     }
 
     const saved = await upsertVideo(next, expectedUpdatedAt);
-    return jsonVideo(saved, {
-      imagesSkipped: skipNewImages || undefined,
-      warning: skipNewImages
-        ? "용량 한도로 이미지는 제외하고 답변·판정만 저장했습니다."
-        : undefined,
-    });
+    return jsonVideo(saved);
   }
 
   if (body.completeManual) {

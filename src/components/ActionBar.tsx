@@ -8,12 +8,14 @@ import {
   ImageDown,
   Trash2,
   Share2,
+  Printer,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { VideoRecord } from "@/lib/types";
-import { canExportArtifacts } from "@/lib/factcheck-client";
+import { canExportArtifacts, hasInfographic } from "@/lib/factcheck-client";
 import { shareInfographicToGoodNotes } from "@/lib/share-goodnotes";
+import { ReportActions } from "@/components/ReportActions";
 
 declare global {
   interface Window {
@@ -32,6 +34,7 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   const [busy, setBusy] = useState(false);
   const [goodnotesBusy, setGoodnotesBusy] = useState(false);
   const ready = canExportArtifacts(video);
+  const hasInfo = hasInfographic(video);
   const kakaoConfigured = Boolean(process.env.NEXT_PUBLIC_KAKAO_JS_KEY);
 
   async function markShared(channel: "email" | "kakao" | "goodnotes") {
@@ -95,8 +98,8 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         {
           title: "보고서 보기",
           link: {
-            mobileWebUrl: window.location.href,
-            webUrl: window.location.href,
+            mobileWebUrl: `${origin}/videos/${video.id}#report`,
+            webUrl: `${origin}/videos/${video.id}#report`,
           },
         },
         {
@@ -112,12 +115,10 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   }
 
   function downloadSvg() {
-    if (!ready) return;
     window.location.href = `/api/videos/${video.id}/infographic?download=1`;
   }
 
   async function shareGoodNotes() {
-    if (!ready) return;
     setGoodnotesBusy(true);
     try {
       const result = await shareInfographicToGoodNotes({
@@ -158,13 +159,21 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   const disabled = "border-ink-100 bg-ink-50 text-ink-300 pointer-events-none";
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 print:hidden">
       {!ready && (
         <p className="text-sm text-accent bg-accent-muted/50 rounded-xl px-3 py-2">
           ① 팩트체크 중 → <strong>임시 저장</strong> 목록. ② 팩트체크 완료 →{" "}
           <strong>보고서 저장</strong> 목록. ③ PDF 생성 후 공유·저장 가능.
         </p>
       )}
+
+      {ready && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-ink-500">보고서</p>
+          <ReportActions video={video} />
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
         <a
           href={
@@ -178,16 +187,24 @@ export function ActionBar({ video }: { video: VideoRecord }) {
           <FileDown className="h-4 w-4 shrink-0" />
           PDF 보고서
         </a>
-        {ready && (
-          <p className="col-span-2 text-xs text-ink-500 sm:w-full">
-            보고서에서 텍스트·이미지를 수정·저장하면 PDF에 바로 반영됩니다.
-          </p>
-        )}
+        <button
+          type="button"
+          disabled={!ready}
+          onClick={() => {
+            document.getElementById("report")?.scrollIntoView();
+            window.setTimeout(() => window.print(), 200);
+          }}
+          className={`${btn} ${ready ? enabled : disabled}`}
+        >
+          <Printer className="h-4 w-4 shrink-0" />
+          인쇄
+        </button>
         <button
           type="button"
           disabled={!ready}
           onClick={downloadSvg}
           className={`${btn} ${ready ? enabled : disabled}`}
+          title={hasInfo ? undefined : "없으면 자동으로 생성합니다"}
         >
           <ImageDown className="h-4 w-4 shrink-0" />
           SVG 다운로드

@@ -112,11 +112,10 @@ export default async function HomePage({
             2. 보고서 저장 목록
           </h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크가 완료된 항목입니다. <strong>수정</strong>·
-            <strong>삭제</strong>·<strong>검색</strong>(상단)·
-            <strong>공유</strong>·<strong>PDF 저장</strong>을 사용할 수
-            있습니다. 수정 시 항목별 <strong>이미지</strong>도 넣을 수
-            있습니다.
+            팩트체크가 완료된 항목입니다. 저장 완료 카드에서{" "}
+            <strong>보기</strong>·<strong>수정</strong>·
+            <strong>공유</strong>·<strong>PDF 저장</strong>·
+            <strong>인쇄</strong>를 사용할 수 있습니다.
           </p>
         </div>
 
@@ -134,13 +133,13 @@ export default async function HomePage({
 
         <div className="space-y-3">
           <h4 className="text-sm font-medium text-ink-800">
-            저장 완료 · PDF·공유 ({reportComplete.length})
+            저장 완료 · 보기·PDF·공유 ({reportComplete.length})
           </h4>
           <VideoGrid
             videos={reportComplete}
             listKind="report-complete"
             emptyTitle="저장 완료된 보고서가 없습니다"
-            emptyHint="«보고서 저장 → PDF·인포그래픽»을 누르면 저장 완료로 옵니다."
+            emptyHint="«보고서 저장 → PDF·인포그래픽»을 누르면 저장 완료로 오고, 바로 보고서 보기 화면으로 이동합니다."
           />
         </div>
       </section>

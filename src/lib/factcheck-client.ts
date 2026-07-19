@@ -35,5 +35,12 @@ export function factCheckProgress(video: Pick<VideoRecord, "items" | "factChecks
 }
 
 export function canExportArtifacts(video: VideoRecord): boolean {
-  return video.status === "ready" && Boolean(video.report && video.infographic);
+  // PDF·공유는 보고서만 있으면 가능. 인포그래픽은 없어도 재생성 가능.
+  return video.status === "ready" && Boolean(video.report);
+}
+
+export function hasInfographic(video: VideoRecord): boolean {
+  return Boolean(
+    video.infographic?.svgUrl || video.infographic?.svgMarkup?.trim()
+  );
 }

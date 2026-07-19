@@ -58,6 +58,23 @@ export function EditableReportPanel({
     setDraft(report);
   }, [report]);
 
+  // 목록의 「수정」에서 들어오면 바로 편집 모드
+  useEffect(() => {
+    try {
+      const key = `edit-report:${video.id}`;
+      if (sessionStorage.getItem(key) === "1") {
+        sessionStorage.removeItem(key);
+        setEditing(true);
+        document.getElementById("report")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [video.id]);
+
   // 구형식(TYPE별) → 일반 형식 자동 재생성
   useEffect(() => {
     if (!video.report || video.report.format === "general_v4") return;

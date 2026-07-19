@@ -41,14 +41,14 @@ function slimItem(item: SummaryItem, dropImages: boolean): SummaryItem {
   };
 }
 
-/** 첫 장과 배열에 같은 data URL이 중복 저장되지 않도록 정리 */
+/** 첫 장과 배열에 같은 URL이 중복 저장되지 않도록 정리 (첫 장 우선) */
 function dedupeVideoImageFields(video: VideoRecord): VideoRecord {
   return {
     ...video,
     items: video.items.map((item) => {
       const urls = [
-        ...(item.imageUrls ?? []),
         ...(item.imageUrl ? [item.imageUrl] : []),
+        ...(item.imageUrls ?? []),
       ];
       const uniq = Array.from(new Set(urls.filter(Boolean)));
       const [first, ...rest] = uniq;
@@ -61,9 +61,9 @@ function dedupeVideoImageFields(video: VideoRecord): VideoRecord {
     factChecks: video.factChecks.map((fc) => {
       const fromParts = (fc.answerParts ?? []).flatMap((p) => p.imageUrls ?? []);
       const urls = [
-        ...fromParts,
-        ...(fc.answerImageUrls ?? []),
         ...(fc.answerImageUrl ? [fc.answerImageUrl] : []),
+        ...(fc.answerImageUrls ?? []),
+        ...fromParts,
       ];
       const uniq = Array.from(new Set(urls.filter(Boolean)));
       const [first, ...rest] = uniq;
@@ -77,7 +77,19 @@ function dedupeVideoImageFields(video: VideoRecord): VideoRecord {
   };
 }
 
-/** API 응답용: data URL 이미지를 빼고 텍스트·판정만 남김 (모바일 JSON 파싱 실패 방지) */
+function stripInlineSvg(video: VideoRecord): VideoRecord {
+  if (!video.infographic?.svgMarkup) return video;
+  // 외부 URL이 있으면 인라인 SVG는 제거해 JSON을 가볍게
+  if (video.infographic.svgUrl) {
+    return {
+      ...video,
+      infographic: { ...video.infographic, svgMarkup: "" },
+    };
+  }
+  return video;
+}
+
+/** API 응답용: 무거운 data URL만 빼고 HTTP(S)·/api/media URL은 유지 */
 export function slimVideoForClient(video: VideoRecord): VideoRecord {
   return {
     ...video,
@@ -88,6 +100,8 @@ export function slimVideoForClient(video: VideoRecord): VideoRecord {
           ...video.report,
           sections: video.report.sections.map((s) => ({
             ...s,
+            imageUrl: isHeavyDataUrl(s.imageUrl) ? undefined : s.imageUrl,
+            images: dropHeavy(s.images),
             entries: s.entries?.map((e) => ({
               ...e,
               imageUrl: isHeavyDataUrl(e.imageUrl) ? undefined : e.imageUrl,
@@ -108,22 +122,26 @@ export function slimVideoForClient(video: VideoRecord): VideoRecord {
           })),
         }
       : video.report,
-    // 인포그래픽 SVG/HTML도 클 수 있음 — 저장 응답에서는 생략
-    infographic: null,
+    // 인포그래픽: 메타·svgUrl 유지, 인라인 markup만 생략
+    infographic: video.infographic
+      ? {
+          ...video.infographic,
+          svgMarkup: "",
+        }
+      : null,
   };
 }
 
 /**
  * DB 저장 전 용량 초과 시 무거운 data URL을 제거해 upsert가 타임아웃되지 않게 함.
- * 텍스트·판정은 유지. 반환: { video, droppedImages }
+ * 외부 URL·svgUrl은 유지. 반환: { video, droppedImages }
  */
 export function compactVideoForStorage(video: VideoRecord): {
   video: VideoRecord;
   droppedImages: boolean;
   bytes: number;
 } {
-  // 저장 전에 이미지 필드 중복(첫 장 + 전체 배열)을 정리
-  let next = dedupeVideoImageFields(video);
+  let next = stripInlineSvg(dedupeVideoImageFields(video));
   let droppedImages = false;
   let bytes = JSON.stringify(next).length;
 
@@ -131,10 +149,12 @@ export function compactVideoForStorage(video: VideoRecord): {
     return { video: next, droppedImages, bytes };
   }
 
-  // 1단계: 인포그래픽 제거
-  if (next.infographic) {
-    next = { ...next, infographic: null };
-    droppedImages = true;
+  // 1단계: 인라인 SVG만 제거 (svgUrl 있으면 인포그래픽 유지)
+  if (next.infographic?.svgMarkup) {
+    next = {
+      ...next,
+      infographic: { ...next.infographic, svgMarkup: "" },
+    };
     bytes = JSON.stringify(next).length;
   }
 
@@ -142,7 +162,7 @@ export function compactVideoForStorage(video: VideoRecord): {
     return { video: next, droppedImages, bytes };
   }
 
-  // 2단계: 모든 data URL 이미지 제거 (텍스트 팩트체크는 유지)
+  // 2단계: 남은 data URL만 제거 (HTTP 이미지는 유지)
   next = {
     ...next,
     items: next.items.map((i) => slimItem(i, true)),
@@ -152,6 +172,8 @@ export function compactVideoForStorage(video: VideoRecord): {
           ...next.report,
           sections: next.report.sections.map((s) => ({
             ...s,
+            imageUrl: isHeavyDataUrl(s.imageUrl) ? undefined : s.imageUrl,
+            images: dropHeavy(s.images),
             entries: s.entries?.map((e) => ({
               ...e,
               imageUrl: isHeavyDataUrl(e.imageUrl) ? undefined : e.imageUrl,

@@ -1,12 +1,14 @@
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
-import { InfographicSharePanel } from "@/components/InfographicSharePanel";
+import { InfographicPanel } from "@/components/InfographicPanel";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { OverviewSummaryPanel } from "@/components/OverviewSummaryPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
+import { PrintOnLoad } from "@/components/PrintOnLoad";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
+import { ReportActions } from "@/components/ReportActions";
 import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
@@ -152,8 +154,17 @@ export default async function VideoDetailPage({
               1. 유튜브 내용 요약
             </a>
           )}
+          {ready && (
+            <a
+              href="#report"
+              className="flex sm:hidden items-center justify-center min-h-12 rounded-xl bg-accent text-white font-medium print:hidden"
+            >
+              보고서 보기
+            </a>
+          )}
         </div>
       </section>
+      {ready && <PrintOnLoad />}
 
       <section
         id="general-summary"
@@ -202,6 +213,18 @@ export default async function VideoDetailPage({
                         (f) => f.itemId === item.id
                       );
                       if (!fc) return null;
+                      const itemImgs = [
+                        ...(item.imageUrl ? [item.imageUrl] : []),
+                        ...(item.imageUrls ?? []),
+                      ].filter(Boolean);
+                      const answerImgs = [
+                        ...(fc.answerImageUrl ? [fc.answerImageUrl] : []),
+                        ...(fc.answerImageUrls ?? []),
+                        ...(fc.answerParts ?? []).flatMap(
+                          (p) => p.imageUrls ?? []
+                        ),
+                      ].filter(Boolean);
+                      const uniqAnswers = Array.from(new Set(answerImgs));
                       return (
                         <div
                           key={item.id}
@@ -210,9 +233,35 @@ export default async function VideoDetailPage({
                           <p className="font-medium text-ink-900">
                             {item.statement}
                           </p>
+                          {itemImgs.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {itemImgs.map((src) => (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  key={src.slice(0, 64)}
+                                  src={src}
+                                  alt=""
+                                  className="h-20 w-auto rounded-lg border border-ink-100 object-cover"
+                                />
+                              ))}
+                            </div>
+                          )}
                           <p className="text-ink-600 leading-relaxed whitespace-pre-wrap">
                             {fc.explanation}
                           </p>
+                          {uniqAnswers.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {uniqAnswers.map((src) => (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  key={src.slice(0, 64)}
+                                  src={src}
+                                  alt=""
+                                  className="h-24 w-auto rounded-lg border border-ink-100 object-cover"
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -221,29 +270,19 @@ export default async function VideoDetailPage({
             </div>
           </section>
 
-          {video.report && <EditableReportPanel video={video} />}
+          {video.report && (
+            <div className="space-y-3">
+              <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
+                <h2 className="font-display text-lg sm:text-xl mb-3">
+                  보고서 보기 · 수정 · 공유 · 저장
+                </h2>
+                <ReportActions video={video} />
+              </div>
+              <EditableReportPanel video={video} />
+            </div>
+          )}
 
-          <section className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5">
-            <h2 className="font-display text-lg sm:text-xl mb-3">
-              4. 인포그래픽 · 저장 · 공유
-            </h2>
-            {video.infographic ? (
-              <>
-                <div className="overflow-auto rounded-xl border border-ink-100 bg-ink-50 max-h-none">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`}
-                    alt="인포그래픽"
-                    className="w-full h-auto max-w-none block"
-                    style={{ minHeight: "200px" }}
-                  />
-                </div>
-                <InfographicSharePanel video={video} />
-              </>
-            ) : (
-              <p className="text-ink-500 text-sm">아직 생성되지 않았습니다.</p>
-            )}
-          </section>
+          <InfographicPanel video={video} />
         </>
       )}
 

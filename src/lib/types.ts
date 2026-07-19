@@ -143,7 +143,10 @@ export interface InfographicData {
     short: string;
   }>;
   sectionHints: Array<{ heading: string; short: string }>;
+  /** 인라인 SVG (생성 직후·로컬 미리보기). DB에는 보통 비움 */
   svgMarkup: string;
+  /** 외부 저장(Blob/로컬) SVG URL — 새로고침 후에도 유지 */
+  svgUrl?: string;
 }
 
 export interface YoutubeChapter {
