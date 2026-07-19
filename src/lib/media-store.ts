@@ -97,15 +97,40 @@ export async function persistMediaDataUrl(
       return blob.url;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(`Vercel Blob 업로드 실패: ${msg}`);
+      console.warn("[media-store] Blob upload failed, trying Neon fallback:", msg);
+      // Blob 정지·한도 초과 시 Neon BYTEA 폴백
+      try {
+        const { putNeonMedia } = await import("./neon-media");
+        return await putNeonMedia(
+          parsed.buffer,
+          parsed.contentType,
+          `${prefix.replace(/\//g, "_")}_${name}`.slice(0, 80)
+        );
+      } catch (neonErr) {
+        const nmsg =
+          neonErr instanceof Error ? neonErr.message : String(neonErr);
+        throw new Error(
+          `이미지 저장 실패 (Blob: ${msg} / Neon: ${nmsg}). Vercel Blob 스토어가 정지됐다면 대시보드에서 재활성화하거나 용량을 비워 주세요.`
+        );
+      }
     }
   }
 
-  // Vercel에서는 /tmp 가 휘발성이라 Blob 토큰 필수
+  // Vercel: Blob 토큰 없으면 Neon에 저장
   if (onVercel()) {
-    throw new Error(
-      "BLOB_READ_WRITE_TOKEN 이 없어 이미지를 영구 저장할 수 없습니다. Vercel 프로젝트에 Blob Store를 연결하세요."
-    );
+    try {
+      const { putNeonMedia } = await import("./neon-media");
+      return await putNeonMedia(
+        parsed.buffer,
+        parsed.contentType,
+        `${prefix.replace(/\//g, "_")}_${name}`.slice(0, 80)
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `BLOB_READ_WRITE_TOKEN 없음 + Neon 저장 실패: ${msg}`
+      );
+    }
   }
 
   // 로컬/개발: 파일로 저장 후 /api/media 로 서빙
@@ -291,21 +316,32 @@ export async function persistInfographic(
   if (info.svgUrl && !info.svgMarkup) return info;
   if (!info.svgMarkup) return info;
 
-  const dataUrl = `data:image/svg+xml;base64,${Buffer.from(
-    info.svgMarkup,
-    "utf8"
-  ).toString("base64")}`;
-  const svgUrl = await persistMediaDataUrl(dataUrl, {
-    prefix: `videos/${videoId}/infographic`,
-    filenameHint: "infographic",
-  });
+  try {
+    const dataUrl = `data:image/svg+xml;base64,${Buffer.from(
+      info.svgMarkup,
+      "utf8"
+    ).toString("base64")}`;
+    const svgUrl = await persistMediaDataUrl(dataUrl, {
+      prefix: `videos/${videoId}/infographic`,
+      filenameHint: "infographic",
+    });
 
-  return {
-    ...info,
-    svgUrl,
-    // DB JSON 폭증 방지 — 외부 URL로 대체
-    svgMarkup: "",
-  };
+    return {
+      ...info,
+      svgUrl,
+      // DB JSON 폭증 방지 — 외부 URL로 대체
+      svgMarkup: "",
+    };
+  } catch (e) {
+    console.warn("[media-store] infographic persist failed", e);
+    // 보고서 완료는 막지 않음 — GET ?rebuild=1 / 인포그래픽 만들기로 재시도
+    const tooBig = info.svgMarkup.length > 400_000;
+    return {
+      ...info,
+      svgUrl: info.svgUrl,
+      svgMarkup: tooBig ? "" : info.svgMarkup,
+    };
+  }
 }
 
 /**
