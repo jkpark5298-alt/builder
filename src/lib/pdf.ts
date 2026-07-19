@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { jsPDF } from "jspdf";
 import { resolveAnswerParts } from "./answer-parts";
+import { collectEntryImages } from "./fc-markers";
 import { normalizeImageUrls } from "./image-urls";
 import { reportBodyPlain } from "./report";
 import type { VideoRecord } from "./types";
@@ -281,11 +282,18 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
       await drawImage(src);
     }
 
-    // 본문에는 F 번호만 (상세는 부록)
+    // 본문: F 번호 + 팩트체크 이미지(텍스트 제외) — 상세는 부록
     for (const entry of sec.entries ?? []) {
       fcIndex += 1;
+      const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
       setFace("normal");
       writeWrapped(`  [F${fcIndex}] ${entry.text}`, 9, 4);
+      const entryImgs = collectEntryImages(entry, fc).filter(
+        (u) => !sectionImages.includes(u)
+      );
+      for (const src of entryImgs) {
+        await drawImage(src);
+      }
     }
     y += 8;
   }

@@ -31,6 +31,7 @@ import type {
 } from "@/lib/types";
 import {
   collectFcMarkers,
+  collectSectionFcImages,
   sectionBodyWithMarkers,
   type FcMarker,
 } from "@/lib/fc-markers";
@@ -423,6 +424,12 @@ export function EditableReportPanel({
             markers
           );
           const sectionMarkers = markers.filter((m) => m.sectionIdx === idx);
+          const fcImages = collectSectionFcImages(sec, fcByItem);
+          // 섹션 첨부 이미지와 중복되지 않게
+          const sectionOwn = new Set(
+            [sec.imageUrl, ...(sec.images ?? [])].filter(Boolean) as string[]
+          );
+          const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));
 
           return (
             <div
@@ -586,11 +593,30 @@ export function EditableReportPanel({
                 </div>
               ))}
 
+              {/* 팩트체크 관련 이미지 — 텍스트 없이 이미지만 본문에 표시 */}
+              {reportFcImages.length > 0 && (
+                <div className="space-y-3">
+                  {reportFcImages.map((src) => (
+                    <div
+                      key={src.slice(0, 64)}
+                      className="overflow-hidden rounded-xl border border-ink-100 bg-white"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={src}
+                        alt=""
+                        className="w-full max-h-72 object-contain bg-white"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* 편집 모드: 연결된 FC 목록 (화면 전용, 본문 카드 아님) */}
               {editing && sectionMarkers.length > 0 && (
                 <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2 print:hidden">
                   <p className="text-xs font-medium text-ink-500">
-                    연결된 팩트체크 (화면·인쇄 부록용 · 본문에는 F만 표시)
+                    연결된 팩트체크 (본문에는 F·이미지만 · 상세는 팝업·인쇄 부록)
                   </p>
                   {sectionMarkers.map((m) => (
                     <div

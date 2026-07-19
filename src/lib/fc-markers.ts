@@ -1,4 +1,5 @@
 import type { ReportEntry, ReportSectionBlock, TypedReport } from "./types";
+import { normalizeImageUrls } from "./image-urls";
 
 export type FcMarker = {
   n: number;
@@ -7,6 +8,57 @@ export type FcMarker = {
   entryIdx: number;
   entry: ReportEntry;
 };
+
+const YT_THUMB = /i\.ytimg\.com|ytimg\.com\/vi\//i;
+
+/** 팩트체크 entry(+선택적 FC)에서 이미지만 수집 — 텍스트 제외 */
+export function collectEntryImages(
+  entry: ReportEntry,
+  fc?: {
+    answerImageUrl?: string;
+    answerImageUrls?: string[];
+    answerParts?: Array<{ imageUrls?: string[] }>;
+  } | null
+): string[] {
+  const fromParts = [
+    ...(entry.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+    ...(fc?.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+  ];
+  return Array.from(
+    new Set(
+      [
+        ...normalizeImageUrls(entry.answerImageUrl, entry.answerImageUrls),
+        ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+        ...fromParts,
+      ].filter((u) => Boolean(u) && !YT_THUMB.test(u))
+    )
+  );
+}
+
+/** 소주제 연결 팩트체크 이미지 전부 (순서 유지, 중복 제거) */
+export function collectSectionFcImages(
+  sec: ReportSectionBlock,
+  fcByItem?: Map<
+    string,
+    {
+      answerImageUrl?: string;
+      answerImageUrls?: string[];
+      answerParts?: Array<{ imageUrls?: string[] }>;
+    }
+  >
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of sec.entries ?? []) {
+    const fc = entry.itemId ? fcByItem?.get(entry.itemId) : undefined;
+    for (const src of collectEntryImages(entry, fc)) {
+      if (seen.has(src)) continue;
+      seen.add(src);
+      out.push(src);
+    }
+  }
+  return out;
+}
 
 /** 보고서 전체 entries를 F1…Fn 순번으로 평탄화 */
 export function collectFcMarkers(report: TypedReport): FcMarker[] {
