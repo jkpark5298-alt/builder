@@ -18,12 +18,20 @@ async function resolveSvgMarkup(
   const url = infographic.svgUrl;
   if (!url) return null;
 
-  // 로컬 /api/media 는 파일 직접 읽기
+  // /api/media — 로컬 파일 → Neon DB (Blob 중단 시 Neon에만 있음)
   if (url.startsWith("/api/media/")) {
-    const { readLocalMedia } = await import("@/lib/media-store");
     const key = url.slice("/api/media/".length);
-    const file = readLocalMedia(key);
-    return file ? file.buffer.toString("utf8") : null;
+    const { readLocalMedia } = await import("@/lib/media-store");
+    const local = readLocalMedia(key);
+    if (local) return local.buffer.toString("utf8");
+    try {
+      const { getNeonMedia } = await import("@/lib/neon-media");
+      const neon = await getNeonMedia(key);
+      if (neon) return neon.buffer.toString("utf8");
+    } catch (e) {
+      console.warn(`[infographic] neon read failed for ${videoId}`, e);
+    }
+    return null;
   }
 
   try {
