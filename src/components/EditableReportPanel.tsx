@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -10,13 +11,14 @@ import {
 import { useRouter } from "next/navigation";
 import {
   Bold,
-  ChevronDown,
-  ChevronUp,
   ClipboardPaste,
+  Home,
   ImagePlus,
   PenLine,
   Pencil,
+  Plus,
   Save,
+  Trash2,
   Type,
   Underline,
   X,
@@ -27,6 +29,11 @@ import type {
   TypedReport,
   VideoRecord,
 } from "@/lib/types";
+import {
+  collectFcMarkers,
+  sectionBodyWithMarkers,
+  type FcMarker,
+} from "@/lib/fc-markers";
 import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
@@ -50,7 +57,7 @@ export function EditableReportPanel({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TypedReport | null>(report);
-  const [openFc, setOpenFc] = useState<string | null>(null);
+  const [openFcKey, setOpenFcKey] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
@@ -59,7 +66,6 @@ export function EditableReportPanel({
     setDraft(report);
   }, [report]);
 
-  // 목록·액션바의 「수정」에서 들어오면 바로 편집 모드
   useEffect(() => {
     function enterEdit() {
       setEditing(true);
@@ -82,11 +88,9 @@ export function EditableReportPanel({
       }
       if (
         typeof window !== "undefined" &&
-        (window.location.hash === "#report-edit" ||
-          window.location.hash === "#report")
+        window.location.hash === "#report-edit"
       ) {
-        // #report-edit 만 자동 편집 / #report 는 스크롤만
-        if (window.location.hash === "#report-edit") enterEdit();
+        enterEdit();
       }
     }
 
@@ -109,7 +113,6 @@ export function EditableReportPanel({
     };
   }, [video.id]);
 
-  // 구형식 → general_v5(서술 body + FC는 entries만) 자동 재생성
   useEffect(() => {
     if (!video.report || video.report.format === "general_v5") return;
     let cancelled = false;
@@ -135,11 +138,24 @@ export function EditableReportPanel({
     };
   }, [video.id, video.report, router]);
 
-  if (!report || !draft) return null;
-
-  const fcByItem = new Map(
-    draft.factChecks.filter((f) => f.itemId).map((f) => [f.itemId!, f])
+  const markers = useMemo(
+    () => (draft ? collectFcMarkers(draft) : []),
+    [draft]
   );
+
+  const fcByItem = useMemo(
+    () =>
+      new Map(
+        (draft?.factChecks ?? [])
+          .filter((f) => f.itemId)
+          .map((f) => [f.itemId!, f])
+      ),
+    [draft]
+  );
+
+  const openMarker = markers.find((m) => m.key === openFcKey) ?? null;
+
+  if (!report || !draft) return null;
 
   async function saveReport() {
     setSaving(true);
@@ -161,6 +177,12 @@ export function EditableReportPanel({
     }
   }
 
+  function cancelEdit() {
+    setDraft(report);
+    setEditing(false);
+    setOpenFcKey(null);
+  }
+
   function patchSection(idx: number, patch: Partial<ReportSectionBlock>) {
     setDraft((prev) => {
       if (!prev) return prev;
@@ -168,6 +190,49 @@ export function EditableReportPanel({
       sections[idx] = { ...sections[idx], ...patch };
       return { ...prev, sections };
     });
+  }
+
+  function deleteSection(idx: number) {
+    const heading = draft?.sections[idx]?.heading || "이 섹션";
+    if (!confirm(`「${heading}」을(를) 삭제할까요?`)) return;
+    setDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sections: prev.sections.filter((_, i) => i !== idx),
+      };
+    });
+  }
+
+  function addSection() {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sections: [
+          ...prev.sections,
+          {
+            heading: "새 소주제",
+            body: "<p></p>",
+            rich: true,
+            entries: [],
+          },
+        ],
+      };
+    });
+  }
+
+  function deleteEntry(sectionIdx: number, entryIdx: number) {
+    if (!confirm("이 팩트체크 연결을 보고서에서 제거할까요?")) return;
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const sections = [...prev.sections];
+      const sec = sections[sectionIdx];
+      const entries = (sec.entries ?? []).filter((_, i) => i !== entryIdx);
+      sections[sectionIdx] = { ...sec, entries };
+      return { ...prev, sections };
+    });
+    setOpenFcKey(null);
   }
 
   async function addImagesToSection(idx: number, files: File[]) {
@@ -262,339 +327,602 @@ export function EditableReportPanel({
     }
   }
 
+  function onBodyClick(e: React.MouseEvent) {
+    const t = (e.target as HTMLElement).closest(".fc-badge") as HTMLElement | null;
+    if (!t) return;
+    e.preventDefault();
+    const key = t.getAttribute("data-fc-key");
+    if (!key) return;
+    setOpenFcKey((prev) => (prev === key ? null : key));
+  }
+
   return (
-    <section
-      id="report"
-      className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-5 scroll-mt-20"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-display text-lg sm:text-xl">
-          3. 보고서 (요약 · 팩트체크)
-        </h2>
-        <button
-          type="button"
-          onClick={() => (editing ? void saveReport() : setEditing(true))}
-          disabled={saving || rebuilding}
-          className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent"
-        >
-          {editing ? (
-            <>
-              <Save className="h-4 w-4" />
-              {saving ? "저장 중…" : "저장 (PDF 반영)"}
-            </>
-          ) : (
-            <>
-              <Pencil className="h-4 w-4" />
-              수정 (텍스트·이미지)
-            </>
-          )}
-        </button>
-      </div>
-
-      {rebuilding && (
-        <p className="text-sm text-ink-500">일반 보고서 형식으로 갱신 중…</p>
-      )}
-
-      <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1">
-        <p>
-          <span className="text-ink-500">영상 제목</span> · {draft.meta.title}
-        </p>
-        <p>
-          <span className="text-ink-500">채널명</span> · {draft.meta.channel}
-        </p>
-        <p className="break-all">
-          <span className="text-ink-500">링크</span> · {draft.meta.url}
-        </p>
-        <p>
-          <span className="text-ink-500">작성일자</span> · {draft.meta.writtenAt}
-        </p>
-      </div>
-
-      {draft.sections.map((sec, idx) => (
-        <div
-          key={`${sec.heading}-${idx}`}
-          className="space-y-3"
-          tabIndex={editing ? 0 : undefined}
-          onPaste={editing ? (e) => handleSectionPaste(idx, e) : undefined}
-        >
-          <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
-
-          {editing && (
-            <FormatToolbar
-              onBold={() => document.execCommand("bold")}
-              onUnderline={() => document.execCommand("underline")}
-              onColor={(c) => document.execCommand("foreColor", false, c)}
-              onHighlight={(c) => document.execCommand("hiliteColor", false, c)}
-              onImage={() => {
-                const input = document.getElementById(
-                  `sec-img-${idx}`
-                ) as HTMLInputElement | null;
-                input?.click();
-              }}
-              onPasteImage={() => void pasteImagesToSection(idx)}
-              onTextImage={() => setTextImageFor(idx)}
-              onHandwriting={() => setHandwritingFor(idx)}
-            />
-          )}
-
-          <input
-            id={`sec-img-${idx}`}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              void addImagesToSection(idx, Array.from(e.target.files ?? []));
-              e.target.value = "";
-            }}
-          />
-
-          {editing && (
-            <p className="text-xs text-ink-500">
-              이미지: 파일 · 붙여넣기 · 텍스트→이미지 · 손글씨
-            </p>
-          )}
-
-          <textarea
-            id={`sec-paste-${idx}`}
-            readOnly
-            aria-label="이미지 붙여넣기"
-            className="sr-only"
-            onPaste={(e) => handleSectionPaste(idx, e)}
-          />
-
-          {sec.imageUrl && (
-            <div className="overflow-hidden rounded-xl border border-ink-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={sec.imageUrl}
-                alt=""
-                className="w-full max-h-64 object-cover"
-              />
-            </div>
-          )}
-
-          {editing ? (
-            <RichBody
-              html={sec.body}
-              onChange={(html) =>
-                patchSection(idx, { body: html, rich: true })
-              }
-            />
-          ) : (
-            sec.body && (
-              <div
-                className="report-body text-sm text-ink-800 leading-relaxed space-y-2"
-                dangerouslySetInnerHTML={{ __html: sec.body }}
-              />
-            )
-          )}
-
-          {/* 소주제 본문 바로 아래 관련 이미지 */}
-          {sec.images?.map((src, i) => (
-            <div
-              key={i}
-              className="relative overflow-hidden rounded-xl border border-ink-100"
+    <>
+      <section
+        id="report"
+        className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-5 scroll-mt-20"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+          <h2 className="font-display text-lg sm:text-xl">
+            3. 보고서
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href="/"
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt="" className="w-full max-h-72 object-contain bg-white" />
-              {editing && (
+              <Home className="h-4 w-4" />
+              초기 화면
+            </a>
+            {editing ? (
+              <>
                 <button
                   type="button"
-                  className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
-                  onClick={() =>
-                    patchSection(idx, {
-                      images: sec.images?.filter((_, j) => j !== i),
-                    })
-                  }
+                  onClick={cancelEdit}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-ink-400"
                 >
-                  <X className="h-4 w-4" />
+                  취소
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void saveReport()}
+                  disabled={saving || rebuilding}
+                  className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
+                >
+                  <Save className="h-4 w-4" />
+                  {saving ? "저장 중…" : "저장"}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                disabled={saving || rebuilding}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent"
+              >
+                <Pencil className="h-4 w-4" />
+                수정
+              </button>
+            )}
+          </div>
+        </div>
+
+        {rebuilding && (
+          <p className="text-sm text-ink-500 print:hidden">
+            일반 보고서 형식으로 갱신 중…
+          </p>
+        )}
+
+        {editing && (
+          <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
+            제목·본문 수정, 섹션 삭제/추가, 팩트체크 연결 제거 후 「저장」을 누르세요.
+            화면에서는 F 표시만 보이고, 인쇄·PDF에는 뒤에 「팩트 체크 내용」이 붙습니다.
+          </p>
+        )}
+
+        <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1">
+          <p>
+            <span className="text-ink-500">영상 제목</span> · {draft.meta.title}
+          </p>
+          <p>
+            <span className="text-ink-500">채널명</span> · {draft.meta.channel}
+          </p>
+          <p className="break-all">
+            <span className="text-ink-500">링크</span> · {draft.meta.url}
+          </p>
+          <p>
+            <span className="text-ink-500">작성일자</span> · {draft.meta.writtenAt}
+          </p>
+        </div>
+
+        {draft.sections.map((sec, idx) => {
+          const { html: markedHtml, unmatched } = sectionBodyWithMarkers(
+            sec,
+            idx,
+            markers
+          );
+          const sectionMarkers = markers.filter((m) => m.sectionIdx === idx);
+
+          return (
+            <div
+              key={`${sec.heading}-${idx}`}
+              className="space-y-3 report-section"
+              tabIndex={editing ? 0 : undefined}
+              onPaste={editing ? (e) => handleSectionPaste(idx, e) : undefined}
+            >
+              {editing ? (
+                <div className="flex flex-wrap items-center gap-2 print:hidden">
+                  <input
+                    value={sec.heading}
+                    onChange={(e) =>
+                      patchSection(idx, { heading: e.target.value })
+                    }
+                    className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => deleteSection(idx)}
+                    className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-verify-false/40 bg-verify-false/5 px-3 text-sm text-verify-false"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    섹션 삭제
+                  </button>
+                </div>
+              ) : (
+                <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
+              )}
+
+              {editing && (
+                <FormatToolbar
+                  onBold={() => document.execCommand("bold")}
+                  onUnderline={() => document.execCommand("underline")}
+                  onColor={(c) => document.execCommand("foreColor", false, c)}
+                  onHighlight={(c) =>
+                    document.execCommand("hiliteColor", false, c)
+                  }
+                  onImage={() => {
+                    const input = document.getElementById(
+                      `sec-img-${idx}`
+                    ) as HTMLInputElement | null;
+                    input?.click();
+                  }}
+                  onPasteImage={() => void pasteImagesToSection(idx)}
+                  onTextImage={() => setTextImageFor(idx)}
+                  onHandwriting={() => setHandwritingFor(idx)}
+                />
+              )}
+
+              <input
+                id={`sec-img-${idx}`}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  void addImagesToSection(idx, Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+
+              <textarea
+                id={`sec-paste-${idx}`}
+                readOnly
+                aria-label="이미지 붙여넣기"
+                className="sr-only"
+                onPaste={(e) => handleSectionPaste(idx, e)}
+              />
+
+              {sec.imageUrl && (
+                <div className="overflow-hidden rounded-xl border border-ink-100">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={sec.imageUrl}
+                    alt=""
+                    className="w-full max-h-64 object-cover"
+                  />
+                </div>
+              )}
+
+              {editing ? (
+                <RichBody
+                  html={sec.body}
+                  onChange={(html) =>
+                    patchSection(idx, { body: html, rich: true })
+                  }
+                />
+              ) : (
+                sec.body && (
+                  <div
+                    className="report-body text-sm text-ink-800 leading-relaxed space-y-2"
+                    dangerouslySetInnerHTML={{ __html: markedHtml }}
+                    onClick={onBodyClick}
+                  />
+                )
+              )}
+
+              {/* 본문에 claim이 없을 때: 밑줄 + F 뱃지만 표시 (상세는 팝업) */}
+              {!editing && unmatched.length > 0 && (
+                <ul className="space-y-1.5 print:hidden">
+                  {unmatched.map((m) => (
+                    <li key={m.key} className="text-sm text-ink-800">
+                      <button
+                        type="button"
+                        className="inline-flex items-start gap-2 text-left hover:text-accent"
+                        onClick={() =>
+                          setOpenFcKey((prev) =>
+                            prev === m.key ? null : m.key
+                          )
+                        }
+                      >
+                        <span className="fc-badge shrink-0 mt-0.5" aria-hidden>
+                          F{m.n}
+                        </span>
+                        <u className="leading-relaxed decoration-accent/70 underline-offset-2">
+                          {m.entry.text}
+                        </u>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* 인쇄용: 본문 미매칭 claim에도 F 번호만 */}
+              {!editing && unmatched.length > 0 && (
+                <ul className="hidden print:block space-y-1 text-sm">
+                  {unmatched.map((m) => (
+                    <li key={`print-${m.key}`}>
+                      <u>{m.entry.text}</u>{" "}
+                      <span className="fc-badge-print">F{m.n}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {sec.images?.map((src, i) => (
+                <div
+                  key={i}
+                  className="relative overflow-hidden rounded-xl border border-ink-100"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt=""
+                    className="w-full max-h-72 object-contain bg-white"
+                  />
+                  {editing && (
+                    <button
+                      type="button"
+                      className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
+                      onClick={() =>
+                        patchSection(idx, {
+                          images: sec.images?.filter((_, j) => j !== i),
+                        })
+                      }
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* 편집 모드: 연결된 FC 목록 (화면 전용, 본문 카드 아님) */}
+              {editing && sectionMarkers.length > 0 && (
+                <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2 print:hidden">
+                  <p className="text-xs font-medium text-ink-500">
+                    연결된 팩트체크 (화면·인쇄 부록용 · 본문에는 F만 표시)
+                  </p>
+                  {sectionMarkers.map((m) => (
+                    <div
+                      key={m.key}
+                      className="flex flex-wrap items-start justify-between gap-2 text-sm"
+                    >
+                      <p className="flex-1 min-w-0">
+                        <span className="fc-badge mr-1.5">F{m.n}</span>
+                        {m.entry.text}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => deleteEntry(idx, m.entryIdx)}
+                        className="inline-flex items-center gap-1 text-xs text-verify-false border border-verify-false/30 rounded-lg px-2 py-1"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        연결 제거
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-          ))}
+          );
+        })}
 
-          {sec.entries && sec.entries.length > 0 && (
-            <p className="text-xs text-ink-500 pt-1">이 소주제 관련 팩트체크</p>
-          )}
+        {editing && (
+          <button
+            type="button"
+            onClick={addSection}
+            className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-dashed border-ink-300 bg-ink-50 text-sm font-medium text-ink-700 hover:border-accent print:hidden"
+          >
+            <Plus className="h-4 w-4" />
+            섹션 추가
+          </button>
+        )}
 
-          {sec.entries?.map((entry) => {
-            const fc = entry.itemId ? fcByItem.get(entry.itemId) : undefined;
-            const verdict = (fc?.verdict ?? "pending") as FactCheckVerdict;
-            const badge = verdictBadge(verdict);
-            const open = openFc === entry.itemId;
-            const failed = isFailedVerdict(verdict);
-            const parts =
-              entry.answerParts?.length
-                ? entry.answerParts
-                : fc?.answerParts?.length
-                  ? fc.answerParts
-                  : null;
-            const flatFallback = Array.from(
-              new Set(
-                [
-                  ...normalizeImageUrls(
-                    entry.answerImageUrl,
-                    entry.answerImageUrls
-                  ),
-                  ...normalizeImageUrls(
-                    fc?.answerImageUrl,
-                    fc?.answerImageUrls
-                  ),
-                ].filter(
-                  (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
-                )
-              )
-            );
+        {handwritingFor !== null && (
+          <HandwritingModal
+            onCancel={() => setHandwritingFor(null)}
+            onInsert={(dataUrl) => insertHandwriting(handwritingFor, dataUrl)}
+          />
+        )}
 
-            return (
-              <div
-                key={entry.itemId ?? entry.text}
-                className="rounded-xl border border-ink-100 overflow-hidden bg-white"
-              >
-                <div className="p-3 sm:p-4 space-y-3">
-                  <p className="font-medium text-ink-900 leading-snug">
-                    <mark className="hl-yellow">{entry.text}</mark>
+        {textImageFor !== null && (
+          <TextToImageModal
+            initialText={
+              draft.sections[textImageFor]?.body
+                ? draft.sections[textImageFor].body
+                    .replace(/<br\s*\/?>/gi, "\n")
+                    .replace(/<[^>]+>/g, "")
+                    .replace(/&nbsp;/g, " ")
+                    .trim()
+                    .slice(0, 800)
+                : ""
+            }
+            onCancel={() => setTextImageFor(null)}
+            onInsert={(dataUrl) => insertTextImage(textImageFor, dataUrl)}
+          />
+        )}
+
+        {/* 화면: F 클릭 시 상세 팝업 */}
+        {openMarker && !editing && (
+          <FcDetailModal
+            marker={openMarker}
+            fc={
+              openMarker.entry.itemId
+                ? fcByItem.get(openMarker.entry.itemId)
+                : undefined
+            }
+            onClose={() => setOpenFcKey(null)}
+          />
+        )}
+      </section>
+
+      {/* 인쇄·PDF용 부록 — 화면에서는 숨김 */}
+      <FactCheckAppendix
+        markers={markers}
+        draft={draft}
+        fcByItem={fcByItem}
+      />
+    </>
+  );
+}
+
+function FcDetailModal({
+  marker,
+  fc,
+  onClose,
+}: {
+  marker: FcMarker;
+  fc:
+    | {
+        checkGuide: string;
+        verdict?: FactCheckVerdict;
+        answerImageUrl?: string;
+        answerImageUrls?: string[];
+        answerParts?: NonNullable<TypedReport["factChecks"][0]["answerParts"]>;
+      }
+    | undefined;
+  onClose: () => void;
+}) {
+  const verdict = (fc?.verdict ?? "pending") as FactCheckVerdict;
+  const badge = verdictBadge(verdict);
+  const failed = isFailedVerdict(verdict);
+  const parts =
+    marker.entry.answerParts?.length
+      ? marker.entry.answerParts
+      : fc?.answerParts?.length
+        ? fc.answerParts
+        : null;
+  const flatFallback = Array.from(
+    new Set(
+      [
+        ...normalizeImageUrls(
+          marker.entry.answerImageUrl,
+          marker.entry.answerImageUrls
+        ),
+        ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+      ].filter((u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u))
+    )
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink-900/50 p-3 print:hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`팩트체크 F${marker.n}`}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg max-h-[85vh] overflow-auto rounded-2xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 flex items-center justify-between gap-2 px-4 py-3 border-b border-ink-100 bg-white">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="fc-badge">F{marker.n}</span>
+            <span
+              className={`text-sm font-medium truncate ${
+                failed
+                  ? "text-verify-false"
+                  : badge.ok
+                    ? "text-verify-true"
+                    : "text-ink-700"
+              }`}
+            >
+              {badge.mark} {badge.label}
+            </span>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 shrink-0">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <p className="font-medium text-ink-900 leading-snug">
+            <u className="decoration-accent/70 underline-offset-2">
+              {marker.entry.text}
+            </u>
+          </p>
+
+          {parts?.length ? (
+            <div className="space-y-3">
+              {parts.map((part) => (
+                <div
+                  key={part.number}
+                  className="rounded-lg border border-ink-100 bg-ink-50/80 p-2.5 space-y-2"
+                >
+                  <p className="text-ink-800 leading-relaxed whitespace-pre-wrap">
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white mr-1.5 align-middle">
+                      {part.number}
+                    </span>
+                    {part.text}
                   </p>
-
-                  {parts?.length ? (
-                    <div className="space-y-3">
-                      {parts.map((part) => (
-                        <div
-                          key={part.number}
-                          className="rounded-lg border border-ink-100 bg-ink-50/80 p-2.5 space-y-2"
-                        >
-                          <p className="text-sm text-ink-800 leading-relaxed whitespace-pre-wrap">
-                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white mr-1.5 align-middle">
-                              {part.number}
-                            </span>
-                            {part.text}
-                          </p>
-                          {(part.imageUrls ?? [])
-                            .filter(
-                              (u) =>
-                                !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
-                            )
-                            .map((src) => (
-                              <div
-                                key={src.slice(0, 48)}
-                                className="overflow-hidden rounded-lg border border-ink-100 bg-white"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={src}
-                                  alt={`${part.number}번 이미지`}
-                                  className="w-full max-h-64 object-contain bg-ink-50"
-                                />
-                                <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
-                                  {part.number}번 이미지
-                                </p>
-                              </div>
-                            ))}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    flatFallback.map((src) => (
+                  {(part.imageUrls ?? [])
+                    .filter(
+                      (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+                    )
+                    .map((src) => (
                       <div
                         key={src.slice(0, 48)}
-                        className="overflow-hidden rounded-lg border border-ink-100"
+                        className="overflow-hidden rounded-lg border border-ink-100 bg-white"
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={src}
-                          alt=""
+                          alt={`${part.number}번 이미지`}
                           className="w-full max-h-64 object-contain bg-ink-50"
                         />
-                        <p className="text-xs text-ink-500 px-2 py-1.5 bg-ink-50 border-t border-ink-100">
-                          관련 이미지
-                        </p>
                       </div>
-                    ))
-                  )}
-
-                  {fc && (
-                    <div className="pt-1">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenFc(open ? null : (entry.itemId ?? null))
-                        }
-                        className={`w-full flex items-center justify-between gap-2 min-h-10 rounded-lg px-3 text-sm font-medium border ${
-                          failed
-                            ? "border-verify-false/40 bg-verify-false/10 text-verify-false"
-                            : badge.ok
-                              ? "border-verify-true/30 bg-verify-true/10 text-verify-true"
-                              : "border-ink-200 bg-ink-50 text-ink-700"
-                        }`}
-                      >
-                        <span>
-                          FACT CHECK {badge.mark}{" "}
-                          {badge.label !== "대기" ? badge.label : "결과 보기"}
-                        </span>
-                        {open ? (
-                          <ChevronUp className="h-4 w-4 shrink-0" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4 shrink-0" />
-                        )}
-                      </button>
-
-                      {open && (
-                        <div className="mt-2 rounded-lg bg-ink-50 border border-ink-100 p-3 text-sm text-ink-700 whitespace-pre-wrap leading-relaxed">
-                          {failed && (
-                            <p className="text-verify-false font-bold mb-2">
-                              ✗ 사실과 다름
-                            </p>
-                          )}
-                          {fc.checkGuide || (
-                            <p className="text-ink-500">
-                              저장된 팩트체크 세부 내용이 없습니다.
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    ))}
                 </div>
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          ) : (
+            <>
+              {(fc?.checkGuide || marker.entry.html) && (
+                <div className="rounded-lg bg-ink-50 border border-ink-100 p-3 text-ink-700 whitespace-pre-wrap leading-relaxed">
+                  {failed && (
+                    <p className="text-verify-false font-bold mb-2">
+                      ✗ 사실과 다름
+                    </p>
+                  )}
+                  {fc?.checkGuide ||
+                    marker.entry.html?.replace(/<[^>]+>/g, "") ||
+                    "저장된 팩트체크 세부 내용이 없습니다."}
+                </div>
+              )}
+              {flatFallback.map((src) => (
+                <div
+                  key={src.slice(0, 48)}
+                  className="overflow-hidden rounded-lg border border-ink-100"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt=""
+                    className="w-full max-h-64 object-contain bg-ink-50"
+                  />
+                </div>
+              ))}
+            </>
+          )}
+
+          {!parts?.length && !fc?.checkGuide && !flatFallback.length && (
+            <p className="text-ink-500">
+              저장된 팩트체크 세부 내용이 없습니다.
+            </p>
+          )}
         </div>
-      ))}
+      </div>
+    </div>
+  );
+}
 
-      {editing && (
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          className="text-sm text-ink-500 underline"
-        >
-          취소
-        </button>
-      )}
+function FactCheckAppendix({
+  markers,
+  draft,
+  fcByItem,
+}: {
+  markers: FcMarker[];
+  draft: TypedReport;
+  fcByItem: Map<
+    string,
+    (typeof draft.factChecks)[number]
+  >;
+}) {
+  if (!markers.length) return null;
 
-      {handwritingFor !== null && (
-        <HandwritingModal
-          onCancel={() => setHandwritingFor(null)}
-          onInsert={(dataUrl) => insertHandwriting(handwritingFor, dataUrl)}
-        />
-      )}
+  return (
+    <section
+      id="fc-appendix"
+      className="hidden print:block mt-8 break-before-page rounded-none border-0 bg-white p-0 space-y-5"
+    >
+      <h2 className="font-display text-xl text-ink-900 border-b border-ink-200 pb-2">
+        팩트 체크 내용
+      </h2>
+      {markers.map((m) => {
+        const fc = m.entry.itemId ? fcByItem.get(m.entry.itemId) : undefined;
+        const verdict = (fc?.verdict ?? "pending") as FactCheckVerdict;
+        const badge = verdictBadge(verdict);
+        const parts =
+          m.entry.answerParts?.length
+            ? m.entry.answerParts
+            : fc?.answerParts?.length
+              ? fc.answerParts
+              : null;
+        const imgs = Array.from(
+          new Set(
+            [
+              ...normalizeImageUrls(
+                m.entry.answerImageUrl,
+                m.entry.answerImageUrls
+              ),
+              ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+              ...(parts ?? []).flatMap((p) => p.imageUrls ?? []),
+            ].filter((u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u))
+          )
+        );
 
-      {textImageFor !== null && (
-        <TextToImageModal
-          initialText={
-            draft.sections[textImageFor]?.body
-              ? draft.sections[textImageFor].body
-                  .replace(/<br\s*\/?>/gi, "\n")
-                  .replace(/<[^>]+>/g, "")
-                  .replace(/&nbsp;/g, " ")
-                  .trim()
-                  .slice(0, 800)
-              : ""
-          }
-          onCancel={() => setTextImageFor(null)}
-          onInsert={(dataUrl) => insertTextImage(textImageFor, dataUrl)}
-        />
-      )}
+        return (
+          <div key={m.key} className="space-y-2 break-inside-avoid">
+            <p className="font-medium text-ink-900">
+              <span className="fc-badge-print mr-2">F{m.n}</span>
+              {m.entry.text}
+              <span className="ml-2 text-sm font-normal text-ink-500">
+                ({badge.label})
+              </span>
+            </p>
+            {parts?.length ? (
+              parts.map((part) => (
+                <div key={part.number} className="pl-2 text-sm space-y-1">
+                  <p className="whitespace-pre-wrap">
+                    {part.number}. {part.text}
+                  </p>
+                  {(part.imageUrls ?? [])
+                    .filter(
+                      (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+                    )
+                    .map((src) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={src.slice(0, 40)}
+                        src={src}
+                        alt=""
+                        className="max-h-48 object-contain border border-ink-100"
+                      />
+                    ))}
+                </div>
+              ))
+            ) : (
+              <>
+                {(fc?.checkGuide || m.entry.html) && (
+                  <p className="text-sm text-ink-700 whitespace-pre-wrap pl-2">
+                    {fc?.checkGuide ||
+                      m.entry.html?.replace(/<[^>]+>/g, "")}
+                  </p>
+                )}
+                {imgs.map((src) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={src.slice(0, 40)}
+                    src={src}
+                    alt=""
+                    className="max-h-48 object-contain border border-ink-100 ml-2"
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -619,7 +947,7 @@ function FormatToolbar({
   onHandwriting: () => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5 items-center rounded-xl border border-ink-200 bg-ink-50 p-2">
+    <div className="flex flex-wrap gap-1.5 items-center rounded-xl border border-ink-200 bg-ink-50 p-2 print:hidden">
       <ToolBtn onClick={onBold} title="굵게">
         <Bold className="h-4 w-4" />
       </ToolBtn>
@@ -776,7 +1104,7 @@ function HandwritingModal({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink-900/50 p-3">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink-900/50 p-3 print:hidden">
       <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-ink-100">
           <p className="font-medium text-ink-900">손글씨 (굿노트 스타일)</p>

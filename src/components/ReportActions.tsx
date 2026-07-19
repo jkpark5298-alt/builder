@@ -3,6 +3,7 @@
 import {
   Eye,
   FileDown,
+  Home,
   Loader2,
   Pencil,
   Printer,
@@ -90,6 +91,10 @@ export function ReportActions({
 
   return (
     <div className={`flex flex-wrap gap-2 ${compact ? "" : "w-full"}`}>
+      <a href="/" className={`${btn} ${enabled}`}>
+        <Home className="h-3.5 w-3.5 shrink-0" />
+        초기 화면
+      </a>
       <a href={viewHref} className={`${btn} ${primary}`}>
         <Eye className="h-3.5 w-3.5 shrink-0" />
         보기

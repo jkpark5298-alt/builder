@@ -259,7 +259,8 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     return new Uint8Array(doc.output("arraybuffer"));
   }
 
-  // 저장된 보고서(수정본) 기준으로 섹션·이미지 전부 출력
+  // 저장된 보고서(수정본) 기준으로 섹션·이미지 전부 출력 (팩트체크 상세는 부록)
+  let fcIndex = 0;
   for (const sec of report.sections) {
     ensureSpace(40);
     setFace("bold");
@@ -280,64 +281,88 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
       await drawImage(src);
     }
 
+    // 본문에는 F 번호만 (상세는 부록)
     for (const entry of sec.entries ?? []) {
-      const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
-      setFace("bold");
-      writeWrapped(`· ${entry.text}`, 10, 2);
-
-      if (fc?.verdict === "false" || fc?.verdict === "mostly_false") {
-        setFace("bold");
-        writeWrapped("  FACT CHECK ✗", 10, 2);
-      } else if (fc?.verdict && fc.verdict !== "pending") {
-        setFace("normal");
-        writeWrapped(`  FACT CHECK: ${fc.verdict}`, 9, 2);
-      }
-
-      const parts = resolveAnswerParts({
-        explanation: fc?.checkGuide || entry.html || "",
-        answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
-        answerImageUrls: entry.answerImageUrls ?? fc?.answerImageUrls,
-        answerParts: entry.answerParts ?? fc?.answerParts,
-      });
-
-      if (parts.length) {
-        for (const part of parts) {
-          setFace("normal");
-          if (part.text.trim()) {
-            writeWrapped(`  ${part.number}. ${part.text}`, 9, 4);
-          } else {
-            writeWrapped(`  ${part.number}.`, 9, 2);
-          }
-          for (const src of (part.imageUrls ?? []).filter(
-            (u) => !isYoutubeThumb(u)
-          )) {
-            await drawImage(src, `${part.number}번 이미지`);
-          }
-        }
-      } else {
-        if (fc?.checkGuide) {
-          setFace("normal");
-          writeWrapped(`  ${fc.checkGuide}`, 9, 6);
-        } else if (entry.html) {
-          setFace("normal");
-          writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
-        }
-
-        const entryImages = normalizeImageUrls(
-          entry.answerImageUrl,
-          entry.answerImageUrls
-        ).filter((u) => !isYoutubeThumb(u));
-        const fcImages = normalizeImageUrls(
-          fc?.answerImageUrl,
-          fc?.answerImageUrls
-        ).filter((u) => !isYoutubeThumb(u));
-        const allEntryImgs = Array.from(new Set([...entryImages, ...fcImages]));
-        for (const src of allEntryImgs) {
-          await drawImage(src, "관련 이미지");
-        }
-      }
+      fcIndex += 1;
+      setFace("normal");
+      writeWrapped(`  [F${fcIndex}] ${entry.text}`, 9, 4);
     }
     y += 8;
+  }
+
+  // 부록: 팩트 체크 내용
+  if (fcIndex > 0) {
+    doc.addPage();
+    y = 40;
+    setFace("bold");
+    writeWrapped("팩트 체크 내용", 16, 10);
+    setFace("normal");
+
+    let n = 0;
+    for (const sec of report.sections) {
+      for (const entry of sec.entries ?? []) {
+        n += 1;
+        const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
+        ensureSpace(50);
+        setFace("bold");
+        writeWrapped(`F${n}. ${entry.text}`, 11, 4);
+        setFace("normal");
+
+        if (fc?.verdict === "false" || fc?.verdict === "mostly_false") {
+          setFace("bold");
+          writeWrapped("  FACT CHECK ✗", 10, 2);
+        } else if (fc?.verdict && fc.verdict !== "pending") {
+          writeWrapped(`  판정: ${fc.verdict}`, 9, 2);
+        }
+
+        const parts = resolveAnswerParts({
+          explanation: fc?.checkGuide || entry.html || "",
+          answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
+          answerImageUrls: entry.answerImageUrls ?? fc?.answerImageUrls,
+          answerParts: entry.answerParts ?? fc?.answerParts,
+        });
+
+        if (parts.length) {
+          for (const part of parts) {
+            setFace("normal");
+            if (part.text.trim()) {
+              writeWrapped(`  ${part.number}. ${part.text}`, 9, 4);
+            } else {
+              writeWrapped(`  ${part.number}.`, 9, 2);
+            }
+            for (const src of (part.imageUrls ?? []).filter(
+              (u) => !isYoutubeThumb(u)
+            )) {
+              await drawImage(src, `${part.number}번 이미지`);
+            }
+          }
+        } else {
+          if (fc?.checkGuide) {
+            setFace("normal");
+            writeWrapped(`  ${fc.checkGuide}`, 9, 6);
+          } else if (entry.html) {
+            setFace("normal");
+            writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
+          }
+
+          const entryImages = normalizeImageUrls(
+            entry.answerImageUrl,
+            entry.answerImageUrls
+          ).filter((u) => !isYoutubeThumb(u));
+          const fcImages = normalizeImageUrls(
+            fc?.answerImageUrl,
+            fc?.answerImageUrls
+          ).filter((u) => !isYoutubeThumb(u));
+          const allEntryImgs = Array.from(
+            new Set([...entryImages, ...fcImages])
+          );
+          for (const src of allEntryImgs) {
+            await drawImage(src, "관련 이미지");
+          }
+        }
+        y += 6;
+      }
+    }
   }
 
   if (!hasKr) {

@@ -68,7 +68,7 @@ export default async function VideoDetailPage({
         ))}
       </ol>
 
-      <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+      <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] print:hidden">
         <div className="overflow-hidden rounded-2xl border border-ink-200 bg-ink-900">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -168,7 +168,7 @@ export default async function VideoDetailPage({
 
       <section
         id="general-summary"
-        className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden"
+        className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden"
       >
         <div className="bg-accent px-4 sm:px-5 py-3.5">
           <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
@@ -191,7 +191,7 @@ export default async function VideoDetailPage({
 
       {ready && (
         <>
-          <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden">
+          <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden">
             <div className="bg-accent px-4 sm:px-5 py-3.5">
               <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
                 2. 팩트체크 정리

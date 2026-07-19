@@ -64,7 +64,52 @@ h3,
   margin: 0.4em 0;
 }
 
-/* 보고서 인쇄: 본문·이미지 위주, 네비·액션 숨김 */
+/* 팩트체크 F 뱃지 (화면) */
+.fc-badge,
+.report-body .fc-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  margin-left: 0.2em;
+  border-radius: 9999px;
+  background: #c45c26;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.report-body .fc-target {
+  white-space: inherit;
+}
+
+.report-body .fc-target u {
+  text-decoration-color: #c45c26;
+  text-underline-offset: 2px;
+}
+
+.fc-badge-print {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  border: 1.5px solid #c45c26;
+  color: #c45c26;
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* 보고서 인쇄: 본문 + F 마커 + 부록만 */
 @media print {
   body {
     background: white !important;
@@ -78,12 +123,25 @@ h3,
   }
 
   #report {
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  #report img,
+  #fc-appendix img {
+    max-width: 100%;
     break-inside: avoid;
   }
 
-  #report img {
-    max-width: 100%;
-    break-inside: avoid;
+  #fc-appendix {
+    display: block !important;
+  }
+
+  .fc-badge {
+    cursor: default;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   a[href]::after {
