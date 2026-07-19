@@ -28,7 +28,7 @@ export function ReportActions({
   if (!ready) return null;
 
   const viewHref = `/videos/${video.id}#report`;
-  const editHref = `/videos/${video.id}#report`;
+  const editHref = `/videos/${video.id}#report-edit`;
   const pdfHref = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
 
   async function share() {
@@ -50,14 +50,34 @@ export function ReportActions({
   }
 
   function printReport() {
-    // 상세 페이지면 보고서 섹션 스크롤 후 인쇄
     if (!window.location.pathname.includes(`/videos/${video.id}`)) {
       router.push(`/videos/${video.id}?print=1#report`);
       return;
     }
     const el = document.getElementById("report");
-    el?.scrollIntoView({ behavior: "instant", block: "start" });
+    el?.scrollIntoView({ behavior: "auto", block: "start" });
     window.setTimeout(() => window.print(), 200);
+  }
+
+  function startEdit(e: React.MouseEvent) {
+    e.preventDefault();
+    try {
+      sessionStorage.setItem(`edit-report:${video.id}`, "1");
+    } catch {
+      /* ignore */
+    }
+    window.dispatchEvent(
+      new CustomEvent("factcheck:edit-report", { detail: { id: video.id } })
+    );
+    if (window.location.pathname.includes(`/videos/${video.id}`)) {
+      window.location.hash = "report-edit";
+      document.getElementById("report")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    } else {
+      router.push(editHref);
+    }
   }
 
   const btn = compact
@@ -74,19 +94,10 @@ export function ReportActions({
         <Eye className="h-3.5 w-3.5 shrink-0" />
         보기
       </a>
-      <a
-        href={editHref}
-        className={`${btn} ${enabled}`}
-        onClick={() => {
-          // 수정 모드 힌트 — EditableReportPanel이 hash 변경을 감지
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem(`edit-report:${video.id}`, "1");
-          }
-        }}
-      >
+      <button type="button" onClick={startEdit} className={`${btn} ${enabled}`}>
         <Pencil className="h-3.5 w-3.5 shrink-0" />
         수정
-      </a>
+      </button>
       <button
         type="button"
         disabled={sharing}

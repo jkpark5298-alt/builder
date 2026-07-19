@@ -22,6 +22,7 @@ import type {
 } from "@/lib/types";
 import { factCheckProgress, isItemChecked } from "@/lib/factcheck-client";
 import { compressDataUrls } from "@/lib/image-client";
+import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import {
   pairAnswerParts,
@@ -115,8 +116,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       const safeVerdict =
         verdict === "pending" ? "unverifiable" : verdict;
 
-      // 1) 텍스트·판정만 먼저 저장 (대용량 이미지로 타임아웃 나지 않게)
-      const textParts = rawParts.map((p) => ({ ...p, imageUrls: [] as string[] }));
+      // 1) 텍스트·판정만 먼저 저장 (기존 이미지는 서버에서 유지)
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 45000);
       let res: Response;
@@ -132,8 +132,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
               verdict: safeVerdict,
               explanation,
               sources: [],
-              answerImageUrls: [],
-              answerParts: textParts,
+              // 이미지 필드는 보내지 않음 → 서버가 기존 이미지 유지
             },
           }),
         });
@@ -160,6 +159,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       }
       if (!res.ok) throw new Error(data.error || `저장 실패 (HTTP ${res.status})`);
 
+      const prevFc = localVideo.factChecks.find((f) => f.itemId === itemId);
       const fc: FactCheckResult = {
         itemId,
         mode: "manual",
@@ -167,11 +167,13 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         explanation,
         sources: [],
         checkedAt: new Date().toISOString(),
-        answerParts: textParts,
+        answerImageUrl: prevFc?.answerImageUrl,
+        answerImageUrls: prevFc?.answerImageUrls,
+        answerParts: prevFc?.answerParts,
       };
 
-      // 로컬에 이미지 유지(서버는 용량상 생략할 수 있음)
-      let compressedParts = textParts;
+      // 2) 이미지는 먼저 Blob 업로드 → 짧은 URL만 PATCH
+      let compressedParts = rawParts;
       const hasImages = rawParts.some((p) => (p.imageUrls?.length ?? 0) > 0);
       let imageWarning = data.warning;
 
@@ -179,10 +181,16 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         try {
           compressedParts = [];
           for (const p of rawParts) {
-            compressedParts.push({
-              ...p,
-              imageUrls: await compressDataUrls(p.imageUrls ?? [], 220_000, 720),
-            });
+            const compressed = await compressDataUrls(
+              p.imageUrls ?? [],
+              220_000,
+              720
+            );
+            const uploaded = await uploadDataUrls(
+              compressed,
+              `videos/${localVideo.id}/answers`
+            );
+            compressedParts.push({ ...p, imageUrls: uploaded });
           }
           const images = partsToImageUrls(compressedParts);
           const imgRes = await fetch(`/api/videos/${localVideo.id}`, {
@@ -196,24 +204,32 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
               },
             }),
           });
+          const imgData = (await imgRes.json().catch(() => ({}))) as {
+            video?: VideoRecord;
+            warning?: string;
+            error?: string;
+          };
           if (imgRes.ok) {
-            const imgData = (await imgRes.json()) as {
-              video?: VideoRecord;
-              warning?: string;
-            };
             if (imgData.video) data.video = imgData.video;
             if (imgData.warning) imageWarning = imgData.warning;
             fc.answerImageUrl = images[0];
             fc.answerImageUrls = images.length ? images : undefined;
             fc.answerParts = compressedParts;
           } else {
-            imageWarning =
-              "답변은 저장됐습니다. 이미지는 용량 문제로 제외됐습니다.";
+            throw new Error(
+              imgData.error ||
+                "이미지는 저장되지 않았습니다. 답변 텍스트만 저장됐습니다."
+            );
           }
-        } catch {
+        } catch (e) {
           imageWarning =
-            "답변은 저장됐습니다. 이미지는 용량 문제로 제외됐습니다.";
-          compressedParts = textParts;
+            e instanceof Error
+              ? e.message
+              : "답변은 저장됐습니다. 이미지 저장에 실패했습니다.";
+          compressedParts = prevFc?.answerParts ?? rawParts.map((p) => ({
+            ...p,
+            imageUrls: [],
+          }));
         }
       }
 
@@ -381,9 +397,10 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           </button>
           <button
             type="button"
+            id="complete-report"
             onClick={completeAndGenerate}
             disabled={completing}
-            className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60"
+            className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60 scroll-mt-24"
           >
             {completing ? "생성 중…" : "보고서 저장 → PDF·인포그래픽"}
           </button>
@@ -568,9 +585,10 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           </button>
           <button
             type="button"
+            id="complete-report"
             disabled={!progress.complete || completing}
             onClick={completeAndGenerate}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-accent px-5 text-white font-medium disabled:opacity-50 hover:bg-ink-900 transition-colors"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-accent px-5 text-white font-medium disabled:opacity-50 hover:bg-ink-900 transition-colors scroll-mt-24"
           >
             <FileText className="h-4 w-4" />
             {completing
@@ -685,11 +703,15 @@ function StepEditor({
     setItemImageBusy(true);
     try {
       const compressed = await compressDataUrls(urls);
+      const uploaded = await uploadDataUrls(
+        compressed,
+        `videos/${videoId}/items`
+      );
       const res = await fetch(`/api/videos/${videoId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          itemImages: { itemId: item.id, imageUrls: compressed },
+          itemImages: { itemId: item.id, imageUrls: uploaded },
         }),
       });
       const data = (await res.json()) as {
@@ -697,20 +719,20 @@ function StepEditor({
         video?: VideoRecord;
       };
       if (!res.ok) throw new Error(data.error || "이미지 저장 실패");
-      // 서버가 외부 URL로 치환해 돌려주면 그 URL을 쓰고, 없으면 압축본 유지
+      // 서버가 외부 URL로 치환해 돌려주면 그 URL을 쓰고, 없으면 업로드본 유지
       const savedItem = data.video?.items.find((i) => i.id === item.id);
       const savedUrls = savedItem
         ? normalizeImageUrls(savedItem.imageUrl, savedItem.imageUrls)
         : [];
-      setItemImages(savedUrls.length ? savedUrls : compressed);
+      const finalUrls = savedUrls.length ? savedUrls : uploaded;
+      setItemImages(finalUrls);
       if (data.video) {
-        // 슬림 응답에 이미지가 비어도 방금 저장한 URL은 로컬에 유지
         const mergedItems = data.video.items.map((i) =>
           i.id === item.id
             ? {
                 ...i,
-                imageUrl: (savedUrls.length ? savedUrls : compressed)[0],
-                imageUrls: (savedUrls.length ? savedUrls : compressed).slice(1),
+                imageUrl: finalUrls[0],
+                imageUrls: finalUrls.length > 1 ? finalUrls.slice(1) : undefined,
               }
             : i
         );

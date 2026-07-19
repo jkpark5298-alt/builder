@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
@@ -99,12 +99,31 @@ export function VideoListCard({
         {listKind === "report-complete" && ready ? (
           <ReportActions video={video} compact />
         ) : (
-          <a
-            href={`/videos/${video.id}`}
-            className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
-          >
-            {listKind === "report-pending" ? "보고서 저장" : "이어서 하기"}
-          </a>
+          <>
+            <a
+              href={`/videos/${video.id}`}
+              className={`${btn} border-accent/40 bg-accent-muted/40 text-ink-900 hover:bg-accent-muted`}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              수정
+            </a>
+            {listKind === "report-pending" && (
+              <a
+                href={`/videos/${video.id}#complete-report`}
+                className={`${btn} border-ink-900 bg-ink-900 text-white hover:opacity-90`}
+              >
+                보고서 저장
+              </a>
+            )}
+            {listKind === "draft" && (
+              <a
+                href={`/videos/${video.id}`}
+                className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
+              >
+                이어서 하기
+              </a>
+            )}
+          </>
         )}
         <button
           type="button"

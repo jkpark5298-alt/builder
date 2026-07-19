@@ -199,9 +199,10 @@ export default async function VideoDetailPage({
             </div>
             <div className="p-4 sm:p-5 space-y-3">
               <p className="text-sm text-ink-600">
-                이 항목은 <strong>완료</strong> 상태입니다. 내용을 고치려면{" "}
-                <strong>수정 필요 → 임시 저장으로</strong>를 눌러 임시 저장
-                목록으로 옮긴 뒤 다시 정리하세요.
+                이 항목은 <strong>완료</strong> 상태입니다. 팩트체크를 고치려면{" "}
+                <strong>수정 (팩트체크 다시 열기)</strong>를 눌러 임시 저장으로
+                옮긴 뒤 다시 정리하세요. 보고서 본문은 아래{" "}
+                <strong>수정 (텍스트·이미지)</strong>로 바로 고칠 수 있습니다.
               </p>
               <ReopenAsDraftButton videoId={video.id} />
               {video.factChecks.length > 0 && (

@@ -87,13 +87,25 @@ export async function persistMediaDataUrl(
 
   const token = blobToken();
   if (token) {
-    const blob = await put(key, parsed.buffer, {
-      access: "public",
-      contentType: parsed.contentType,
-      token,
-      addRandomSuffix: true,
-    });
-    return blob.url;
+    try {
+      const blob = await put(key, parsed.buffer, {
+        access: "public",
+        contentType: parsed.contentType,
+        token,
+        addRandomSuffix: true,
+      });
+      return blob.url;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Vercel Blob 업로드 실패: ${msg}`);
+    }
+  }
+
+  // Vercel에서는 /tmp 가 휘발성이라 Blob 토큰 필수
+  if (onVercel()) {
+    throw new Error(
+      "BLOB_READ_WRITE_TOKEN 이 없어 이미지를 영구 저장할 수 없습니다. Vercel 프로젝트에 Blob Store를 연결하세요."
+    );
   }
 
   // 로컬/개발: 파일로 저장 후 /api/media 로 서빙

@@ -28,6 +28,7 @@ import type {
   VideoRecord,
 } from "@/lib/types";
 import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
+import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
@@ -58,21 +59,54 @@ export function EditableReportPanel({
     setDraft(report);
   }, [report]);
 
-  // 목록의 「수정」에서 들어오면 바로 편집 모드
+  // 목록·액션바의 「수정」에서 들어오면 바로 편집 모드
   useEffect(() => {
-    try {
-      const key = `edit-report:${video.id}`;
-      if (sessionStorage.getItem(key) === "1") {
-        sessionStorage.removeItem(key);
-        setEditing(true);
-        document.getElementById("report")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }
-    } catch {
-      /* ignore */
+    function enterEdit() {
+      setEditing(true);
+      document.getElementById("report")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     }
+
+    function fromStorageOrHash() {
+      try {
+        const key = `edit-report:${video.id}`;
+        if (sessionStorage.getItem(key) === "1") {
+          sessionStorage.removeItem(key);
+          enterEdit();
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      if (
+        typeof window !== "undefined" &&
+        (window.location.hash === "#report-edit" ||
+          window.location.hash === "#report")
+      ) {
+        // #report-edit 만 자동 편집 / #report 는 스크롤만
+        if (window.location.hash === "#report-edit") enterEdit();
+      }
+    }
+
+    fromStorageOrHash();
+
+    function onCustom(e: Event) {
+      const detail = (e as CustomEvent<{ id?: string }>).detail;
+      if (detail?.id && detail.id !== video.id) return;
+      enterEdit();
+    }
+    function onHash() {
+      if (window.location.hash === "#report-edit") enterEdit();
+    }
+
+    window.addEventListener("factcheck:edit-report", onCustom);
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      window.removeEventListener("factcheck:edit-report", onCustom);
+      window.removeEventListener("hashchange", onHash);
+    };
   }, [video.id]);
 
   // 구형식(TYPE별) → 일반 형식 자동 재생성
@@ -142,16 +176,22 @@ export function EditableReportPanel({
     try {
       const dataUrls = await compressImageFiles(imageFiles);
       if (!dataUrls.length) return;
+      const uploaded = await uploadDataUrls(
+        dataUrls,
+        `videos/${video.id}/report`
+      );
       setDraft((prev) => {
         if (!prev) return prev;
         const sections = [...prev.sections];
         const sec = sections[idx];
-        const images = [...(sec.images ?? []), ...dataUrls];
+        const images = [...(sec.images ?? []), ...uploaded];
         sections[idx] = { ...sec, images };
         return { ...prev, sections };
       });
-    } catch {
-      alert("이미지 추가에 실패했습니다.");
+    } catch (e) {
+      alert(
+        e instanceof Error ? e.message : "이미지 추가에 실패했습니다."
+      );
     }
   }
 
@@ -181,26 +221,45 @@ export function EditableReportPanel({
     );
   }
 
-  function insertHandwriting(idx: number, dataUrl: string) {
-    setDraft((prev) => {
-      if (!prev) return prev;
-      const sections = [...prev.sections];
-      const images = [...(sections[idx].images ?? []), dataUrl];
-      sections[idx] = { ...sections[idx], images };
-      return { ...prev, sections };
-    });
-    setHandwritingFor(null);
+  async function insertHandwriting(idx: number, dataUrl: string) {
+    try {
+      const [url] = await uploadDataUrls(
+        [dataUrl],
+        `videos/${video.id}/report`
+      );
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const sections = [...prev.sections];
+        const sec = sections[idx];
+        const images = [...(sec.images ?? []), url];
+        sections[idx] = { ...sec, images };
+        return { ...prev, sections };
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "손글씨 이미지 저장 실패");
+    } finally {
+      setHandwritingFor(null);
+    }
   }
 
-  function insertTextImage(idx: number, dataUrl: string) {
-    setDraft((prev) => {
-      if (!prev) return prev;
-      const sections = [...prev.sections];
-      const images = [...(sections[idx].images ?? []), dataUrl];
-      sections[idx] = { ...sections[idx], images };
-      return { ...prev, sections };
-    });
-    setTextImageFor(null);
+  async function insertTextImage(idx: number, dataUrl: string) {
+    try {
+      const [url] = await uploadDataUrls(
+        [dataUrl],
+        `videos/${video.id}/report`
+      );
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const sections = [...prev.sections];
+        const images = [...(sections[idx].images ?? []), url];
+        sections[idx] = { ...sections[idx], images };
+        return { ...prev, sections };
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "텍스트 이미지 저장 실패");
+    } finally {
+      setTextImageFor(null);
+    }
   }
 
   return (

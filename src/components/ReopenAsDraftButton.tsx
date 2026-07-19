@@ -39,7 +39,7 @@ export function ReopenAsDraftButton({ videoId }: { videoId: string }) {
         className="inline-flex w-full sm:w-auto items-center justify-center gap-2 min-h-11 rounded-xl border border-accent/40 bg-accent-muted/50 px-4 py-2.5 text-sm font-medium text-ink-900 hover:bg-accent-muted disabled:opacity-60"
       >
         <PencilLine className="h-4 w-4" />
-        {busy ? "이동 중…" : "수정 필요 → 임시 저장으로"}
+        {busy ? "이동 중…" : "수정 (팩트체크 다시 열기)"}
       </button>
       {error && (
         <p className="text-sm text-verify-false" role="alert">
@@ -47,8 +47,8 @@ export function ReopenAsDraftButton({ videoId }: { videoId: string }) {
         </p>
       )}
       <p className="text-xs text-ink-500">
-        완료 목록에서 임시 저장으로 옮긴 뒤 팩트체크를 수정할 수 있습니다. 다시
-        완료하려면 검증을 마친 뒤 «완료 → PDF·인포그래픽 생성»을 누르세요.
+        임시 저장으로 옮긴 뒤 팩트체크·이미지를 수정할 수 있습니다. 다시
+        완료하려면 검증을 마친 뒤 «보고서 저장 → PDF·인포그래픽»을 누르세요.
       </p>
     </div>
   );

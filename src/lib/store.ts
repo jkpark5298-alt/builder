@@ -257,11 +257,20 @@ export async function upsertVideo(
   expectedUpdatedAt?: string
 ): Promise<VideoRecord> {
   // data URL → 외부 미디어 URL로 치환 후 저장 (새로고침 시 이미지·인포그래픽 유지)
-  let prepared = video;
+  let prepared: VideoRecord;
   try {
     prepared = await externalizeVideoMedia(video);
   } catch (e) {
-    console.warn("[store] media externalize failed — storing as-is", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[store] media externalize failed", msg);
+    // data URL을 그대로 넣으면 compact가 이미지를 지울 수 있음 → 실패로 처리
+    const hasHeavy = JSON.stringify(video).includes("data:image/");
+    if (hasHeavy) {
+      throw new Error(
+        `이미지 저장 실패: ${msg}. 잠시 후 다시 시도하거나 Blob 설정을 확인하세요.`
+      );
+    }
+    prepared = video;
   }
   const { video: compact, droppedImages } = compactVideoForStorage(prepared);
   if (droppedImages) {
