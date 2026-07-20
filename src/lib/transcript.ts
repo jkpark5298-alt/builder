@@ -6,6 +6,7 @@ import { promisify } from "util";
 import { YoutubeTranscript } from "youtube-transcript";
 import type { YoutubeMeta } from "./youtube";
 import { buildCreatorSourceText } from "./youtube";
+import { fetchYoutubeTranscriptAi } from "./youtube-transcript-ai";
 
 const execFileAsync = promisify(execFile);
 
@@ -52,6 +53,8 @@ export async function fetchTranscript(
 ): Promise<TranscriptResult> {
   const onVercel = Boolean(process.env.VERCEL);
 
+  const directTimeoutMs = onVercel ? 10_000 : 12_000;
+
   // 0) 외부 자막 API (SUPADATA_API_KEY) — Vercel IP 차단 우회용
   const viaApi = await trySupadataTranscript(videoId);
   if (viaApi) {
@@ -62,17 +65,12 @@ export async function fetchTranscript(
     };
   }
 
-  // Vercel: 긴 자막 시도로 요청이 멈춰 iPhone에서 ‘무반응’처럼 보이므로 빠르게 수동 붙여넣기로 안내
-  if (onVercel) {
-    return creatorFallback(meta, true);
-  }
-
   // 1) 수동/공식 자막 (youtube-transcript)
-  const manual = await tryYoutubeTranscriptLib(videoId);
+  const manual = await tryYoutubeTranscriptLib(videoId, directTimeoutMs);
   if (manual) return { text: manual, source: "youtube" };
 
   // 2) 유튜브 자동생성 자막 (timedtext / captionTracks)
-  const auto = await tryTimedTextAndCaptionTracks(videoId);
+  const auto = await tryTimedTextAndCaptionTracks(videoId, directTimeoutMs);
   if (auto) {
     return {
       text: auto,
@@ -81,19 +79,33 @@ export async function fetchTranscript(
     };
   }
 
-  // 3) yt-dlp 자동자막 (설치되어 있으면) — 음성을 자막 텍스트로 확보
-  const ytdlp = await tryYtDlpAutoSubs(videoId);
-  if (ytdlp) {
+  // 3) youtube-transcript.ai (Vercel·직접 API 실패 시, 중복 제거 후 사용)
+  const viaAi = await tryYoutubeTranscriptAi(videoId, onVercel ? 28_000 : 35_000);
+  if (viaAi) {
     return {
-      text: ytdlp,
-      source: "speech_text",
-      notice:
-        "영상 음성 기반 자동자막(yt-dlp)을 텍스트로 변환해 요약합니다.",
+      text: viaAi,
+      source: "youtube_auto",
+      notice: onVercel
+        ? "배포 서버에서 유튜브 직접 자막은 막혀, youtube-transcript.ai 자막(중복 정리)으로 요약합니다."
+        : "유튜브 직접 자막 대신 youtube-transcript.ai 자막(중복 정리)으로 요약합니다.",
     };
   }
 
-  // 4) 제작자 설명·챕터만
-  const fallback = creatorFallback(meta, false);
+  // 4) yt-dlp 자동자막 (로컬만 — Vercel에는 없음)
+  if (!onVercel) {
+    const ytdlp = await tryYtDlpAutoSubs(videoId);
+    if (ytdlp) {
+      return {
+        text: ytdlp,
+        source: "speech_text",
+        notice:
+          "영상 음성 기반 자동자막(yt-dlp)을 텍스트로 변환해 요약합니다.",
+      };
+    }
+  }
+
+  // 5) 제작자 설명·챕터만
+  const fallback = creatorFallback(meta, onVercel);
   if (fallback.source !== "none" || fallback.notice) {
     return fallback;
   }
@@ -189,13 +201,23 @@ export async function probeTranscriptAvailability(
     };
   }
 
-  const hasYtDlp = await isYtDlpAvailable();
+  const hasYtDlp = !process.env.VERCEL && (await isYtDlpAvailable());
   if (hasYtDlp) {
     return {
       available: true,
       source: "speech_text",
       message:
         "자막 API로는 없지만, 음성→자동자막(yt-dlp)으로 텍스트 변환을 시도합니다. 시간이 더 걸릴 수 있습니다.",
+    };
+  }
+
+  const viaAi = await tryYoutubeTranscriptAi(videoId, 12_000);
+  if (viaAi) {
+    return {
+      available: true,
+      source: "youtube_auto",
+      message:
+        "유튜브 직접 확인은 어렵지만 youtube-transcript.ai로 자막을 가져올 수 있습니다.",
     };
   }
 
@@ -341,12 +363,21 @@ async function getTracksFromTimedTextList(
   }
 }
 
-async function tryYoutubeTranscriptLib(videoId: string): Promise<string | null> {
+async function tryYoutubeTranscriptLib(
+  videoId: string,
+  timeoutMs = 12_000
+): Promise<string | null> {
   for (const lang of ["ko", "en", undefined] as const) {
     try {
-      const parts = lang
-        ? await YoutubeTranscript.fetchTranscript(videoId, { lang })
-        : await YoutubeTranscript.fetchTranscript(videoId);
+      const fetcher = lang
+        ? YoutubeTranscript.fetchTranscript(videoId, { lang })
+        : YoutubeTranscript.fetchTranscript(videoId);
+      const parts = await Promise.race([
+        fetcher,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), timeoutMs)
+        ),
+      ]);
       const text = parts.map((p) => p.text).join(" ").replace(/\s+/g, " ").trim();
       if (text.length > 40) return text;
     } catch {
@@ -356,8 +387,21 @@ async function tryYoutubeTranscriptLib(videoId: string): Promise<string | null> 
   return null;
 }
 
+async function tryYoutubeTranscriptAi(
+  videoId: string,
+  timeoutMs = 35_000
+): Promise<string | null> {
+  try {
+    const result = await fetchYoutubeTranscriptAi(videoId, { timeoutMs });
+    return result.text.length > 80 ? result.text : null;
+  } catch {
+    return null;
+  }
+}
+
 async function tryTimedTextAndCaptionTracks(
-  videoId: string
+  videoId: string,
+  timeoutMs = 12_000
 ): Promise<string | null> {
   // Innertube → watch HTML → timedtext list 순
   let tracks = await getTracksFromInnertube(videoId);
@@ -376,7 +420,7 @@ async function tryTimedTextAndCaptionTracks(
 
   const ordered = [...tracks].sort((a, b) => scoreTrack(b) - scoreTrack(a));
   for (const track of ordered.slice(0, 10)) {
-    const text = await fetchCaptionTrackText(track.baseUrl);
+    const text = await fetchCaptionTrackText(track.baseUrl, timeoutMs);
     if (text && text.length > 40) return text;
   }
 
@@ -389,7 +433,7 @@ async function tryTimedTextAndCaptionTracks(
           ? `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&kind=asr&fmt=json3`
           : `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
       try {
-        const text = await fetchCaptionTrackText(url);
+        const text = await fetchCaptionTrackText(url, timeoutMs);
         if (text && text.length > 40) return text;
       } catch {
         /* next */
@@ -455,7 +499,10 @@ async function fetchWatchHtml(videoId: string): Promise<string> {
   return res.text();
 }
 
-async function fetchCaptionTrackText(baseUrl: string): Promise<string | null> {
+async function fetchCaptionTrackText(
+  baseUrl: string,
+  timeoutMs = 12_000
+): Promise<string | null> {
   let url = baseUrl;
   // baseUrl에 이미 fmt가 있어도 json3 우선
   if (!/[?&]fmt=/.test(url)) {
@@ -472,7 +519,7 @@ async function fetchCaptionTrackText(baseUrl: string): Promise<string | null> {
       "Accept-Language": "ko-KR,ko;q=0.9",
       Referer: "https://www.youtube.com/",
     },
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(timeoutMs),
     next: { revalidate: 0 },
   });
   if (!res.ok) return null;
@@ -497,8 +544,8 @@ async function fetchCaptionTrackText(baseUrl: string): Promise<string | null> {
     /* xml / vtt */
   }
 
-  // srv1/xml
-  if (raw.includes("<text")) {
+  // srv1/xml, innertube xml (<p><s>)
+  if (raw.includes("<text") || raw.includes("<p")) {
     const text = raw
       .replace(/<[^>]+>/g, " ")
       .replace(/&amp;/g, "&")

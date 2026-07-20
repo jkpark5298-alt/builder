@@ -344,6 +344,7 @@ export function buildTypedReport(
     | "createdAt"
     | "thumbnailUrl"
     | "videoId"
+    | "inputMode"
   >
 ): TypedReport {
   const writtenAt = new Date(video.updatedAt || video.createdAt).toLocaleString(
@@ -470,7 +471,10 @@ export function buildTypedReport(
     meta: {
       title: video.title,
       channel: video.channel,
-      url: video.youtubeUrl,
+      url:
+        video.inputMode === "report"
+          ? "Report 생성 (직접 입력)"
+          : video.youtubeUrl,
       writtenAt,
     },
     reportType: video.reportType,

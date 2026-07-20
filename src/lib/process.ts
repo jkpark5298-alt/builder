@@ -14,6 +14,8 @@ import {
 } from "./youtube";
 
 import { hasUsablePastedScript, normalizePastedText } from "./paste";
+import { reportThumbnailUrl } from "./input-mode";
+import type { YoutubeMeta } from "./youtube";
 
 export async function createManualOverviewJob(
   youtubeUrl: string,
@@ -33,6 +35,7 @@ export async function createManualOverviewJob(
 
   const record: VideoRecord = {
     ...job,
+    inputMode: "youtube",
     title: title === "불러오는 중…" ? `YouTube ${job.videoId}` : title,
     channel: channel || "알 수 없음",
     transcript: script,
@@ -62,6 +65,7 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   const now = new Date().toISOString();
   const record: VideoRecord = {
     id: uuid(),
+    inputMode: "youtube",
     youtubeUrl: normalizeUrl(videoId, youtubeUrl),
     videoId,
     title: "불러오는 중…",
@@ -89,6 +93,84 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   return record;
 }
 
+/** Report 생성 — URL·자막 자동 수집 없이 스크립트·메타만으로 시작 */
+export async function createReportJob(opts: {
+  title: string;
+  channel?: string;
+  pastedScript: string;
+  creatorNotes?: string;
+}): Promise<VideoRecord> {
+  const script = normalizePastedText(opts.pastedScript);
+  if (!hasUsablePastedScript(script)) {
+    throw new Error("스크립트(본문)를 80자 이상 붙여넣어 주세요.");
+  }
+  const title = opts.title.trim();
+  if (title.length < 2) {
+    throw new Error("제목을 2자 이상 입력해 주세요.");
+  }
+
+  const id = uuid();
+  const now = new Date().toISOString();
+  const channel = opts.channel?.trim() || "직접 입력";
+  const description = opts.creatorNotes?.trim() ?? "";
+  const chapters = description
+    ? parseChaptersFromDescription(description)
+    : [];
+
+  const record: VideoRecord = {
+    id,
+    inputMode: "report",
+    youtubeUrl: "",
+    videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
+    title,
+    channel,
+    thumbnailUrl: reportThumbnailUrl(),
+    description,
+    chapters,
+    transcript: script,
+    transcriptSource: "pasted",
+    scriptNotice: `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`,
+    overview: "",
+    summarySource: "none",
+    summaryBullets: [],
+    items: [],
+    factChecks: [],
+    reportType: "C",
+    report: null,
+    infographic: null,
+    status: "queued",
+    tags: ["report", channel, "has-script"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  await upsertVideo(record);
+  return record;
+}
+
+function buildReportMeta(
+  record: VideoRecord,
+  creatorNotes?: string
+): YoutubeMeta {
+  let description = record.description ?? "";
+  let chapters = record.chapters ?? [];
+
+  if (creatorNotes && creatorNotes.length > 20) {
+    const noteChapters = parseChaptersFromDescription(creatorNotes);
+    description =
+      creatorNotes.length >= description.length
+        ? creatorNotes
+        : [description, creatorNotes].filter(Boolean).join("\n\n");
+    if (noteChapters.length) chapters = noteChapters;
+  }
+
+  return {
+    title: record.title,
+    channel: record.channel,
+    description,
+    chapters,
+  };
+}
+
 /** 백그라운드 파이프라인 (요약·팩트체크) */
 export async function runVideoPipeline(
   recordId: string,
@@ -104,6 +186,8 @@ export async function runVideoPipeline(
     ? normalizePastedText(pastedScript!)
     : undefined;
 
+  const isReport = record.inputMode === "report";
+
   try {
     record = {
       ...record,
@@ -112,38 +196,54 @@ export async function runVideoPipeline(
     };
     await upsertVideo(record);
 
-    let meta = script
-      ? await fetchYoutubeMetaLite(record.youtubeUrl, record.videoId)
-      : await fetchYoutubeMeta(record.youtubeUrl, record.videoId);
-
-    if (creatorNotes && creatorNotes.length > 20) {
-      const noteChapters = parseChaptersFromDescription(creatorNotes);
-      meta = {
-        ...meta,
-        description:
-          creatorNotes.length >= (meta.description?.length ?? 0)
-            ? creatorNotes
-            : [meta.description, creatorNotes].filter(Boolean).join("\n\n"),
-        chapters: noteChapters.length ? noteChapters : meta.chapters,
-      };
-    }
-
+    let meta: YoutubeMeta;
     let text = "";
     let source: VideoRecord["transcriptSource"] = "none";
     let notice: string | undefined;
 
-    if (script) {
-      text = script;
+    if (isReport) {
+      meta = buildReportMeta(record, creatorNotes);
+      const body =
+        script ||
+        (hasUsablePastedScript(record.transcript)
+          ? normalizePastedText(record.transcript)
+          : "");
+      if (!hasUsablePastedScript(body)) {
+        throw new Error("Report 생성에는 스크립트(본문)가 필요합니다.");
+      }
+      text = body;
       source = "pasted";
-      notice =
-        script.length > 48000
-          ? `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 구간으로 나눠 요약합니다.`
-          : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`;
+      notice = `붙여넣은 스크립트 전체(${body.length.toLocaleString()}자)를 기준으로 요약합니다.`;
     } else {
-      const fetched = await fetchTranscript(record.videoId, meta);
-      text = fetched.text;
-      source = fetched.source;
-      notice = fetched.notice;
+      meta = script
+        ? await fetchYoutubeMetaLite(record.youtubeUrl, record.videoId)
+        : await fetchYoutubeMeta(record.youtubeUrl, record.videoId);
+
+      if (creatorNotes && creatorNotes.length > 20) {
+        const noteChapters = parseChaptersFromDescription(creatorNotes);
+        meta = {
+          ...meta,
+          description:
+            creatorNotes.length >= (meta.description?.length ?? 0)
+              ? creatorNotes
+              : [meta.description, creatorNotes].filter(Boolean).join("\n\n"),
+          chapters: noteChapters.length ? noteChapters : meta.chapters,
+        };
+      }
+
+      if (script) {
+        text = script;
+        source = "pasted";
+        notice =
+          script.length > 48000
+            ? `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 구간으로 나눠 요약합니다.`
+            : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`;
+      } else {
+        const fetched = await fetchTranscript(record.videoId, meta);
+        text = fetched.text;
+        source = fetched.source;
+        notice = fetched.notice;
+      }
     }
 
     record = {
@@ -155,14 +255,16 @@ export async function runVideoPipeline(
       transcript: text,
       transcriptSource: source,
       scriptNotice: notice,
-      tags: [
-        meta.channel,
-        "youtube",
-        ...(meta.chapters.length ? ["chapters"] : []),
-        ...(source === "none" || source === "creator_meta"
-          ? ["no-script"]
-          : ["has-script"]),
-      ].filter(Boolean),
+      tags: Array.from(
+        new Set([
+          ...(isReport ? ["report"] : ["youtube"]),
+          meta.channel,
+          ...(meta.chapters.length ? ["chapters"] : []),
+          ...(source === "none" || source === "creator_meta"
+            ? ["no-script"]
+            : ["has-script"]),
+        ])
+      ).filter(Boolean),
       updatedAt: new Date().toISOString(),
     };
     await upsertVideo(record);
@@ -240,8 +342,9 @@ export async function runVideoPipeline(
         factChecks: record.factChecks?.length ? record.factChecks : [],
         status: "awaiting_factcheck",
         errorMessage: undefined,
-        scriptNotice:
-          `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
+        scriptNotice: isReport
+          ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`
+          : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
         updatedAt: new Date().toISOString(),
       };
       await upsertVideo(record);
@@ -265,6 +368,16 @@ export async function createAndProcessVideo(
 ): Promise<VideoRecord> {
   const job = await createVideoJob(youtubeUrl);
   return runVideoPipeline(job.id, creatorNotes, pastedScript);
+}
+
+export async function createAndProcessReport(opts: {
+  title: string;
+  channel?: string;
+  pastedScript: string;
+  creatorNotes?: string;
+}): Promise<VideoRecord> {
+  const job = await createReportJob(opts);
+  return runVideoPipeline(job.id, opts.creatorNotes, opts.pastedScript);
 }
 
 /** 3) 요약+팩트체크 → 유형별 보고서 + 인포그래픽 */

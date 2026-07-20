@@ -54,7 +54,7 @@ export default function RootLayout({
                   href="/#paste"
                   className="rounded-xl bg-ink-900 text-white px-3 py-2.5 min-h-11 inline-flex items-center hover:bg-accent transition-colors text-sm font-medium"
                 >
-                  링크 추가
+                  새로 만들기
                 </a>
               </nav>
             </div>

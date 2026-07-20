@@ -53,6 +53,9 @@ function ensureLocalDb() {
 
 function normalizeVideo(raw: VideoRecord): VideoRecord {
   const source = String(raw.transcriptSource ?? "none");
+  const inputModeRaw = String(raw.inputMode ?? "youtube");
+  const inputMode: VideoRecord["inputMode"] =
+    inputModeRaw === "report" ? "report" : "youtube";
   const allowed = new Set([
     "youtube",
     "youtube_auto",
@@ -76,6 +79,7 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
   }
   return {
     ...raw,
+    inputMode,
     description: raw.description ?? "",
     chapters: raw.chapters ?? [],
     summaryBullets: raw.summaryBullets ?? [],

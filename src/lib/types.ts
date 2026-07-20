@@ -3,6 +3,9 @@ export type ClaimType = "claim" | "opinion" | "info";
 /** H=역사, S=주식, C=교양, P=정치/시사 */
 export type ReportType = "H" | "S" | "C" | "P";
 
+/** youtube: URL·자막 자동 / report: 스크립트 직접 입력 */
+export type InputMode = "youtube" | "report";
+
 export type FactCheckVerdict =
   | "true"
   | "mostly_true"
@@ -163,6 +166,8 @@ export interface YoutubeChapter {
 
 export interface VideoRecord {
   id: string;
+  /** youtube: URL·자막 자동 수집 / report: 스크립트·메타 직접 입력 */
+  inputMode?: InputMode;
   youtubeUrl: string;
   videoId: string;
   title: string;

@@ -22,12 +22,48 @@ export function cleanYoutubeTranscriptAi(raw: string): string {
     .replace(/^Other available languages:.*$/gim, "")
     .replace(/^To request a specific language:.*$/gim, "")
     .replace(/^Interactive version.*$/gim, "")
-    .replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, "\n$1 ")
+    .replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, " ")
+    .replace(/^\d{1,2}:\d{2}(?::\d{2})?\s+/gm, "")
     .replace(/[♪♫]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ");
 
+  t = dedupeTranscriptRepeats(t);
   return normalizePastedText(t);
+}
+
+/** youtube-transcript.ai: 세그먼트 겹침으로 같은 구절이 2~3회 연속 반복되는 경우 제거 */
+export function dedupeTranscriptRepeats(text: string): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 6) return text.trim();
+
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let matched = false;
+    const maxLen = Math.min(18, Math.floor((words.length - i) / 2));
+    for (let size = maxLen; size >= 3; size--) {
+      const chunk = words.slice(i, i + size);
+      const chunkKey = chunk.join(" ");
+      let end = i + size;
+      while (end + size <= words.length) {
+        const nextKey = words.slice(end, end + size).join(" ");
+        if (nextKey !== chunkKey) break;
+        end += size;
+      }
+      if (end > i + size) {
+        out.push(...chunk);
+        i = end;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      out.push(words[i]);
+      i++;
+    }
+  }
+  return out.join(" ").replace(/\s+/g, " ").trim();
 }
 
 function looksLikeFailure(text: string, status: number): boolean {

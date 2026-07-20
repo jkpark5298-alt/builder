@@ -2,8 +2,10 @@ import fs from "fs";
 import path from "path";
 import { jsPDF } from "jspdf";
 import { resolveAnswerParts } from "./answer-parts";
-import { collectEntryImages } from "./fc-markers";
+import { collectFcMarkers } from "./fc-markers";
 import { normalizeImageUrls } from "./image-urls";
+import { readLocalMedia } from "./media-store";
+import { getNeonMedia } from "./neon-media";
 import { reportBodyPlain } from "./report";
 import { verdictBadge } from "./text-format";
 import type { VideoRecord } from "./types";
@@ -92,7 +94,46 @@ function isYoutubeThumb(url?: string | null): boolean {
 
 type PdfImage = { data: string; format: "JPEG" | "PNG" | "WEBP" };
 
-async function resolveImage(url: string): Promise<PdfImage | null> {
+type PdfBuildOpts = { origin?: string };
+
+function bufferToPdfImage(
+  buf: Buffer,
+  contentType: string
+): PdfImage | null {
+  if (buf.length < 32 || buf.length > 4_500_000) return null;
+  const ct = contentType.toLowerCase();
+  if (ct.includes("svg")) return null;
+  let format: PdfImage["format"] = "JPEG";
+  if (ct.includes("png")) format = "PNG";
+  else if (ct.includes("webp")) format = "WEBP";
+  const mime =
+    format === "PNG"
+      ? "image/png"
+      : format === "WEBP"
+        ? "image/webp"
+        : "image/jpeg";
+  return {
+    data: `data:${mime};base64,${buf.toString("base64")}`,
+    format,
+  };
+}
+
+async function resolveMediaKey(key: string): Promise<PdfImage | null> {
+  const local = readLocalMedia(key);
+  if (local) return bufferToPdfImage(local.buffer, local.contentType);
+  try {
+    const neon = await getNeonMedia(key);
+    if (neon) return bufferToPdfImage(neon.buffer, neon.contentType);
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function resolveImage(
+  url: string,
+  opts?: PdfBuildOpts
+): Promise<PdfImage | null> {
   if (!url?.trim() || isYoutubeThumb(url)) return null;
 
   if (url.startsWith("data:image/")) {
@@ -107,6 +148,16 @@ async function resolveImage(url: string): Promise<PdfImage | null> {
     return { data: url, format };
   }
 
+  const mediaMatch = url.match(/^\/api\/media\/(.+)$/);
+  if (mediaMatch) {
+    const fromStore = await resolveMediaKey(decodeURIComponent(mediaMatch[1]));
+    if (fromStore) return fromStore;
+    if (!opts?.origin) return null;
+    url = `${opts.origin}${url}`;
+  } else if (url.startsWith("/") && opts?.origin) {
+    url = `${opts.origin}${url}`;
+  }
+
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(12_000),
@@ -115,23 +166,26 @@ async function resolveImage(url: string): Promise<PdfImage | null> {
     if (!res.ok) return null;
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 32 || buf.length > 4_500_000) return null;
-    let format: PdfImage["format"] = "JPEG";
-    if (ct.includes("png") || url.toLowerCase().includes(".png")) format = "PNG";
-    else if (ct.includes("webp")) format = "WEBP";
-    const mime =
-      format === "PNG"
-        ? "image/png"
-        : format === "WEBP"
-          ? "image/webp"
-          : "image/jpeg";
-    return {
-      data: `data:${mime};base64,${buf.toString("base64")}`,
-      format,
-    };
+    return bufferToPdfImage(buf, ct || "image/jpeg");
   } catch {
     return null;
   }
+}
+
+function claimImagesForItem(video: VideoRecord, itemId?: string): string[] {
+  if (!itemId) return [];
+  const item = video.items.find((i) => i.id === itemId);
+  if (!item) return [];
+  return normalizeImageUrls(item.imageUrl, item.imageUrls).filter(
+    (u) => !isYoutubeThumb(u)
+  );
+}
+
+function fcExplanationText(explanation?: string | null): string {
+  const raw = explanation?.trim() ?? "";
+  if (!raw) return "";
+  if (/^다음 주장을/.test(raw) && /팩트체크/.test(raw)) return "";
+  return raw;
 }
 
 function imageNaturalSize(
@@ -152,7 +206,10 @@ function imageNaturalSize(
   return null;
 }
 
-export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
+export async function buildReportPdf(
+  video: VideoRecord,
+  opts?: PdfBuildOpts
+): Promise<Uint8Array> {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const hasKr = await ensureKoreanFonts(doc);
   const font = hasKr ? FONT_FAMILY : "helvetica";
@@ -187,7 +244,7 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
   };
 
   const drawImage = async (url: string, caption?: string) => {
-    const img = await resolveImage(url);
+    const img = await resolveImage(url, opts);
     if (!img) return;
     const natural = imageNaturalSize(img.data);
     const aspect = natural ? natural.w / Math.max(natural.h, 1) : 16 / 9;
@@ -265,8 +322,7 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
   writeWrapped("— 보고서 —", 13, 10);
   setFace("normal");
 
-  // 보고서 본문 (팩트체크 상세 텍스트는 부록으로)
-  let fcIndex = 0;
+  // 보고서 본문: 요약 서술만 (팩트체크·관련 이미지는 맨 뒤 부록)
   for (const sec of report.sections) {
     ensureSpace(40);
     setFace("bold");
@@ -275,109 +331,72 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
 
     const plain = reportBodyPlain(sec.body, sec.rich);
     if (plain) writeWrapped(plain, 10, 8);
-
-    const sectionImages = Array.from(
-      new Set(
-        [sec.imageUrl, ...(sec.images ?? [])].filter(
-          (u): u is string => Boolean(u) && !isYoutubeThumb(u)
-        )
-      )
-    );
-    for (const src of sectionImages) {
-      await drawImage(src);
-    }
-
-    // 본문: F 번호 + 관련 이미지만 (상세 텍스트는 부록)
-    for (const entry of sec.entries ?? []) {
-      fcIndex += 1;
-      const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
-      setFace("normal");
-      writeWrapped(`  [F${fcIndex}] ${entry.text}`, 9, 4);
-      const entryImgs = collectEntryImages(entry, fc).filter(
-        (u) => !sectionImages.includes(u)
-      );
-      for (const src of entryImgs) {
-        await drawImage(src);
-      }
-    }
     y += 8;
   }
 
-  // 보고서 완료 후 뒷쪽: 팩트 체크 내용
-  if (fcIndex > 0) {
+  const fcMarkers = collectFcMarkers(report);
+  if (fcMarkers.length > 0) {
     doc.addPage();
     y = 40;
     setFace("bold");
-    writeWrapped("팩트 체크 내용", 16, 4);
+    writeWrapped("부록: 팩트체크", 16, 4);
     setFace("normal");
     writeWrapped(
-      "보고서 본문의 F 번호에 대응하는 검증 상세입니다.",
+      "아래는 보고서 본문과 별도로 정리한 팩트체크 검증 내용입니다.",
       9,
       10
     );
 
-    let n = 0;
-    for (const sec of report.sections) {
-      for (const entry of sec.entries ?? []) {
-        n += 1;
-        const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
-        ensureSpace(50);
-        setFace("bold");
-        writeWrapped(`F${n}. ${entry.text}`, 11, 4);
-        setFace("normal");
+    for (const marker of fcMarkers) {
+      const { n, entry } = marker;
+      const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
+      ensureSpace(50);
+      setFace("bold");
+      writeWrapped(`F${n}. ${entry.text}`, 11, 4);
+      setFace("normal");
 
-        if (fc?.verdict) {
-          const badge = verdictBadge(fc.verdict);
-          writeWrapped(`  판정: ${badge.mark} ${badge.label}`, 10, 4);
-        }
-
-        const parts = resolveAnswerParts({
-          explanation: fc?.checkGuide || entry.html || "",
-          answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
-          answerImageUrls: entry.answerImageUrls ?? fc?.answerImageUrls,
-          answerParts: entry.answerParts ?? fc?.answerParts,
-        });
-
-        if (parts.length) {
-          for (const part of parts) {
-            setFace("normal");
-            if (part.text.trim()) {
-              writeWrapped(`  ${part.number}. ${part.text}`, 9, 4);
-            } else {
-              writeWrapped(`  ${part.number}.`, 9, 2);
-            }
-            for (const src of (part.imageUrls ?? []).filter(
-              (u) => !isYoutubeThumb(u)
-            )) {
-              await drawImage(src, `${part.number}번 이미지`);
-            }
-          }
-        } else {
-          if (fc?.checkGuide) {
-            setFace("normal");
-            writeWrapped(`  ${fc.checkGuide}`, 9, 6);
-          } else if (entry.html) {
-            setFace("normal");
-            writeWrapped(`  ${reportBodyPlain(entry.html, true)}`, 9, 6);
-          }
-
-          const entryImages = normalizeImageUrls(
-            entry.answerImageUrl,
-            entry.answerImageUrls
-          ).filter((u) => !isYoutubeThumb(u));
-          const fcImages = normalizeImageUrls(
-            fc?.answerImageUrl,
-            fc?.answerImageUrls
-          ).filter((u) => !isYoutubeThumb(u));
-          const allEntryImgs = Array.from(
-            new Set([...entryImages, ...fcImages])
-          );
-          for (const src of allEntryImgs) {
-            await drawImage(src, "관련 이미지");
-          }
-        }
-        y += 6;
+      if (fc?.verdict) {
+        const badge = verdictBadge(fc.verdict);
+        writeWrapped(`  판정: ${badge.mark} ${badge.label}`, 10, 4);
       }
+
+      for (const src of claimImagesForItem(video, entry.itemId)) {
+        await drawImage(src, "검증 대상 이미지");
+      }
+
+      const explanation = fcExplanationText(fc?.explanation);
+      const parts = resolveAnswerParts({
+        explanation,
+        answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
+        answerImageUrls: entry.answerImageUrls ?? fc?.answerImageUrls,
+        answerParts: entry.answerParts ?? fc?.answerParts,
+      });
+
+      if (parts.length) {
+        for (const part of parts) {
+          setFace("normal");
+          if (part.text.trim()) {
+            writeWrapped(`  ${part.number}. ${part.text}`, 9, 4);
+          } else if (parts.length > 1) {
+            writeWrapped(`  ${part.number}.`, 9, 2);
+          }
+          for (const src of (part.imageUrls ?? []).filter(
+            (u) => !isYoutubeThumb(u)
+          )) {
+            await drawImage(src, `${part.number}번 이미지`);
+          }
+        }
+      } else if (explanation) {
+        writeWrapped(`  ${explanation}`, 9, 6);
+        const answerImgs = normalizeImageUrls(
+          entry.answerImageUrl ?? fc?.answerImageUrl,
+          entry.answerImageUrls ?? fc?.answerImageUrls
+        ).filter((u) => !isYoutubeThumb(u));
+        for (const src of answerImgs) {
+          await drawImage(src, "관련 이미지");
+        }
+      }
+      y += 6;
     }
   }
 

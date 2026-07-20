@@ -8,7 +8,7 @@ export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const video = await getVideo(id);
   if (!video) {
@@ -24,7 +24,8 @@ export async function GET(_req: Request, ctx: Ctx) {
     );
   }
 
-  const bytes = await buildReportPdf(video);
+  const origin = new URL(req.url).origin;
+  const bytes = await buildReportPdf(video, { origin });
   const filename = `factcheck-${video.videoId}.pdf`;
   return new NextResponse(Buffer.from(bytes), {
     headers: {

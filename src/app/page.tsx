@@ -1,4 +1,4 @@
-import { UrlPasteForm } from "@/components/UrlPasteForm";
+import { HomeInputTabs } from "@/components/HomeInputTabs";
 import { SearchBar } from "@/components/SearchBar";
 import { VideoListCard } from "@/components/VideoListCard";
 import {
@@ -53,7 +53,7 @@ export default async function HomePage({
 
   return (
     <div className="space-y-10">
-      <UrlPasteForm />
+      <HomeInputTabs />
 
       <section className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">

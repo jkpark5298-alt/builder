@@ -13,6 +13,7 @@ import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
+import { isYoutubeInput } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
 
@@ -34,6 +35,8 @@ export default async function VideoDetailPage({
   const progress = factCheckProgress(video);
   const stage = libraryStage(video);
   const stageLabel = libraryCardLabel(video);
+  const isYoutube = isYoutubeInput(video);
+  const summaryStepLabel = isYoutube ? "유튜브 내용 요약" : "내용 요약";
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-24 sm:pb-8">
@@ -44,7 +47,7 @@ export default async function VideoDetailPage({
       />
       <ol className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs sm:text-sm">
         {[
-          { n: "1", t: "유튜브 내용 요약", on: true },
+          { n: "1", t: summaryStepLabel, on: true },
           {
             n: "2",
             t: "팩트체크 정리",
@@ -83,16 +86,23 @@ export default async function VideoDetailPage({
             <h1 className="font-display text-2xl sm:text-3xl text-ink-900 mt-1 leading-tight break-words">
               {video.title}
             </h1>
-            <a
-              href={video.youtubeUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm text-ink-500 hover:text-accent mt-2 inline-block break-all"
-            >
-              {video.youtubeUrl}
-            </a>
+            {isYoutube ? (
+              <a
+                href={video.youtubeUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-ink-500 hover:text-accent mt-2 inline-block break-all"
+              >
+                {video.youtubeUrl}
+              </a>
+            ) : (
+              <p className="text-sm text-ink-400 mt-2">Report 생성 · 직접 입력</p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-ink-500">
+            <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
+              {isYoutube ? "유튜브" : "Report"}
+            </span>
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {REPORT_TYPE_LABELS[video.reportType]}
             </span>
@@ -134,7 +144,8 @@ export default async function VideoDetailPage({
             </div>
           )}
           {(video.transcriptSource === "creator_meta" ||
-            video.transcriptSource === "none") && (
+            video.transcriptSource === "none") &&
+            isYoutube && (
             <PasteScriptPanel
               videoId={video.id}
               youtubeUrl={video.youtubeUrl}
@@ -151,7 +162,7 @@ export default async function VideoDetailPage({
               href="#general-summary"
               className="flex sm:hidden items-center justify-center min-h-12 rounded-xl bg-accent text-white font-medium"
             >
-              1. 유튜브 내용 요약
+              1. {summaryStepLabel}
             </a>
           )}
           {ready && (
@@ -172,13 +183,14 @@ export default async function VideoDetailPage({
       >
         <div className="bg-accent px-4 sm:px-5 py-3.5">
           <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
-            1. 유튜브 내용 요약
+            1. {summaryStepLabel}
           </h2>
         </div>
         <div className="p-4 sm:p-5 space-y-3">
           <OverviewSummaryPanel video={video} />
           {(video.transcriptSource === "creator_meta" ||
-            video.transcriptSource === "none") && (
+            video.transcriptSource === "none") &&
+            isYoutube && (
             <PasteScriptPanel
               videoId={video.id}
               youtubeUrl={video.youtubeUrl}

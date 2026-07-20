@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
+import { isReportInput } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { ReportActions } from "@/components/ReportActions";
 import { formatDistanceToNow } from "date-fns";
@@ -75,6 +76,11 @@ export function VideoListCard({
             >
               {libraryCardLabel(video)}
             </span>
+            {isReportInput(video) && (
+              <span className="text-xs px-2 py-0.5 rounded-md bg-ink-900/90 text-white">
+                Report
+              </span>
+            )}
             <span className="text-xs text-ink-400">
               {formatDistanceToNow(new Date(video.updatedAt), {
                 addSuffix: true,

@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 import {
+  createAndProcessReport,
   createManualOverviewJob,
   createVideoJob,
   runVideoPipeline,
@@ -33,12 +34,51 @@ export async function POST(req: Request) {
   }
   try {
     const body = (await req.json()) as {
+      /** youtube (기본) | report — Report 생성은 URL·자막 자동 수집 없음 */
+      mode?: "youtube" | "report";
       youtubeUrl?: string;
+      title?: string;
+      channel?: string;
       creatorNotes?: string;
       pastedScript?: string;
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
     };
+
+    if (body.mode === "report") {
+      const title = body.title?.trim();
+      const pastedScript = hasUsablePastedScript(body.pastedScript)
+        ? normalizePastedText(body.pastedScript!)
+        : undefined;
+      if (!title) {
+        return NextResponse.json(
+          { error: "제목을 입력해 주세요." },
+          { status: 400 }
+        );
+      }
+      if (!pastedScript) {
+        return NextResponse.json(
+          {
+            error:
+              "스크립트(본문)를 80자 이상 붙여넣어 주세요.",
+          },
+          { status: 400 }
+        );
+      }
+      const video = await createAndProcessReport({
+        title,
+        channel: body.channel?.trim(),
+        pastedScript,
+        creatorNotes: body.creatorNotes?.trim(),
+      });
+      return NextResponse.json({
+        video,
+        processing: false,
+        storage: storageMode(),
+        scriptNotice: "붙여넣은 스크립트를 기준으로 요약합니다.",
+      });
+    }
+
     const youtubeUrl = body.youtubeUrl?.trim();
     if (!youtubeUrl) {
       return NextResponse.json(
