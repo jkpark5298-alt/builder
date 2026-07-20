@@ -364,7 +364,7 @@ export async function buildReportPdf(
         await drawImage(src, "검증 대상 이미지");
       }
 
-      const explanation = fcExplanationText(fc?.explanation);
+      const explanation = fcExplanationText(fc?.checkGuide);
       const parts = resolveAnswerParts({
         explanation,
         answerImageUrl: entry.answerImageUrl ?? fc?.answerImageUrl,
