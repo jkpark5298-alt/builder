@@ -395,6 +395,17 @@ export function EditableReportPanel({
           </p>
         )}
 
+        {/* 인쇄·PDF용 보고서 표지 메타 */}
+        <div className="print-only space-y-1 mb-6 pb-4 border-b border-ink-200">
+          <h1 className="font-display text-xl text-ink-900">
+            유튜브 요약 · 팩트체크 보고서
+          </h1>
+          <p className="text-sm">제목 · {draft.meta.title}</p>
+          <p className="text-sm">채널 · {draft.meta.channel}</p>
+          <p className="text-sm break-all">링크 · {draft.meta.url}</p>
+          <p className="text-sm">작성일 · {draft.meta.writtenAt}</p>
+        </div>
+
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
             제목·본문 수정, 섹션 삭제/추가, 팩트체크 연결 제거 후 「저장」을 누르세요.
@@ -402,7 +413,7 @@ export function EditableReportPanel({
           </p>
         )}
 
-        <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1">
+        <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1 print:hidden">
           <p>
             <span className="text-ink-500">영상 제목</span> · {draft.meta.title}
           </p>
@@ -870,11 +881,14 @@ function FactCheckAppendix({
   return (
     <section
       id="fc-appendix"
-      className="hidden print:block mt-8 break-before-page rounded-none border-0 bg-white p-0 space-y-5"
+      className="hidden print:block rounded-none border-0 bg-white p-0 space-y-5"
     >
-      <h2 className="font-display text-xl text-ink-900 border-b border-ink-200 pb-2">
+      <h2 className="font-display text-xl text-ink-900 border-b-2 border-ink-900 pb-2 mb-4">
         팩트 체크 내용
       </h2>
+      <p className="text-sm text-ink-500 -mt-2 mb-4">
+        보고서 본문의 F 번호에 대응하는 검증 상세입니다.
+      </p>
       {markers.map((m) => {
         const fc = m.entry.itemId ? fcByItem.get(m.entry.itemId) : undefined;
         const verdict = (fc?.verdict ?? "pending") as FactCheckVerdict;

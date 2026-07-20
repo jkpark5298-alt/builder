@@ -5,6 +5,7 @@ import { resolveAnswerParts } from "./answer-parts";
 import { collectEntryImages } from "./fc-markers";
 import { normalizeImageUrls } from "./image-urls";
 import { reportBodyPlain } from "./report";
+import { verdictBadge } from "./text-format";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 
@@ -248,9 +249,9 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     2
   );
   writeWrapped(
-    `보고서 유형: ${REPORT_TYPE_LABELS[video.reportType]} (${video.reportType})`,
+    `보고서 유형: ${REPORT_TYPE_LABELS[video.reportType]}`,
     11,
-    12
+    8
   );
 
   if (!report) {
@@ -260,7 +261,11 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     return new Uint8Array(doc.output("arraybuffer"));
   }
 
-  // 저장된 보고서(수정본) 기준으로 섹션·이미지 전부 출력 (팩트체크 상세는 부록)
+  setFace("bold");
+  writeWrapped("— 보고서 —", 13, 10);
+  setFace("normal");
+
+  // 보고서 본문 (팩트체크 상세 텍스트는 부록으로)
   let fcIndex = 0;
   for (const sec of report.sections) {
     ensureSpace(40);
@@ -282,7 +287,7 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
       await drawImage(src);
     }
 
-    // 본문: F 번호 + 팩트체크 이미지(텍스트 제외) — 상세는 부록
+    // 본문: F 번호 + 관련 이미지만 (상세 텍스트는 부록)
     for (const entry of sec.entries ?? []) {
       fcIndex += 1;
       const fc = report.factChecks.find((f) => f.itemId === entry.itemId);
@@ -298,13 +303,18 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
     y += 8;
   }
 
-  // 부록: 팩트 체크 내용
+  // 보고서 완료 후 뒷쪽: 팩트 체크 내용
   if (fcIndex > 0) {
     doc.addPage();
     y = 40;
     setFace("bold");
-    writeWrapped("팩트 체크 내용", 16, 10);
+    writeWrapped("팩트 체크 내용", 16, 4);
     setFace("normal");
+    writeWrapped(
+      "보고서 본문의 F 번호에 대응하는 검증 상세입니다.",
+      9,
+      10
+    );
 
     let n = 0;
     for (const sec of report.sections) {
@@ -316,11 +326,9 @@ export async function buildReportPdf(video: VideoRecord): Promise<Uint8Array> {
         writeWrapped(`F${n}. ${entry.text}`, 11, 4);
         setFace("normal");
 
-        if (fc?.verdict === "false" || fc?.verdict === "mostly_false") {
-          setFace("bold");
-          writeWrapped("  FACT CHECK ✗", 10, 2);
-        } else if (fc?.verdict && fc.verdict !== "pending") {
-          writeWrapped(`  판정: ${fc.verdict}`, 9, 2);
+        if (fc?.verdict) {
+          const badge = verdictBadge(fc.verdict);
+          writeWrapped(`  판정: ${badge.mark} ${badge.label}`, 10, 4);
         }
 
         const parts = resolveAnswerParts({

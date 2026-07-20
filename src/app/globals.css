@@ -109,7 +109,7 @@ h3,
   vertical-align: middle;
 }
 
-/* 보고서 인쇄: 본문 + F 마커 + 부록만 */
+/* 보고서 인쇄: 본문(보고서) + 뒷면 부록(팩트 체크 내용)만 */
 @media print {
   body {
     background: white !important;
@@ -126,16 +126,22 @@ h3,
     border: none !important;
     box-shadow: none !important;
     background: white !important;
+    padding: 0 !important;
   }
 
   #report img,
   #fc-appendix img {
     max-width: 100%;
     break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   #fc-appendix {
     display: block !important;
+    break-before: page;
+    page-break-before: always;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
   }
 
   .fc-badge {
@@ -144,7 +150,15 @@ h3,
     print-color-adjust: exact;
   }
 
+  .print-only {
+    display: block !important;
+  }
+
   a[href]::after {
     content: none !important;
   }
+}
+
+.print-only {
+  display: none;
 }
