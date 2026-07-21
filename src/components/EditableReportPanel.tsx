@@ -59,7 +59,7 @@ const HIGHLIGHT_COLORS = [
   { id: "green", label: "녹색", bg: "#bbf7d0" },
 ] as const;
 
-const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28] as const;
+const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28] as const;
 
 const HISTORY_LIMIT = 40;
 const HISTORY_DEBOUNCE_MS = 450;
