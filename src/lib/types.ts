@@ -85,6 +85,8 @@ export interface ReportEntry {
 }
 
 export interface ReportSectionBlock {
+  /** 클라이언트 편집용 안정 id (저장·재렌더 시 React key) */
+  sectionId?: string;
   heading: string;
   /** plain 또는 HTML */
   body: string;

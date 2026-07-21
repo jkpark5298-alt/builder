@@ -18,10 +18,12 @@ import {
   PenLine,
   Pencil,
   Plus,
+  Redo2,
   Save,
   Trash2,
   Type,
   Underline,
+  Undo2,
   X,
 } from "lucide-react";
 import type {
@@ -42,15 +44,58 @@ import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
 
-const COLORS = [
-  { id: "yellow", label: "노랑", color: "#b45309", bg: "#fef08a" },
-  { id: "blue", label: "파랑", color: "#1d4ed8", bg: "#bfdbfe" },
-  { id: "red", label: "빨강", color: "#b91c1c", bg: "#fecaca" },
-  { id: "green", label: "녹색", color: "#15803d", bg: "#bbf7d0" },
+const TEXT_COLORS = [
+  { id: "black", label: "검정", color: "#1a2430" },
+  { id: "yellow", label: "노랑", color: "#b45309" },
+  { id: "blue", label: "파랑", color: "#1d4ed8" },
+  { id: "red", label: "빨강", color: "#b91c1c" },
+  { id: "green", label: "녹색", color: "#15803d" },
 ] as const;
+
+const HIGHLIGHT_COLORS = [
+  { id: "yellow", label: "노랑", bg: "#fef08a" },
+  { id: "blue", label: "파랑", bg: "#bfdbfe" },
+  { id: "red", label: "빨강", bg: "#fecaca" },
+  { id: "green", label: "녹색", bg: "#bbf7d0" },
+] as const;
+
+const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28] as const;
+
+const HISTORY_LIMIT = 40;
+const HISTORY_DEBOUNCE_MS = 450;
+
+function cloneReport(report: TypedReport): TypedReport {
+  return JSON.parse(JSON.stringify(report)) as TypedReport;
+}
 
 function sectionSnapshot(sec: ReportSectionBlock): string {
   return JSON.stringify(sec);
+}
+
+function newSectionId(): string {
+  return `sec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sectionEditKey(sec: ReportSectionBlock, idx: number): string {
+  return sec.sectionId ?? `legacy-${idx}`;
+}
+
+function applySelectionFontSize(px: number) {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed) return;
+  const span = document.createElement("span");
+  span.style.fontSize = `${px}px`;
+  try {
+    range.surroundContents(span);
+  } catch {
+    const contents = range.extractContents();
+    span.appendChild(contents);
+    range.insertNode(span);
+  }
+  const active = document.activeElement as HTMLElement | null;
+  active?.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 export function EditableReportPanel({
@@ -74,18 +119,166 @@ export function EditableReportPanel({
     Record<number, boolean>
   >({});
   const wasEditingRef = useRef(false);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const historyPastRef = useRef<TypedReport[]>([]);
+  const historyFutureRef = useRef<TypedReport[]>([]);
+  const pendingHistoryBaseRef = useRef<TypedReport | null>(null);
+  const historyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [historyUi, setHistoryUi] = useState({ canUndo: false, canRedo: false });
+
+  const syncHistoryUi = useCallback(() => {
+    setHistoryUi({
+      canUndo: historyPastRef.current.length > 0,
+      canRedo: historyFutureRef.current.length > 0,
+    });
+  }, []);
+
+  const resetHistory = useCallback(() => {
+    historyPastRef.current = [];
+    historyFutureRef.current = [];
+    pendingHistoryBaseRef.current = null;
+    if (historyDebounceRef.current) {
+      clearTimeout(historyDebounceRef.current);
+      historyDebounceRef.current = null;
+    }
+    syncHistoryUi();
+  }, [syncHistoryUi]);
+
+  const pushHistorySnapshot = useCallback(
+    (snapshot: TypedReport) => {
+      historyPastRef.current = [
+        ...historyPastRef.current,
+        cloneReport(snapshot),
+      ];
+      if (historyPastRef.current.length > HISTORY_LIMIT) {
+        historyPastRef.current.shift();
+      }
+      historyFutureRef.current = [];
+      syncHistoryUi();
+    },
+    [syncHistoryUi]
+  );
+
+  const flushDebouncedHistory = useCallback(() => {
+    if (historyDebounceRef.current) {
+      clearTimeout(historyDebounceRef.current);
+      historyDebounceRef.current = null;
+    }
+    if (pendingHistoryBaseRef.current) {
+      pushHistorySnapshot(pendingHistoryBaseRef.current);
+      pendingHistoryBaseRef.current = null;
+    }
+  }, [pushHistorySnapshot]);
+
+  const scheduleDebouncedHistory = useCallback(
+    (beforeChange: TypedReport) => {
+      if (!pendingHistoryBaseRef.current) {
+        pendingHistoryBaseRef.current = cloneReport(beforeChange);
+      }
+      if (historyDebounceRef.current) {
+        clearTimeout(historyDebounceRef.current);
+      }
+      historyDebounceRef.current = setTimeout(() => {
+        historyDebounceRef.current = null;
+        if (pendingHistoryBaseRef.current) {
+          pushHistorySnapshot(pendingHistoryBaseRef.current);
+          pendingHistoryBaseRef.current = null;
+        }
+      }, HISTORY_DEBOUNCE_MS);
+    },
+    [pushHistorySnapshot]
+  );
+
+  const updateDraft = useCallback(
+    (
+      updater: (prev: TypedReport) => TypedReport,
+      opts?: { history?: "immediate" | "debounced" | "none" }
+    ) => {
+      setDraft((prev) => {
+        if (!prev) return prev;
+        const mode = opts?.history ?? "immediate";
+        if (mode === "immediate") {
+          pushHistorySnapshot(prev);
+        } else if (mode === "debounced") {
+          scheduleDebouncedHistory(prev);
+        }
+        return updater(prev);
+      });
+    },
+    [pushHistorySnapshot, scheduleDebouncedHistory]
+  );
+
+  const undoEdit = useCallback(() => {
+    flushDebouncedHistory();
+    const past = historyPastRef.current;
+    const current = draftRef.current;
+    if (!past.length || !current) return;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const previous = past[past.length - 1]!;
+    historyPastRef.current = past.slice(0, -1);
+    historyFutureRef.current = [
+      cloneReport(current),
+      ...historyFutureRef.current,
+    ];
+    setDraft(cloneReport(previous));
+    syncHistoryUi();
+  }, [flushDebouncedHistory, syncHistoryUi]);
+
+  const redoEdit = useCallback(() => {
+    flushDebouncedHistory();
+    const future = historyFutureRef.current;
+    const current = draftRef.current;
+    if (!future.length || !current) return;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    const next = future[0]!;
+    historyFutureRef.current = future.slice(1);
+    historyPastRef.current = [
+      ...historyPastRef.current,
+      cloneReport(current),
+    ];
+    setDraft(cloneReport(next));
+    syncHistoryUi();
+  }, [flushDebouncedHistory, syncHistoryUi]);
+
+  useEffect(() => {
+    return () => {
+      if (historyDebounceRef.current) {
+        clearTimeout(historyDebounceRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!editing) return;
+    function onKeyDown(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoEdit();
+      } else if (key === "y" || (key === "z" && e.shiftKey)) {
+        e.preventDefault();
+        redoEdit();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editing, undoEdit, redoEdit]);
 
   useEffect(() => {
     setDraft(report);
   }, [report]);
 
   useEffect(() => {
-    if (editing && !wasEditingRef.current && draft) {
-      setSavedSections(draft.sections.map(sectionSnapshot));
+    if (editing && !wasEditingRef.current && report) {
+      setSavedSections(report.sections.map(sectionSnapshot));
       setSectionSavedFlash({});
+      resetHistory();
     }
     wasEditingRef.current = editing;
-  }, [editing, draft]);
+  }, [editing, report, resetHistory]);
 
   useEffect(() => {
     function enterEdit() {
@@ -187,6 +380,7 @@ export function EditableReportPanel({
 
   async function persistReport(opts?: { exit?: boolean; sectionIdx?: number }) {
     if (!draft) return;
+    flushDebouncedHistory();
     const sectionIdx = opts?.sectionIdx;
     if (sectionIdx !== undefined) {
       setSavingSectionIdx(sectionIdx);
@@ -228,6 +422,7 @@ export function EditableReportPanel({
         setEditing(false);
         setOpenFcKey(null);
         setActiveSectionIdx(0);
+        resetHistory();
       }
       router.refresh();
     } catch (e) {
@@ -250,46 +445,56 @@ export function EditableReportPanel({
   }
 
   function cancelEdit() {
+    flushDebouncedHistory();
     setDraft(report);
     setEditing(false);
     setOpenFcKey(null);
     setActiveSectionIdx(0);
     setSavedSections([]);
     setSectionSavedFlash({});
+    resetHistory();
   }
 
-  function patchSection(idx: number, patch: Partial<ReportSectionBlock>) {
-    setDraft((prev) => {
-      if (!prev) return prev;
+  function patchSection(
+    idx: number,
+    patch: Partial<ReportSectionBlock>,
+    history: "immediate" | "debounced" | "none" = "immediate"
+  ) {
+    updateDraft((prev) => {
       const sections = [...prev.sections];
       sections[idx] = { ...sections[idx], ...patch };
       return { ...prev, sections };
-    });
+    }, { history });
   }
 
   function deleteSection(idx: number) {
     const heading = draft?.sections[idx]?.heading || "이 섹션";
     if (!confirm(`「${heading}」을(를) 삭제할까요?`)) return;
-    setDraft((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        sections: prev.sections.filter((_, i) => i !== idx),
-      };
-    });
+    updateDraft((prev) => ({
+      ...prev,
+      sections: prev.sections.filter((_, i) => i !== idx),
+    }));
     setSavedSections((prev) => prev.filter((_, i) => i !== idx));
   }
 
   function addSection() {
-    setDraft((prev) => {
-      if (!prev) return prev;
+    const sectionId = newSectionId();
+    updateDraft((prev) => {
+      const newIdx = prev.sections.length;
+      queueMicrotask(() => {
+        setActiveSectionIdx(newIdx);
+        const el = document.getElementById(`sec-body-${sectionId}`);
+        el?.focus();
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
       return {
         ...prev,
         sections: [
           ...prev.sections,
           {
+            sectionId,
             heading: "새 소주제",
-            body: "<p></p>",
+            body: "<p><br></p>",
             rich: true,
             entries: [],
           },
@@ -300,8 +505,7 @@ export function EditableReportPanel({
 
   function deleteEntry(sectionIdx: number, entryIdx: number) {
     if (!confirm("이 팩트체크 연결을 보고서에서 제거할까요?")) return;
-    setDraft((prev) => {
-      if (!prev) return prev;
+    updateDraft((prev) => {
       const sections = [...prev.sections];
       const sec = sections[sectionIdx];
       const entries = (sec.entries ?? []).filter((_, i) => i !== entryIdx);
@@ -321,8 +525,7 @@ export function EditableReportPanel({
         dataUrls,
         `videos/${video.id}/report`
       );
-      setDraft((prev) => {
-        if (!prev) return prev;
+      updateDraft((prev) => {
         const sections = [...prev.sections];
         const sec = sections[idx];
         const images = [...(sec.images ?? []), ...uploaded];
@@ -368,8 +571,7 @@ export function EditableReportPanel({
         [dataUrl],
         `videos/${video.id}/report`
       );
-      setDraft((prev) => {
-        if (!prev) return prev;
+      updateDraft((prev) => {
         const sections = [...prev.sections];
         const sec = sections[idx];
         const images = [...(sec.images ?? []), url];
@@ -389,8 +591,7 @@ export function EditableReportPanel({
         [dataUrl],
         `videos/${video.id}/report`
       );
-      setDraft((prev) => {
-        if (!prev) return prev;
+      updateDraft((prev) => {
         const sections = [...prev.sections];
         const images = [...(sections[idx].images ?? []), url];
         sections[idx] = { ...sections[idx], images };
@@ -484,8 +685,7 @@ export function EditableReportPanel({
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
             단락마다 「이 단락 저장」으로 저장하거나, 상단 「전체 저장 후 닫기」로
-            편집을 마칠 수 있습니다. 서식·이미지 도구는 현재 커서가 있는 단락에
-            적용됩니다.
+            편집을 마칠 수 있습니다. 되돌리기는 Ctrl+Z · 다시 실행은 Ctrl+Y 입니다.
           </p>
         )}
 
@@ -514,6 +714,11 @@ export function EditableReportPanel({
                 </span>
               </p>
               <FormatToolbar
+                canUndo={historyUi.canUndo}
+                canRedo={historyUi.canRedo}
+                onUndo={undoEdit}
+                onRedo={redoEdit}
+                onFontSize={applySelectionFontSize}
                 onBold={() => document.execCommand("bold")}
                 onUnderline={() => document.execCommand("underline")}
                 onColor={(c) => document.execCommand("foreColor", false, c)}
@@ -544,7 +749,7 @@ export function EditableReportPanel({
 
                 return (
                   <div
-                    key={`edit-${sec.heading}-${idx}`}
+                    key={sectionEditKey(sec, idx)}
                     className={`p-4 sm:p-5 space-y-3 transition-colors ${
                       activeSectionIdx === idx ? "bg-accent-muted/20" : ""
                     }`}
@@ -556,7 +761,11 @@ export function EditableReportPanel({
                       <input
                         value={sec.heading}
                         onChange={(e) =>
-                          patchSection(idx, { heading: e.target.value })
+                          patchSection(
+                            idx,
+                            { heading: e.target.value },
+                            "debounced"
+                          )
                         }
                         onFocus={() => setActiveSectionIdx(idx)}
                         className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
@@ -621,10 +830,15 @@ export function EditableReportPanel({
                     />
 
                     <RichBody
+                      id={sec.sectionId ? `sec-body-${sec.sectionId}` : undefined}
                       html={sec.body}
                       onFocus={() => setActiveSectionIdx(idx)}
                       onChange={(html) =>
-                        patchSection(idx, { body: html, rich: true })
+                        patchSection(
+                          idx,
+                          { body: html, rich: true },
+                          "debounced"
+                        )
                       }
                     />
 
@@ -1119,6 +1333,11 @@ function FactCheckAppendix({
 }
 
 function FormatToolbar({
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  onFontSize,
   onBold,
   onUnderline,
   onColor,
@@ -1128,6 +1347,11 @@ function FormatToolbar({
   onTextImage,
   onHandwriting,
 }: {
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  onFontSize: (px: number) => void;
   onBold: () => void;
   onUnderline: () => void;
   onColor: (c: string) => void;
@@ -1139,25 +1363,66 @@ function FormatToolbar({
 }) {
   return (
     <div className="flex flex-wrap gap-1.5 items-center rounded-xl border border-ink-200 bg-ink-50 p-2 print:hidden">
+      <ToolBtn
+        onClick={onUndo}
+        title="되돌리기 (Ctrl+Z)"
+        disabled={!canUndo}
+      >
+        <Undo2 className="h-4 w-4" />
+        <span className="text-xs">되돌리기</span>
+      </ToolBtn>
+      <ToolBtn
+        onClick={onRedo}
+        title="다시 실행 (Ctrl+Y)"
+        disabled={!canRedo}
+      >
+        <Redo2 className="h-4 w-4" />
+        <span className="text-xs">다시 실행</span>
+      </ToolBtn>
+      <span className="w-px h-6 bg-ink-200 mx-0.5" aria-hidden />
       <ToolBtn onClick={onBold} title="굵게">
         <Bold className="h-4 w-4" />
       </ToolBtn>
       <ToolBtn onClick={onUnderline} title="밑줄">
         <Underline className="h-4 w-4" />
       </ToolBtn>
+      <label className="inline-flex items-center gap-1 text-xs text-ink-500">
+        크기
+        <select
+          className="min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-xs text-ink-800"
+          defaultValue=""
+          onChange={(e) => {
+            const px = Number(e.target.value);
+            if (px) onFontSize(px);
+            e.currentTarget.value = "";
+          }}
+          title="글자 크기"
+        >
+          <option value="" disabled>
+            선택
+          </option>
+          {FONT_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size}px
+            </option>
+          ))}
+        </select>
+      </label>
       <span className="text-xs text-ink-400 px-1">글자</span>
-      {COLORS.map((c) => (
+      {TEXT_COLORS.map((c) => (
         <button
           key={c.id}
           type="button"
           title={c.label}
           onClick={() => onColor(c.color)}
-          className="h-8 w-8 rounded-lg border border-ink-200 shadow-sm"
+          className={`h-8 w-8 rounded-lg border shadow-sm ${
+            c.id === "black" ? "border-ink-300" : "border-ink-200"
+          }`}
           style={{ background: c.color }}
         />
       ))}
       <span className="text-xs text-ink-400 px-1">형광</span>
-      {COLORS.map((c) => (
+      {HIGHLIGHT_COLORS.map((c) => (
         <button
           key={`hl-${c.id}`}
           type="button"
@@ -1190,17 +1455,20 @@ function ToolBtn({
   children,
   onClick,
   title,
+  disabled,
 }: {
   children: ReactNode;
   onClick: () => void;
   title: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       title={title}
       onClick={onClick}
-      className="inline-flex items-center gap-1 min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-ink-700 hover:border-accent"
+      disabled={disabled}
+      className="inline-flex items-center gap-1 min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-ink-700 hover:border-accent disabled:opacity-40 disabled:pointer-events-none"
     >
       {children}
     </button>
@@ -1216,30 +1484,55 @@ function collectSectionImages(sec: ReportSectionBlock): string[] {
 }
 
 function RichBody({
+  id,
   html,
   onChange,
   onFocus,
 }: {
+  id?: string;
   html: string;
   onChange: (html: string) => void;
   onFocus?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const focusedRef = useRef(false);
+  const composingRef = useRef(false);
 
   useEffect(() => {
+    if (focusedRef.current || composingRef.current) return;
     if (ref.current && ref.current.innerHTML !== html) {
-      ref.current.innerHTML = html || "<p></p>";
+      ref.current.innerHTML = html || "<p><br></p>";
     }
   }, [html]);
 
+  const syncChange = () => {
+    if (composingRef.current) return;
+    onChange(ref.current?.innerHTML ?? "");
+  };
+
   return (
     <div
+      id={id}
       ref={ref}
       contentEditable
       suppressContentEditableWarning
       className="report-body min-h-[120px] w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed"
-      onFocus={onFocus}
-      onInput={() => onChange(ref.current?.innerHTML ?? "")}
+      onFocus={() => {
+        focusedRef.current = true;
+        onFocus?.();
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+        syncChange();
+      }}
+      onCompositionStart={() => {
+        composingRef.current = true;
+      }}
+      onCompositionEnd={() => {
+        composingRef.current = false;
+        syncChange();
+      }}
+      onInput={syncChange}
     />
   );
 }
