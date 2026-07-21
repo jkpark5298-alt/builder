@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import {
   Bold,
+  Check,
   ClipboardPaste,
   Home,
   ImagePlus,
@@ -48,6 +49,10 @@ const COLORS = [
   { id: "green", label: "녹색", color: "#15803d", bg: "#bbf7d0" },
 ] as const;
 
+function sectionSnapshot(sec: ReportSectionBlock): string {
+  return JSON.stringify(sec);
+}
+
 export function EditableReportPanel({
   video,
 }: {
@@ -63,10 +68,24 @@ export function EditableReportPanel({
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
   const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
+  const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
+  const [savedSections, setSavedSections] = useState<string[]>([]);
+  const [sectionSavedFlash, setSectionSavedFlash] = useState<
+    Record<number, boolean>
+  >({});
+  const wasEditingRef = useRef(false);
 
   useEffect(() => {
     setDraft(report);
   }, [report]);
+
+  useEffect(() => {
+    if (editing && !wasEditingRef.current && draft) {
+      setSavedSections(draft.sections.map(sectionSnapshot));
+      setSectionSavedFlash({});
+    }
+    wasEditingRef.current = editing;
+  }, [editing, draft]);
 
   useEffect(() => {
     function enterEdit() {
@@ -159,8 +178,21 @@ export function EditableReportPanel({
 
   if (!report || !draft) return null;
 
-  async function saveReport() {
-    setSaving(true);
+  function isSectionDirty(idx: number): boolean {
+    const sec = draft?.sections[idx];
+    if (!sec) return false;
+    if (idx >= savedSections.length) return true;
+    return sectionSnapshot(sec) !== savedSections[idx];
+  }
+
+  async function persistReport(opts?: { exit?: boolean; sectionIdx?: number }) {
+    if (!draft) return;
+    const sectionIdx = opts?.sectionIdx;
+    if (sectionIdx !== undefined) {
+      setSavingSectionIdx(sectionIdx);
+    } else {
+      setSaving(true);
+    }
     try {
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
@@ -169,14 +201,52 @@ export function EditableReportPanel({
       });
       const data = (await res.json()) as { error?: string; video?: VideoRecord };
       if (!res.ok) throw new Error(data.error || "저장 실패");
-      if (data.video?.report) setDraft(data.video.report);
-      setEditing(false);
+      const saved = data.video?.report;
+      if (saved) {
+        setDraft(saved);
+        if (sectionIdx !== undefined) {
+          const snap = saved.sections[sectionIdx];
+          if (snap) {
+            setSavedSections((prev) => {
+              const next = [...prev];
+              next[sectionIdx] = sectionSnapshot(snap);
+              return next;
+            });
+            setSectionSavedFlash((prev) => ({ ...prev, [sectionIdx]: true }));
+            window.setTimeout(() => {
+              setSectionSavedFlash((prev) => ({
+                ...prev,
+                [sectionIdx]: false,
+              }));
+            }, 2000);
+          }
+        } else {
+          setSavedSections(saved.sections.map(sectionSnapshot));
+        }
+      }
+      if (opts?.exit) {
+        setEditing(false);
+        setOpenFcKey(null);
+        setActiveSectionIdx(0);
+      }
       router.refresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : "저장 실패");
     } finally {
-      setSaving(false);
+      if (sectionIdx !== undefined) {
+        setSavingSectionIdx(null);
+      } else {
+        setSaving(false);
+      }
     }
+  }
+
+  async function saveReport() {
+    await persistReport({ exit: true });
+  }
+
+  async function saveSection(idx: number) {
+    await persistReport({ sectionIdx: idx });
   }
 
   function cancelEdit() {
@@ -184,6 +254,8 @@ export function EditableReportPanel({
     setEditing(false);
     setOpenFcKey(null);
     setActiveSectionIdx(0);
+    setSavedSections([]);
+    setSectionSavedFlash({});
   }
 
   function patchSection(idx: number, patch: Partial<ReportSectionBlock>) {
@@ -205,6 +277,7 @@ export function EditableReportPanel({
         sections: prev.sections.filter((_, i) => i !== idx),
       };
     });
+    setSavedSections((prev) => prev.filter((_, i) => i !== idx));
   }
 
   function addSection() {
@@ -370,11 +443,11 @@ export function EditableReportPanel({
                 <button
                   type="button"
                   onClick={() => void saveReport()}
-                  disabled={saving || rebuilding}
+                  disabled={saving || rebuilding || savingSectionIdx !== null}
                   className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
                 >
                   <Save className="h-4 w-4" />
-                  {saving ? "저장 중…" : "저장"}
+                  {saving ? "저장 중…" : "전체 저장 후 닫기"}
                 </button>
               </>
             ) : (
@@ -410,8 +483,9 @@ export function EditableReportPanel({
 
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            아래 한 페이지에서 제목·본문·이미지를 연속으로 수정한 뒤 「저장」을 누르세요.
-            서식·이미지 도구는 현재 커서가 있는 섹션에 적용됩니다.
+            단락마다 「이 단락 저장」으로 저장하거나, 상단 「전체 저장 후 닫기」로
+            편집을 마칠 수 있습니다. 서식·이미지 도구는 현재 커서가 있는 단락에
+            적용됩니다.
           </p>
         )}
 
@@ -431,8 +505,8 @@ export function EditableReportPanel({
         </div>
 
         {editing ? (
-          <div className="rounded-xl border border-ink-200 bg-white overflow-hidden print:hidden">
-            <div className="border-b border-ink-100 bg-ink-50/80 px-3 py-2 space-y-2">
+          <div className="rounded-xl border border-ink-200 bg-white print:hidden">
+            <div className="sticky top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white/95 backdrop-blur-md px-3 py-2 space-y-2 shadow-sm">
               <p className="text-xs text-ink-500">
                 편집 중 ·{" "}
                 <span className="font-medium text-ink-800">
@@ -464,6 +538,9 @@ export function EditableReportPanel({
                   (m) => m.sectionIdx === idx
                 );
                 const sectionImages = collectSectionImages(sec);
+                const dirty = isSectionDirty(idx);
+                const savingThis = savingSectionIdx === idx;
+                const savedFlash = sectionSavedFlash[idx];
 
                 return (
                   <div
@@ -484,6 +561,32 @@ export function EditableReportPanel({
                         onFocus={() => setActiveSectionIdx(idx)}
                         className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
                       />
+                      {dirty && !savingThis && !savedFlash && (
+                        <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                          수정됨
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void saveSection(idx)}
+                        disabled={
+                          saving ||
+                          savingSectionIdx !== null ||
+                          !dirty
+                        }
+                        className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-accent/40 bg-white px-3 text-sm font-medium text-accent hover:bg-accent-muted/30 disabled:opacity-50"
+                      >
+                        {savedFlash ? (
+                          <Check className="h-4 w-4 text-verify-true" />
+                        ) : (
+                          <Save className="h-4 w-4" />
+                        )}
+                        {savingThis
+                          ? "저장 중…"
+                          : savedFlash
+                            ? "저장됨"
+                            : "이 단락 저장"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => deleteSection(idx)}
