@@ -15,6 +15,7 @@ import {
   ClipboardPaste,
   Home,
   ImagePlus,
+  Minus,
   PenLine,
   Pencil,
   Plus,
@@ -43,10 +44,15 @@ import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 import {
-  applyFontSizeToRange,
-  clampFontPx,
+  applyFontSizeInEditor,
+  DEFAULT_REPORT_FONT_PX,
   findReportBodyEditor,
+  getBlockAtCursor,
+  parseFontSizeToPx,
+  rangeHasVisibleText,
+  resolveFontSizeTarget,
   sanitizePastedHtml,
+  wrapPlainPasteText,
 } from "@/lib/report-editor-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
 
@@ -86,33 +92,12 @@ function sectionEditKey(sec: ReportSectionBlock, idx: number): string {
   return sec.sectionId ?? `legacy-${idx}`;
 }
 
-function applySelectionFontSize(
-  px: number,
-  savedRange: Range | null
-): HTMLElement | null {
-  const sel = window.getSelection();
-  if (!sel) return null;
-
-  let range: Range | null = null;
-  if (sel.rangeCount && !sel.getRangeAt(0).collapsed) {
-    range = sel.getRangeAt(0);
-  } else if (savedRange && !savedRange.collapsed) {
-    sel.removeAllRanges();
-    sel.addRange(savedRange);
-    range = savedRange;
-  }
-
-  if (!range || range.collapsed) {
-    alert("크기를 바꿀 글자를 먼저 드래그로 선택해 주세요.");
-    return null;
-  }
-
-  if (!applyFontSizeToRange(range, px)) {
-    alert("글자 크기를 적용하지 못했습니다. 다시 선택해 주세요.");
-    return null;
-  }
-
-  return findReportBodyEditor(range.commonAncestorContainer);
+function stepFontSize(current: number, delta: number): number {
+  const sizes = [...FONT_SIZES];
+  let idx = sizes.findIndex((s) => s >= current);
+  if (idx === -1) idx = sizes.length - 1;
+  const next = Math.min(sizes.length - 1, Math.max(0, idx + delta));
+  return sizes[next]!;
 }
 
 export function EditableReportPanel({
@@ -144,6 +129,11 @@ export function EditableReportPanel({
   const historyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   const [historyUi, setHistoryUi] = useState({ canUndo: false, canRedo: false });
+  const [formatHint, setFormatHint] = useState<string | null>(null);
+  const [formatTarget, setFormatTarget] = useState<
+    "none" | "selection" | "paragraph"
+  >("none");
+  const formatHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const syncHistoryUi = useCallback(() => {
     setHistoryUi({
@@ -389,21 +379,119 @@ export function EditableReportPanel({
 
   const saveEditorSelection = useCallback(() => {
     const sel = window.getSelection();
-    if (!sel?.rangeCount) return;
+    if (!sel?.rangeCount) {
+      setFormatTarget("none");
+      return;
+    }
     const range = sel.getRangeAt(0);
-    if (!findReportBodyEditor(range.commonAncestorContainer)) return;
-    savedSelectionRef.current = range.cloneRange();
+    const editor = findReportBodyEditor(range.commonAncestorContainer);
+    if (!editor) {
+      setFormatTarget("none");
+      return;
+    }
+
+    if (!range.collapsed && rangeHasVisibleText(range)) {
+      savedSelectionRef.current = range.cloneRange();
+      setFormatTarget("selection");
+      return;
+    }
+
+    const block = getBlockAtCursor(editor);
+    if (block?.textContent?.replace(/\u00a0/g, " ").trim()) {
+      setFormatTarget("paragraph");
+      return;
+    }
+    setFormatTarget("none");
+  }, []);
+
+  const showFormatHint = useCallback((hint: string) => {
+    setFormatHint(hint);
+    if (formatHintTimerRef.current) {
+      clearTimeout(formatHintTimerRef.current);
+    }
+    formatHintTimerRef.current = setTimeout(() => {
+      setFormatHint(null);
+      formatHintTimerRef.current = null;
+    }, 2800);
   }, []);
 
   const applyFontSize = useCallback(
     (px: number) => {
-      const editor = applySelectionFontSize(px, savedSelectionRef.current);
-      if (editor) {
-        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      const sel = window.getSelection();
+      const editor =
+        (sel && findReportBodyEditor(sel.anchorNode)) ||
+        document.querySelector<HTMLElement>(
+          `#sec-body-${draftRef.current?.sections[activeSectionIdx]?.sectionId ?? ""}`
+        ) ||
+        document.querySelector<HTMLElement>(".report-body");
+
+      if (!editor) {
+        showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
+        return;
       }
+
+      const result = applyFontSizeInEditor(
+        editor,
+        px,
+        savedSelectionRef.current
+      );
+      if (!result.ok) {
+        showFormatHint(result.hint);
+        return;
+      }
+
+      result.editor.dispatchEvent(new Event("input", { bubbles: true }));
+      showFormatHint(
+        result.mode === "paragraph"
+          ? `${px}px — 현재 문단 전체에 적용했습니다.`
+          : `${px}px — 선택한 글자에 적용했습니다.`
+      );
+      saveEditorSelection();
     },
-    []
+    [showFormatHint, saveEditorSelection, activeSectionIdx]
   );
+
+  const stepActiveFontSize = useCallback(
+    (delta: number) => {
+      const sel = window.getSelection();
+      const editor = sel && findReportBodyEditor(sel.anchorNode);
+      if (!editor) {
+        showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
+        return;
+      }
+      const target = resolveFontSizeTarget(editor, savedSelectionRef.current);
+      if (!target) {
+        showFormatHint("크기를 조절할 글자를 선택하거나 문단 안에 커서를 두세요.");
+        return;
+      }
+      const node = target.range.startContainer;
+      const el =
+        node.nodeType === Node.TEXT_NODE
+          ? node.parentElement
+          : (node as HTMLElement);
+      const current = el
+        ? parseFontSizeToPx(window.getComputedStyle(el).fontSize) ??
+          DEFAULT_REPORT_FONT_PX
+        : DEFAULT_REPORT_FONT_PX;
+      applyFontSize(stepFontSize(current, delta));
+    },
+    [applyFontSize, showFormatHint]
+  );
+
+  useEffect(() => {
+    if (!editing) return;
+    document.addEventListener("selectionchange", saveEditorSelection);
+    return () =>
+      document.removeEventListener("selectionchange", saveEditorSelection);
+  }, [editing, saveEditorSelection]);
+
+  useEffect(() => {
+    return () => {
+      if (formatHintTimerRef.current) {
+        clearTimeout(formatHintTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!report || !draft) return null;
 
@@ -721,7 +809,8 @@ export function EditableReportPanel({
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
             단락마다 「이 단락 저장」으로 저장하거나, 상단 「전체 저장 후 닫기」로
-            편집을 마칠 수 있습니다. 되돌리기는 Ctrl+Z · 다시 실행은 Ctrl+Y 입니다.
+            편집을 마칠 수 있습니다. 글자 크기는 선택 영역 또는 커서가 있는 문단에
+            적용됩니다. 되돌리기 Ctrl+Z · 다시 실행 Ctrl+Y
           </p>
         )}
 
@@ -743,18 +832,32 @@ export function EditableReportPanel({
         {editing ? (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
             <div className="sticky top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white/95 backdrop-blur-md px-3 py-2 space-y-2 shadow-sm">
-              <p className="text-xs text-ink-500">
-                편집 중 ·{" "}
-                <span className="font-medium text-ink-800">
-                  {draft.sections[activeSectionIdx]?.heading || "섹션"}
-                </span>
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-ink-500">
+                  편집 중 ·{" "}
+                  <span className="font-medium text-ink-800">
+                    {draft.sections[activeSectionIdx]?.heading || "섹션"}
+                  </span>
+                  {formatTarget === "selection" && (
+                    <span className="ml-2 text-accent">· 글자 선택됨</span>
+                  )}
+                  {formatTarget === "paragraph" && (
+                    <span className="ml-2 text-accent">· 문단 전체</span>
+                  )}
+                </p>
+                {formatHint && (
+                  <p className="text-xs text-ink-600 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                    {formatHint}
+                  </p>
+                )}
+              </div>
               <FormatToolbar
                 canUndo={historyUi.canUndo}
                 canRedo={historyUi.canRedo}
                 onUndo={undoEdit}
                 onRedo={redoEdit}
                 onFontSize={applyFontSize}
+                onFontSizeStep={stepActiveFontSize}
                 onBold={() => document.execCommand("bold")}
                 onUnderline={() => document.execCommand("underline")}
                 onColor={(c) => document.execCommand("foreColor", false, c)}
@@ -1375,6 +1478,7 @@ function FormatToolbar({
   onUndo,
   onRedo,
   onFontSize,
+  onFontSizeStep,
   onBold,
   onUnderline,
   onColor,
@@ -1389,6 +1493,7 @@ function FormatToolbar({
   onUndo: () => void;
   onRedo: () => void;
   onFontSize: (px: number) => void;
+  onFontSizeStep: (delta: number) => void;
   onBold: () => void;
   onUnderline: () => void;
   onColor: (c: string) => void;
@@ -1398,6 +1503,10 @@ function FormatToolbar({
   onTextImage: () => void;
   onHandwriting: () => void;
 }) {
+  const keepSelection = (e: React.MouseEvent) => {
+    e.preventDefault();
+  };
+
   return (
     <div className="flex flex-wrap gap-1.5 items-center rounded-xl border border-ink-200 bg-ink-50 p-2 print:hidden">
       <ToolBtn
@@ -1417,15 +1526,22 @@ function FormatToolbar({
         <span className="text-xs">다시 실행</span>
       </ToolBtn>
       <span className="w-px h-6 bg-ink-200 mx-0.5" aria-hidden />
-      <ToolBtn onClick={onBold} title="굵게">
+      <ToolBtn onClick={onBold} title="굵게" onMouseDown={keepSelection}>
         <Bold className="h-4 w-4" />
       </ToolBtn>
-      <ToolBtn onClick={onUnderline} title="밑줄">
+      <ToolBtn onClick={onUnderline} title="밑줄" onMouseDown={keepSelection}>
         <Underline className="h-4 w-4" />
+      </ToolBtn>
+      <ToolBtn
+        onClick={() => onFontSizeStep(-1)}
+        title="글자 작게"
+        onMouseDown={keepSelection}
+      >
+        <Minus className="h-4 w-4" />
       </ToolBtn>
       <label
         className="inline-flex items-center gap-1 text-xs text-ink-500"
-        onMouseDown={(e) => e.preventDefault()}
+        onMouseDown={keepSelection}
       >
         크기
         <select
@@ -1436,7 +1552,7 @@ function FormatToolbar({
             if (px) onFontSize(px);
             e.currentTarget.value = "";
           }}
-          title="글자를 선택한 뒤 크기를 고르세요"
+          title="선택 글자 또는 커서 문단에 적용"
         >
           <option value="" disabled>
             선택
@@ -1448,12 +1564,20 @@ function FormatToolbar({
           ))}
         </select>
       </label>
+      <ToolBtn
+        onClick={() => onFontSizeStep(1)}
+        title="글자 크게"
+        onMouseDown={keepSelection}
+      >
+        <Plus className="h-4 w-4" />
+      </ToolBtn>
       <span className="text-xs text-ink-400 px-1">글자</span>
       {TEXT_COLORS.map((c) => (
         <button
           key={c.id}
           type="button"
           title={c.label}
+          onMouseDown={keepSelection}
           onClick={() => onColor(c.color)}
           className={`h-8 w-8 rounded-lg border shadow-sm ${
             c.id === "black" ? "border-ink-300" : "border-ink-200"
@@ -1467,6 +1591,7 @@ function FormatToolbar({
           key={`hl-${c.id}`}
           type="button"
           title={`${c.label} 형광`}
+          onMouseDown={keepSelection}
           onClick={() => onHighlight(c.bg)}
           className="h-8 w-8 rounded-lg border border-ink-200"
           style={{ background: c.bg }}
@@ -1496,17 +1621,20 @@ function ToolBtn({
   onClick,
   title,
   disabled,
+  onMouseDown,
 }: {
   children: ReactNode;
   onClick: () => void;
   title: string;
   disabled?: boolean;
+  onMouseDown?: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       type="button"
       title={title}
       onClick={onClick}
+      onMouseDown={onMouseDown}
       disabled={disabled}
       className="inline-flex items-center gap-1 min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-ink-700 hover:border-accent disabled:opacity-40 disabled:pointer-events-none"
     >
@@ -1567,7 +1695,7 @@ function RichBody({
       if (clean) {
         document.execCommand("insertHTML", false, clean);
       } else if (text) {
-        document.execCommand("insertText", false, text);
+        document.execCommand("insertHTML", false, wrapPlainPasteText(text));
       }
       syncChange();
       return;
@@ -1575,7 +1703,7 @@ function RichBody({
 
     if (text) {
       e.preventDefault();
-      document.execCommand("insertText", false, text);
+      document.execCommand("insertHTML", false, wrapPlainPasteText(text));
       syncChange();
     }
   };
