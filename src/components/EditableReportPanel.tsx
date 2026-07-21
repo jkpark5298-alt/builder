@@ -61,6 +61,7 @@ export function EditableReportPanel({
   const [openFcKey, setOpenFcKey] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
+  const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
 
   useEffect(() => {
@@ -182,6 +183,7 @@ export function EditableReportPanel({
     setDraft(report);
     setEditing(false);
     setOpenFcKey(null);
+    setActiveSectionIdx(0);
   }
 
   function patchSection(idx: number, patch: Partial<ReportSectionBlock>) {
@@ -408,8 +410,8 @@ export function EditableReportPanel({
 
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            제목·본문 수정, 섹션 삭제/추가, 팩트체크 연결 제거 후 「저장」을 누르세요.
-            화면에서는 F 표시만 보이고, 인쇄·PDF에는 뒤에 「팩트 체크 내용」이 붙습니다.
+            아래 한 페이지에서 제목·본문·이미지를 연속으로 수정한 뒤 「저장」을 누르세요.
+            서식·이미지 도구는 현재 커서가 있는 섹션에 적용됩니다.
           </p>
         )}
 
@@ -428,242 +430,287 @@ export function EditableReportPanel({
           </p>
         </div>
 
-        {draft.sections.map((sec, idx) => {
-          const { html: markedHtml, unmatched } = sectionBodyWithMarkers(
-            sec,
-            idx,
-            markers
-          );
-          const sectionMarkers = markers.filter((m) => m.sectionIdx === idx);
-          const fcImages = collectSectionFcImages(sec, fcByItem);
-          // 섹션 첨부 이미지와 중복되지 않게
-          const sectionOwn = new Set(
-            [sec.imageUrl, ...(sec.images ?? [])].filter(Boolean) as string[]
-          );
-          const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));
-
-          return (
-            <div
-              key={`${sec.heading}-${idx}`}
-              className="space-y-3 report-section"
-              tabIndex={editing ? 0 : undefined}
-              onPaste={editing ? (e) => handleSectionPaste(idx, e) : undefined}
-            >
-              {editing ? (
-                <div className="flex flex-wrap items-center gap-2 print:hidden">
-                  <input
-                    value={sec.heading}
-                    onChange={(e) =>
-                      patchSection(idx, { heading: e.target.value })
-                    }
-                    className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => deleteSection(idx)}
-                    className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-verify-false/40 bg-verify-false/5 px-3 text-sm text-verify-false"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    섹션 삭제
-                  </button>
-                </div>
-              ) : (
-                <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
-              )}
-
-              {editing && (
-                <FormatToolbar
-                  onBold={() => document.execCommand("bold")}
-                  onUnderline={() => document.execCommand("underline")}
-                  onColor={(c) => document.execCommand("foreColor", false, c)}
-                  onHighlight={(c) =>
-                    document.execCommand("hiliteColor", false, c)
-                  }
-                  onImage={() => {
-                    const input = document.getElementById(
-                      `sec-img-${idx}`
-                    ) as HTMLInputElement | null;
-                    input?.click();
-                  }}
-                  onPasteImage={() => void pasteImagesToSection(idx)}
-                  onTextImage={() => setTextImageFor(idx)}
-                  onHandwriting={() => setHandwritingFor(idx)}
-                />
-              )}
-
-              <input
-                id={`sec-img-${idx}`}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  void addImagesToSection(idx, Array.from(e.target.files ?? []));
-                  e.target.value = "";
+        {editing ? (
+          <div className="rounded-xl border border-ink-200 bg-white overflow-hidden print:hidden">
+            <div className="border-b border-ink-100 bg-ink-50/80 px-3 py-2 space-y-2">
+              <p className="text-xs text-ink-500">
+                편집 중 ·{" "}
+                <span className="font-medium text-ink-800">
+                  {draft.sections[activeSectionIdx]?.heading || "섹션"}
+                </span>
+              </p>
+              <FormatToolbar
+                onBold={() => document.execCommand("bold")}
+                onUnderline={() => document.execCommand("underline")}
+                onColor={(c) => document.execCommand("foreColor", false, c)}
+                onHighlight={(c) =>
+                  document.execCommand("hiliteColor", false, c)
+                }
+                onImage={() => {
+                  const input = document.getElementById(
+                    `sec-img-${activeSectionIdx}`
+                  ) as HTMLInputElement | null;
+                  input?.click();
                 }}
+                onPasteImage={() => void pasteImagesToSection(activeSectionIdx)}
+                onTextImage={() => setTextImageFor(activeSectionIdx)}
+                onHandwriting={() => setHandwritingFor(activeSectionIdx)}
               />
+            </div>
 
-              <textarea
-                id={`sec-paste-${idx}`}
-                readOnly
-                aria-label="이미지 붙여넣기"
-                className="sr-only"
-                onPaste={(e) => handleSectionPaste(idx, e)}
-              />
+            <div className="divide-y divide-ink-100">
+              {draft.sections.map((sec, idx) => {
+                const sectionMarkers = markers.filter(
+                  (m) => m.sectionIdx === idx
+                );
+                const sectionImages = collectSectionImages(sec);
 
-              {sec.imageUrl && (
-                <div className="overflow-hidden rounded-xl border border-ink-100">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={sec.imageUrl}
-                    alt=""
-                    className="w-full max-h-64 object-cover"
-                  />
-                </div>
-              )}
+                return (
+                  <div
+                    key={`edit-${sec.heading}-${idx}`}
+                    className={`p-4 sm:p-5 space-y-3 transition-colors ${
+                      activeSectionIdx === idx ? "bg-accent-muted/20" : ""
+                    }`}
+                    tabIndex={0}
+                    onPaste={(e) => handleSectionPaste(idx, e)}
+                    onFocusCapture={() => setActiveSectionIdx(idx)}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={sec.heading}
+                        onChange={(e) =>
+                          patchSection(idx, { heading: e.target.value })
+                        }
+                        onFocus={() => setActiveSectionIdx(idx)}
+                        className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => deleteSection(idx)}
+                        className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-verify-false/40 bg-verify-false/5 px-3 text-sm text-verify-false"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        삭제
+                      </button>
+                    </div>
 
-              {editing ? (
-                <RichBody
-                  html={sec.body}
-                  onChange={(html) =>
-                    patchSection(idx, { body: html, rich: true })
-                  }
-                />
-              ) : (
-                sec.body && (
+                    <input
+                      id={`sec-img-${idx}`}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        void addImagesToSection(
+                          idx,
+                          Array.from(e.target.files ?? [])
+                        );
+                        e.target.value = "";
+                      }}
+                    />
+
+                    <textarea
+                      id={`sec-paste-${idx}`}
+                      readOnly
+                      aria-label="이미지 붙여넣기"
+                      className="sr-only"
+                      onPaste={(e) => handleSectionPaste(idx, e)}
+                    />
+
+                    <RichBody
+                      html={sec.body}
+                      onFocus={() => setActiveSectionIdx(idx)}
+                      onChange={(html) =>
+                        patchSection(idx, { body: html, rich: true })
+                      }
+                    />
+
+                    {sectionImages.length > 0 && (
+                      <div className="space-y-2 pt-1">
+                        {sectionImages.map((src) => {
+                          const imgIdx = (sec.images ?? []).indexOf(src);
+                          const isAttached = imgIdx >= 0;
+                          const isHero = sec.imageUrl === src;
+                          return (
+                            <div
+                              key={src.slice(0, 64)}
+                              className="relative overflow-hidden rounded-xl border border-ink-100"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={src}
+                                alt=""
+                                className="w-full max-h-72 object-contain bg-white"
+                              />
+                              {(isAttached || isHero) && (
+                                <button
+                                  type="button"
+                                  className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
+                                  onClick={() => {
+                                    if (isAttached) {
+                                      patchSection(idx, {
+                                        images: sec.images?.filter(
+                                          (_, j) => j !== imgIdx
+                                        ),
+                                      });
+                                    } else if (isHero) {
+                                      patchSection(idx, { imageUrl: undefined });
+                                    }
+                                  }}
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {sectionMarkers.length > 0 && (
+                      <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2">
+                        <p className="text-xs font-medium text-ink-500">
+                          연결된 팩트체크
+                        </p>
+                        {sectionMarkers.map((m) => (
+                          <div
+                            key={m.key}
+                            className="flex flex-wrap items-start justify-between gap-2 text-sm"
+                          >
+                            <p className="flex-1 min-w-0">
+                              <span className="fc-badge mr-1.5">F{m.n}</span>
+                              {m.entry.text}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => deleteEntry(idx, m.entryIdx)}
+                              className="inline-flex items-center gap-1 text-xs text-verify-false border border-verify-false/30 rounded-lg px-2 py-1"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              연결 제거
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="border-t border-ink-100 p-3">
+              <button
+                type="button"
+                onClick={addSection}
+                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-dashed border-ink-300 bg-ink-50 text-sm font-medium text-ink-700 hover:border-accent"
+              >
+                <Plus className="h-4 w-4" />
+                섹션 추가
+              </button>
+            </div>
+          </div>
+        ) : (
+          draft.sections.map((sec, idx) => {
+            const { html: markedHtml, unmatched } = sectionBodyWithMarkers(
+              sec,
+              idx,
+              markers
+            );
+            const fcImages = collectSectionFcImages(sec, fcByItem);
+            const sectionOwn = new Set(collectSectionImages(sec));
+            const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));
+            const sectionImages = collectSectionImages(sec);
+
+            return (
+              <div
+                key={`${sec.heading}-${idx}`}
+                className="space-y-3 report-section"
+              >
+                <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
+
+                {sec.body && (
                   <div
                     className="report-body text-sm text-ink-800 leading-relaxed space-y-2"
                     dangerouslySetInnerHTML={{ __html: markedHtml }}
                     onClick={onBodyClick}
                   />
-                )
-              )}
+                )}
 
-              {/* 본문에 claim이 없을 때: 밑줄 + F 뱃지만 표시 (상세는 팝업) */}
-              {!editing && unmatched.length > 0 && (
-                <ul className="space-y-1.5 print:hidden">
-                  {unmatched.map((m) => (
-                    <li key={m.key} className="text-sm text-ink-800">
-                      <button
-                        type="button"
-                        className="inline-flex items-start gap-2 text-left hover:text-accent"
-                        onClick={() =>
-                          setOpenFcKey((prev) =>
-                            prev === m.key ? null : m.key
-                          )
-                        }
+                {sectionImages.length > 0 && (
+                  <div className="space-y-2">
+                    {sectionImages.map((src) => (
+                      <div
+                        key={src.slice(0, 64)}
+                        className="overflow-hidden rounded-xl border border-ink-100 bg-white"
                       >
-                        <span className="fc-badge shrink-0 mt-0.5" aria-hidden>
-                          F{m.n}
-                        </span>
-                        <u className="leading-relaxed decoration-accent/70 underline-offset-2">
-                          {m.entry.text}
-                        </u>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt=""
+                          className="w-full max-h-72 object-contain bg-white"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-              {/* 인쇄용: 본문 미매칭 claim에도 F 번호만 */}
-              {!editing && unmatched.length > 0 && (
-                <ul className="hidden print:block space-y-1 text-sm">
-                  {unmatched.map((m) => (
-                    <li key={`print-${m.key}`}>
-                      <u>{m.entry.text}</u>{" "}
-                      <span className="fc-badge-print">F{m.n}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                {unmatched.length > 0 && (
+                  <ul className="space-y-1.5 print:hidden">
+                    {unmatched.map((m) => (
+                      <li key={m.key} className="text-sm text-ink-800">
+                        <button
+                          type="button"
+                          className="inline-flex items-start gap-2 text-left hover:text-accent"
+                          onClick={() =>
+                            setOpenFcKey((prev) =>
+                              prev === m.key ? null : m.key
+                            )
+                          }
+                        >
+                          <span className="fc-badge shrink-0 mt-0.5" aria-hidden>
+                            F{m.n}
+                          </span>
+                          <u className="leading-relaxed decoration-accent/70 underline-offset-2">
+                            {m.entry.text}
+                          </u>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              {/* 팩트체크 관련 이미지 — 텍스트 없이 이미지만 (F 바로 아래) */}
-              {reportFcImages.length > 0 && (
-                <div className="space-y-3">
-                  <p className="text-xs text-ink-500 print:hidden">관련 이미지</p>
-                  {reportFcImages.map((src) => (
-                    <div
-                      key={src.slice(0, 64)}
-                      className="overflow-hidden rounded-xl border border-ink-100 bg-white"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={src}
-                        alt=""
-                        className="w-full max-h-72 object-contain bg-white"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+                {unmatched.length > 0 && (
+                  <ul className="hidden print:block space-y-1 text-sm">
+                    {unmatched.map((m) => (
+                      <li key={`print-${m.key}`}>
+                        <u>{m.entry.text}</u>{" "}
+                        <span className="fc-badge-print">F{m.n}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
-              {sec.images?.map((src, i) => (
-                <div
-                  key={i}
-                  className="relative overflow-hidden rounded-xl border border-ink-100"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={src}
-                    alt=""
-                    className="w-full max-h-72 object-contain bg-white"
-                  />
-                  {editing && (
-                    <button
-                      type="button"
-                      className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
-                      onClick={() =>
-                        patchSection(idx, {
-                          images: sec.images?.filter((_, j) => j !== i),
-                        })
-                      }
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
-
-              {/* 편집 모드: 연결된 FC 목록 (화면 전용, 본문 카드 아님) */}
-              {editing && sectionMarkers.length > 0 && (
-                <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2 print:hidden">
-                  <p className="text-xs font-medium text-ink-500">
-                    연결된 팩트체크 (본문에는 F·이미지만 · 상세는 팝업·인쇄 부록)
-                  </p>
-                  {sectionMarkers.map((m) => (
-                    <div
-                      key={m.key}
-                      className="flex flex-wrap items-start justify-between gap-2 text-sm"
-                    >
-                      <p className="flex-1 min-w-0">
-                        <span className="fc-badge mr-1.5">F{m.n}</span>
-                        {m.entry.text}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => deleteEntry(idx, m.entryIdx)}
-                        className="inline-flex items-center gap-1 text-xs text-verify-false border border-verify-false/30 rounded-lg px-2 py-1"
+                {reportFcImages.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-ink-500 print:hidden">관련 이미지</p>
+                    {reportFcImages.map((src) => (
+                      <div
+                        key={src.slice(0, 64)}
+                        className="overflow-hidden rounded-xl border border-ink-100 bg-white"
                       >
-                        <Trash2 className="h-3 w-3" />
-                        연결 제거
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {editing && (
-          <button
-            type="button"
-            onClick={addSection}
-            className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-dashed border-ink-300 bg-ink-50 text-sm font-medium text-ink-700 hover:border-accent print:hidden"
-          >
-            <Plus className="h-4 w-4" />
-            섹션 추가
-          </button>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={src}
+                          alt=""
+                          className="w-full max-h-72 object-contain bg-white"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
 
         {handwritingFor !== null && (
@@ -1057,12 +1104,22 @@ function ToolBtn({
   );
 }
 
+function collectSectionImages(sec: ReportSectionBlock): string[] {
+  return Array.from(
+    new Set(
+      [sec.imageUrl, ...(sec.images ?? [])].filter(Boolean) as string[]
+    )
+  );
+}
+
 function RichBody({
   html,
   onChange,
+  onFocus,
 }: {
   html: string;
   onChange: (html: string) => void;
+  onFocus?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -1078,6 +1135,7 @@ function RichBody({
       contentEditable
       suppressContentEditableWarning
       className="report-body min-h-[120px] w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed"
+      onFocus={onFocus}
       onInput={() => onChange(ref.current?.innerHTML ?? "")}
     />
   );

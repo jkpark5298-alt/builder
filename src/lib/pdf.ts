@@ -322,7 +322,7 @@ export async function buildReportPdf(
   writeWrapped("— 보고서 —", 13, 10);
   setFace("normal");
 
-  // 보고서 본문: 요약 서술만 (팩트체크·관련 이미지는 맨 뒤 부록)
+  // 보고서 본문: 요약 서술 + 섹션 이미지 (팩트체크는 맨 뒤 부록)
   for (const sec of report.sections) {
     ensureSpace(40);
     setFace("bold");
@@ -331,6 +331,18 @@ export async function buildReportPdf(
 
     const plain = reportBodyPlain(sec.body, sec.rich);
     if (plain) writeWrapped(plain, 10, 8);
+
+    const sectionImages = Array.from(
+      new Set(
+        [sec.imageUrl, ...(sec.images ?? [])].filter(
+          (u): u is string => Boolean(u) && !isYoutubeThumb(u)
+        )
+      )
+    );
+    for (const src of sectionImages) {
+      await drawImage(src);
+    }
+
     y += 8;
   }
 
