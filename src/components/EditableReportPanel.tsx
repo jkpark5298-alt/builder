@@ -42,6 +42,12 @@ import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromCl
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
+import {
+  applyFontSizeToRange,
+  clampFontPx,
+  findReportBodyEditor,
+  sanitizePastedHtml,
+} from "@/lib/report-editor-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
 
 const TEXT_COLORS = [
@@ -80,22 +86,33 @@ function sectionEditKey(sec: ReportSectionBlock, idx: number): string {
   return sec.sectionId ?? `legacy-${idx}`;
 }
 
-function applySelectionFontSize(px: number) {
+function applySelectionFontSize(
+  px: number,
+  savedRange: Range | null
+): HTMLElement | null {
   const sel = window.getSelection();
-  if (!sel?.rangeCount) return;
-  const range = sel.getRangeAt(0);
-  if (range.collapsed) return;
-  const span = document.createElement("span");
-  span.style.fontSize = `${px}px`;
-  try {
-    range.surroundContents(span);
-  } catch {
-    const contents = range.extractContents();
-    span.appendChild(contents);
-    range.insertNode(span);
+  if (!sel) return null;
+
+  let range: Range | null = null;
+  if (sel.rangeCount && !sel.getRangeAt(0).collapsed) {
+    range = sel.getRangeAt(0);
+  } else if (savedRange && !savedRange.collapsed) {
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+    range = savedRange;
   }
-  const active = document.activeElement as HTMLElement | null;
-  active?.dispatchEvent(new Event("input", { bubbles: true }));
+
+  if (!range || range.collapsed) {
+    alert("크기를 바꿀 글자를 먼저 드래그로 선택해 주세요.");
+    return null;
+  }
+
+  if (!applyFontSizeToRange(range, px)) {
+    alert("글자 크기를 적용하지 못했습니다. 다시 선택해 주세요.");
+    return null;
+  }
+
+  return findReportBodyEditor(range.commonAncestorContainer);
 }
 
 export function EditableReportPanel({
@@ -125,6 +142,7 @@ export function EditableReportPanel({
   const historyFutureRef = useRef<TypedReport[]>([]);
   const pendingHistoryBaseRef = useRef<TypedReport | null>(null);
   const historyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedSelectionRef = useRef<Range | null>(null);
   const [historyUi, setHistoryUi] = useState({ canUndo: false, canRedo: false });
 
   const syncHistoryUi = useCallback(() => {
@@ -368,6 +386,24 @@ export function EditableReportPanel({
   );
 
   const openMarker = markers.find((m) => m.key === openFcKey) ?? null;
+
+  const saveEditorSelection = useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!findReportBodyEditor(range.commonAncestorContainer)) return;
+    savedSelectionRef.current = range.cloneRange();
+  }, []);
+
+  const applyFontSize = useCallback(
+    (px: number) => {
+      const editor = applySelectionFontSize(px, savedSelectionRef.current);
+      if (editor) {
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    },
+    []
+  );
 
   if (!report || !draft) return null;
 
@@ -718,7 +754,7 @@ export function EditableReportPanel({
                 canRedo={historyUi.canRedo}
                 onUndo={undoEdit}
                 onRedo={redoEdit}
-                onFontSize={applySelectionFontSize}
+                onFontSize={applyFontSize}
                 onBold={() => document.execCommand("bold")}
                 onUnderline={() => document.execCommand("underline")}
                 onColor={(c) => document.execCommand("foreColor", false, c)}
@@ -832,6 +868,7 @@ export function EditableReportPanel({
                     <RichBody
                       id={sec.sectionId ? `sec-body-${sec.sectionId}` : undefined}
                       html={sec.body}
+                      onSaveSelection={saveEditorSelection}
                       onFocus={() => setActiveSectionIdx(idx)}
                       onChange={(html) =>
                         patchSection(
@@ -1386,7 +1423,10 @@ function FormatToolbar({
       <ToolBtn onClick={onUnderline} title="밑줄">
         <Underline className="h-4 w-4" />
       </ToolBtn>
-      <label className="inline-flex items-center gap-1 text-xs text-ink-500">
+      <label
+        className="inline-flex items-center gap-1 text-xs text-ink-500"
+        onMouseDown={(e) => e.preventDefault()}
+      >
         크기
         <select
           className="min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-xs text-ink-800"
@@ -1396,7 +1436,7 @@ function FormatToolbar({
             if (px) onFontSize(px);
             e.currentTarget.value = "";
           }}
-          title="글자 크기"
+          title="글자를 선택한 뒤 크기를 고르세요"
         >
           <option value="" disabled>
             선택
@@ -1488,11 +1528,13 @@ function RichBody({
   html,
   onChange,
   onFocus,
+  onSaveSelection,
 }: {
   id?: string;
   html: string;
   onChange: (html: string) => void;
   onFocus?: () => void;
+  onSaveSelection?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(false);
@@ -1510,6 +1552,34 @@ function RichBody({
     onChange(ref.current?.innerHTML ?? "");
   };
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const files = e.clipboardData.files;
+    if (files.length && Array.from(files).some((f) => f.type.startsWith("image/"))) {
+      return;
+    }
+
+    const html = e.clipboardData.getData("text/html");
+    const text = e.clipboardData.getData("text/plain");
+
+    if (html?.trim()) {
+      e.preventDefault();
+      const clean = sanitizePastedHtml(html);
+      if (clean) {
+        document.execCommand("insertHTML", false, clean);
+      } else if (text) {
+        document.execCommand("insertText", false, text);
+      }
+      syncChange();
+      return;
+    }
+
+    if (text) {
+      e.preventDefault();
+      document.execCommand("insertText", false, text);
+      syncChange();
+    }
+  };
+
   return (
     <div
       id={id}
@@ -1525,6 +1595,9 @@ function RichBody({
         focusedRef.current = false;
         syncChange();
       }}
+      onMouseUp={onSaveSelection}
+      onKeyUp={onSaveSelection}
+      onPaste={handlePaste}
       onCompositionStart={() => {
         composingRef.current = true;
       }}
