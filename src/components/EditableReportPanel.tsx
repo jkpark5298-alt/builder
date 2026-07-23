@@ -12,9 +12,12 @@ import { useRouter } from "next/navigation";
 import {
   Bold,
   Check,
+  ClipboardCopy,
   ClipboardPaste,
   Home,
   ImagePlus,
+  Link2,
+  Loader2,
   Minus,
   PenLine,
   Pencil,
@@ -28,11 +31,15 @@ import {
   X,
 } from "lucide-react";
 import type {
+  FactCheckResult,
   FactCheckVerdict,
   ReportSectionBlock,
+  SummaryItem,
   TypedReport,
   VideoRecord,
 } from "@/lib/types";
+import { normalizeAiAnswer, isFailedVerdict, verdictBadge } from "@/lib/text-format";
+import { verdictLabel } from "@/lib/labels";
 import {
   collectFcMarkers,
   collectSectionFcImages,
@@ -42,7 +49,6 @@ import {
 import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
-import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 import {
   applyFontSizeInEditor,
   DEFAULT_REPORT_FONT_PX,
@@ -1140,17 +1146,31 @@ export function EditableReportPanel({
                     {sectionMarkers.length > 0 && (
                       <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2">
                         <p className="text-xs font-medium text-ink-500">
-                          연결된 팩트체크
+                          연결된 팩트체크 — 클릭하면 내용 확인·수정
                         </p>
                         {sectionMarkers.map((m) => (
                           <div
                             key={m.key}
                             className="flex flex-wrap items-start justify-between gap-2 text-sm"
                           >
-                            <p className="flex-1 min-w-0">
-                              <span className="fc-badge mr-1.5">F{m.n}</span>
-                              {m.entry.text}
-                            </p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenFcKey((prev) =>
+                                  prev === m.key ? null : m.key
+                                )
+                              }
+                              className="flex-1 min-w-0 text-left rounded-lg px-1 py-0.5 hover:bg-white hover:text-accent"
+                            >
+                              <p className="flex items-start gap-1.5">
+                                <span className="fc-badge mr-0.5 shrink-0 mt-0.5">
+                                  F{m.n}
+                                </span>
+                                <span className="underline decoration-accent/50 underline-offset-2">
+                                  {m.entry.text}
+                                </span>
+                              </p>
+                            </button>
                             <button
                               type="button"
                               onClick={() => deleteEntry(idx, m.entryIdx)}
@@ -1307,16 +1327,47 @@ export function EditableReportPanel({
           />
         )}
 
-        {/* 화면: F 클릭 시 상세 팝업 */}
-        {openMarker && !editing && (
+        {/* 화면: F 클릭 시 상세 — 보기·편집 모두 */}
+        {openMarker && (
           <FcDetailModal
             marker={openMarker}
-            fc={
+            editing={editing}
+            item={
+              openMarker.entry.itemId
+                ? localVideo.items.find((i) => i.id === openMarker.entry.itemId)
+                : undefined
+            }
+            videoFc={
+              openMarker.entry.itemId
+                ? localVideo.factChecks.find(
+                    (f) => f.itemId === openMarker.entry.itemId
+                  )
+                : undefined
+            }
+            reportFc={
               openMarker.entry.itemId
                 ? fcByItem.get(openMarker.entry.itemId)
                 : undefined
             }
+            busy={saving || rebuilding}
             onClose={() => setOpenFcKey(null)}
+            onPasteText={(html) => {
+              pasteFcHtmlToActiveSection(html);
+              setOpenFcKey(null);
+            }}
+            onPasteImages={(urls) => {
+              pasteFcImagesToActiveSection(urls);
+              setOpenFcKey(null);
+            }}
+            onUnlink={() => {
+              deleteEntry(openMarker.sectionIdx, openMarker.entryIdx);
+            }}
+            onVideoUpdate={(v) => {
+              setLocalVideo(v);
+              if (v.report) setDraft(v.report);
+              router.refresh();
+            }}
+            videoId={localVideo.id}
           />
         )}
           </div>
@@ -1353,57 +1404,283 @@ export function EditableReportPanel({
   );
 }
 
+function isPromptOnly(text: string | undefined): boolean {
+  const t = (text ?? "").trim();
+  if (!t) return true;
+  return /^다음 주장을/.test(t) && /팩트체크/.test(t);
+}
+
+function escapeHtmlLocal(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function textToReportHtml(text: string): string {
+  const clean = normalizeAiAnswer(text).trim();
+  if (!clean) return "";
+  return clean
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${escapeHtmlLocal(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+const VERDICT_OPTIONS: FactCheckVerdict[] = [
+  "true",
+  "mostly_true",
+  "mixed",
+  "mostly_false",
+  "false",
+  "unverifiable",
+];
+
 function FcDetailModal({
   marker,
-  fc,
+  editing,
+  item,
+  videoFc,
+  reportFc,
+  busy,
+  videoId,
   onClose,
+  onPasteText,
+  onPasteImages,
+  onUnlink,
+  onVideoUpdate,
 }: {
   marker: FcMarker;
-  fc:
-    | {
-        checkGuide: string;
-        verdict?: FactCheckVerdict;
-        answerImageUrl?: string;
-        answerImageUrls?: string[];
-        answerParts?: NonNullable<TypedReport["factChecks"][0]["answerParts"]>;
-      }
-    | undefined;
+  editing: boolean;
+  item?: SummaryItem;
+  videoFc?: FactCheckResult;
+  reportFc?: TypedReport["factChecks"][number];
+  busy?: boolean;
+  videoId: string;
   onClose: () => void;
+  onPasteText: (html: string) => void;
+  onPasteImages: (urls: string[]) => void;
+  onUnlink: () => void;
+  onVideoUpdate: (video: VideoRecord) => void;
 }) {
-  const verdict = (fc?.verdict ?? "pending") as FactCheckVerdict;
-  const badge = verdictBadge(verdict);
-  const failed = isFailedVerdict(verdict);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+
+  const answerFromVideo = !isPromptOnly(videoFc?.explanation)
+    ? normalizeAiAnswer(videoFc?.explanation || "")
+    : "";
+  const answerFromReport = (reportFc?.checkGuide || "").trim();
   const parts =
     marker.entry.answerParts?.length
       ? marker.entry.answerParts
-      : fc?.answerParts?.length
-        ? fc.answerParts
-        : null;
-  const flatFallback = Array.from(
+      : videoFc?.answerParts?.length
+        ? videoFc.answerParts
+        : reportFc?.answerParts?.length
+          ? reportFc.answerParts
+          : null;
+  const partsText = parts?.map((p) => `${p.number}. ${p.text}`).join("\n") || "";
+  const answerText =
+    answerFromVideo ||
+    answerFromReport ||
+    partsText ||
+    marker.entry.html?.replace(/<[^>]+>/g, "") ||
+    "";
+
+  const verdict = (videoFc?.verdict ??
+    reportFc?.verdict ??
+    "pending") as FactCheckVerdict;
+  const badge = verdictBadge(verdict);
+  const failed = isFailedVerdict(verdict);
+  const images = Array.from(
     new Set(
       [
         ...normalizeImageUrls(
           marker.entry.answerImageUrl,
           marker.entry.answerImageUrls
         ),
-        ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
-      ].filter((u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u))
+        ...normalizeImageUrls(videoFc?.answerImageUrl, videoFc?.answerImageUrls),
+        ...normalizeImageUrls(
+          reportFc?.answerImageUrl,
+          reportFc?.answerImageUrls
+        ),
+        ...(parts ?? []).flatMap((p) => p.imageUrls ?? []),
+        ...(item ? normalizeImageUrls(item.imageUrl, item.imageUrls) : []),
+      ].filter((u) => Boolean(u) && !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u))
     )
   );
 
+  const [statement, setStatement] = useState(
+    item?.statement || marker.entry.text
+  );
+  const [detail, setDetail] = useState(item?.detail || "");
+  const [explanation, setExplanation] = useState(answerText);
+  const [editVerdict, setEditVerdict] = useState<FactCheckVerdict>(
+    verdict !== "pending" ? verdict : "unverifiable"
+  );
+
+  useEffect(() => {
+    setStatement(item?.statement || marker.entry.text);
+    setDetail(item?.detail || "");
+    setExplanation(answerText);
+    setEditVerdict(verdict !== "pending" ? verdict : "unverifiable");
+    setMode("view");
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when marker changes
+  }, [marker.key]);
+
+  function notify(msg: string) {
+    setFlash(msg);
+    window.setTimeout(() => setFlash(null), 2000);
+  }
+
+  async function copyText() {
+    const text = [statement || marker.entry.text, answerText]
+      .filter(Boolean)
+      .join("\n\n");
+    if (!text.trim()) {
+      setError("복사할 내용이 없습니다.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("텍스트 복사됨");
+      setError(null);
+    } catch {
+      setError("클립보드 복사에 실패했습니다.");
+    }
+  }
+
+  async function deleteFc() {
+    const itemId = marker.entry.itemId;
+    if (!itemId) {
+      onUnlink();
+      return;
+    }
+    if (
+      !window.confirm(
+        "이 팩트체크를 삭제할까요? 보고서 연결·답변도 함께 제거됩니다."
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deleteItem: { itemId },
+          preserveReadyStatus: true,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "삭제 실패");
+      if (data.video) onVideoUpdate(data.video);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "삭제 실패");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveEdit() {
+    const itemId = marker.entry.itemId;
+    if (!itemId) {
+      setError("이 항목은 보고서 연결만 있습니다. 원본 FC ID가 없어 수정할 수 없습니다.");
+      return;
+    }
+    const nextExplanation = normalizeAiAnswer(explanation.trim());
+    if (nextExplanation.length < 20) {
+      setError("팩트체크 답변을 20자 이상 입력해 주세요.");
+      return;
+    }
+    if (!statement.trim()) {
+      setError("주장을 입력해 주세요.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const itemRes = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updateItem: {
+            itemId,
+            statement: statement.trim(),
+            detail: detail.trim() || null,
+          },
+          preserveReadyStatus: true,
+        }),
+      });
+      const itemData = (await itemRes.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!itemRes.ok) throw new Error(itemData.error || "주장 수정 실패");
+
+      const prev = (itemData.video?.factChecks ?? []).find(
+        (f) => f.itemId === itemId
+      );
+      const nextParts = resolveAnswerParts({
+        explanation: nextExplanation,
+        answerImageUrl: prev?.answerImageUrl ?? videoFc?.answerImageUrl,
+        answerImageUrls: prev?.answerImageUrls ?? videoFc?.answerImageUrls,
+        answerParts: prev?.answerParts ?? videoFc?.answerParts,
+      });
+
+      const fcRes = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          factCheck: {
+            itemId,
+            verdict:
+              editVerdict === "pending" ? "unverifiable" : editVerdict,
+            explanation: nextExplanation,
+            sources: prev?.sources ?? videoFc?.sources ?? [],
+            answerParts: nextParts,
+          },
+          preserveReadyStatus: true,
+        }),
+      });
+      const fcData = (await fcRes.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!fcRes.ok) throw new Error(fcData.error || "답변 저장 실패");
+      if (fcData.video) onVideoUpdate(fcData.video);
+      setMode("view");
+      notify("저장됨");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink-900/50 p-3 print:hidden"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-ink-900/50 p-3 print:hidden"
       role="dialog"
       aria-modal="true"
       aria-label={`팩트체크 F${marker.n}`}
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] overflow-auto rounded-2xl bg-white shadow-xl"
+        className="w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 flex items-center justify-between gap-2 px-4 py-3 border-b border-ink-100 bg-white">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 px-4 py-3 border-b border-ink-100 bg-white">
           <div className="flex items-center gap-2 min-w-0">
             <span className="fc-badge">F{marker.n}</span>
             <span
@@ -1418,104 +1695,241 @@ function FcDetailModal({
               {badge.mark} {badge.label}
             </span>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              className="rounded-lg border border-ink-200 px-2 py-1 text-xs font-medium hover:border-accent"
-              onClick={() => {
-                const text = [
-                  marker.entry.text,
-                  fc?.checkGuide ||
-                    marker.entry.html?.replace(/<[^>]+>/g, "") ||
-                    parts?.map((p) => `${p.number}. ${p.text}`).join("\n") ||
-                    "",
-                ]
-                  .filter(Boolean)
-                  .join("\n\n");
-                void navigator.clipboard.writeText(text).catch(() => undefined);
-              }}
-            >
-              텍스트 복사
-            </button>
-            <button type="button" onClick={onClose} className="p-1">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+          <button type="button" onClick={onClose} className="p-1 shrink-0">
+            <X className="h-5 w-5" />
+          </button>
         </div>
-        <div className="p-4 space-y-3 text-sm">
-          <p className="font-medium text-ink-900 leading-snug">
-            <u className="decoration-accent/70 underline-offset-2">
-              {marker.entry.text}
-            </u>
-          </p>
 
-          {parts?.length ? (
-            <div className="space-y-3">
-              {parts.map((part) => (
-                <div
-                  key={part.number}
-                  className="rounded-lg border border-ink-100 bg-ink-50/80 p-2.5 space-y-2"
+        <div className="p-4 space-y-3 text-sm">
+          {flash && (
+            <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+              <Check className="h-3.5 w-3.5" />
+              {flash}
+            </p>
+          )}
+          {error && (
+            <p className="text-xs text-verify-false" role="alert">
+              {error}
+            </p>
+          )}
+
+          {mode === "edit" ? (
+            <div className="space-y-2">
+              <label className="block text-xs text-ink-500">
+                주장
+                <textarea
+                  value={statement}
+                  onChange={(e) => setStatement(e.target.value)}
+                  rows={2}
+                  className="mt-0.5 w-full rounded-lg border border-ink-200 px-2.5 py-2 text-sm outline-none focus:border-accent"
+                />
+              </label>
+              <label className="block text-xs text-ink-500">
+                상세 (선택)
+                <textarea
+                  value={detail}
+                  onChange={(e) => setDetail(e.target.value)}
+                  rows={2}
+                  className="mt-0.5 w-full rounded-lg border border-ink-200 px-2.5 py-2 text-sm outline-none focus:border-accent"
+                />
+              </label>
+              <label className="block text-xs text-ink-500">
+                팩트체크 답변
+                <textarea
+                  value={explanation}
+                  onChange={(e) => setExplanation(e.target.value)}
+                  rows={6}
+                  className="mt-0.5 w-full rounded-lg border border-ink-200 px-2.5 py-2 text-sm outline-none focus:border-accent"
+                />
+              </label>
+              <label className="block text-xs text-ink-500">
+                판정
+                <select
+                  value={editVerdict}
+                  onChange={(e) =>
+                    setEditVerdict(e.target.value as FactCheckVerdict)
+                  }
+                  className="mt-0.5 w-full rounded-lg border border-ink-200 px-2.5 py-2 text-sm outline-none focus:border-accent"
                 >
-                  <p className="text-ink-800 leading-relaxed whitespace-pre-wrap">
-                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white mr-1.5 align-middle">
-                      {part.number}
-                    </span>
-                    {part.text}
-                  </p>
-                  {(part.imageUrls ?? [])
-                    .filter(
-                      (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
-                    )
-                    .map((src) => (
-                      <div
-                        key={src.slice(0, 48)}
-                        className="overflow-hidden rounded-lg border border-ink-100 bg-white"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={src}
-                          alt={`${part.number}번 이미지`}
-                          className="w-full max-h-64 object-contain bg-ink-50"
-                        />
-                      </div>
-                    ))}
-                </div>
-              ))}
+                  {VERDICT_OPTIONS.map((v) => (
+                    <option key={v} value={v}>
+                      {verdictLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={saving || busy}
+                  onClick={() => void saveEdit()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  저장
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setMode("view");
+                    setError(null);
+                  }}
+                  className="rounded-lg border border-ink-200 px-3 py-2 text-xs font-medium"
+                >
+                  취소
+                </button>
+              </div>
             </div>
           ) : (
             <>
-              {(fc?.checkGuide || marker.entry.html) && (
+              <p className="font-medium text-ink-900 leading-snug">
+                <u className="decoration-accent/70 underline-offset-2">
+                  {item?.statement || marker.entry.text}
+                </u>
+              </p>
+
+              {parts?.length ? (
+                <div className="space-y-3">
+                  {parts.map((part) => (
+                    <div
+                      key={part.number}
+                      className="rounded-lg border border-ink-100 bg-ink-50/80 p-2.5 space-y-2"
+                    >
+                      <p className="text-ink-800 leading-relaxed whitespace-pre-wrap">
+                        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-ink-900 text-[10px] font-bold text-white mr-1.5 align-middle">
+                          {part.number}
+                        </span>
+                        {part.text}
+                      </p>
+                      {(part.imageUrls ?? [])
+                        .filter(
+                          (u) => !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u)
+                        )
+                        .map((src) => (
+                          <div
+                            key={src.slice(0, 48)}
+                            className="overflow-hidden rounded-lg border border-ink-100 bg-white"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={src}
+                              alt={`${part.number}번 이미지`}
+                              className="w-full max-h-64 object-contain bg-ink-50"
+                            />
+                          </div>
+                        ))}
+                    </div>
+                  ))}
+                </div>
+              ) : answerText ? (
                 <div className="rounded-lg bg-ink-50 border border-ink-100 p-3 text-ink-700 whitespace-pre-wrap leading-relaxed">
                   {failed && (
                     <p className="text-verify-false font-bold mb-2">
                       ✗ 사실과 다름
                     </p>
                   )}
-                  {fc?.checkGuide ||
-                    marker.entry.html?.replace(/<[^>]+>/g, "") ||
-                    "저장된 팩트체크 세부 내용이 없습니다."}
+                  {answerText}
                 </div>
+              ) : (
+                <p className="text-ink-500">
+                  저장된 팩트체크 세부 내용이 없습니다.
+                </p>
               )}
-              {flatFallback.map((src) => (
-                <div
-                  key={src.slice(0, 48)}
-                  className="overflow-hidden rounded-lg border border-ink-100"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={src}
-                    alt=""
-                    className="w-full max-h-64 object-contain bg-ink-50"
-                  />
-                </div>
-              ))}
-            </>
-          )}
 
-          {!parts?.length && !fc?.checkGuide && !flatFallback.length && (
-            <p className="text-ink-500">
-              저장된 팩트체크 세부 내용이 없습니다.
-            </p>
+              {!parts?.length &&
+                images.map((src) => (
+                  <div
+                    key={src.slice(0, 48)}
+                    className="overflow-hidden rounded-lg border border-ink-100"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt=""
+                      className="w-full max-h-64 object-contain bg-ink-50"
+                    />
+                  </div>
+                ))}
+
+              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-ink-100">
+                <button
+                  type="button"
+                  onClick={() => void copyText()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium"
+                >
+                  <ClipboardCopy className="h-3.5 w-3.5" />
+                  텍스트 복사
+                </button>
+                {editing && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!answerText}
+                      onClick={() => {
+                        const html = textToReportHtml(
+                          [
+                            `【F${marker.n}】 ${item?.statement || marker.entry.text}`,
+                            answerText,
+                          ]
+                            .filter(Boolean)
+                            .join("\n\n")
+                        );
+                        if (html) onPasteText(html);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg border border-accent/40 bg-accent-muted/40 px-2.5 py-1.5 text-xs font-medium disabled:opacity-40"
+                    >
+                      <ClipboardPaste className="h-3.5 w-3.5" />
+                      본문에 넣기
+                    </button>
+                    {images.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onPasteImages(images)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-accent/40 bg-accent-muted/40 px-2.5 py-1.5 text-xs font-medium"
+                      >
+                        <ImagePlus className="h-3.5 w-3.5" />
+                        이미지 넣기
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={onUnlink}
+                      className="inline-flex items-center gap-1 rounded-lg border border-ink-200 px-2.5 py-1.5 text-xs font-medium"
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                      연결 제거
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  disabled={busy || saving || !marker.entry.itemId}
+                  onClick={() => setMode("edit")}
+                  className="inline-flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium disabled:opacity-40"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  수정
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || saving}
+                  onClick={() => void deleteFc()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-verify-false/40 bg-verify-false/5 px-2.5 py-1.5 text-xs font-medium text-verify-false disabled:opacity-40"
+                >
+                  {saving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                  삭제
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>
