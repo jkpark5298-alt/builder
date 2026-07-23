@@ -35,7 +35,55 @@ h3,
   font-family: var(--font-display);
 }
 
-/* 보고서 형광펜 · 서식 */
+/* 보고서 형광펜 · 서식 · 본문 박스 안에만 유지 */
+.report-body {
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.report-body *,
+.report-body *::before,
+.report-body *::after {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.report-body p,
+.report-body div,
+.report-body span,
+.report-body li,
+.report-body ul,
+.report-body ol,
+.report-body blockquote,
+.report-body h1,
+.report-body h2,
+.report-body h3,
+.report-body h4,
+.report-body pre,
+.report-body table,
+.report-body td,
+.report-body th {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-indent: 0 !important;
+  position: static !important;
+  left: auto !important;
+  right: auto !important;
+  float: none !important;
+  transform: none !important;
+}
+
+.report-body ul,
+.report-body ol {
+  list-style: none !important;
+  padding-inline-start: 0 !important;
+}
+
 .report-body mark,
 .hl-yellow {
   background: linear-gradient(transparent 8%, #fef08a 8%, #fef08a 92%, transparent 92%);

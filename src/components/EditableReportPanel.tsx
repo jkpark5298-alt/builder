@@ -51,6 +51,7 @@ import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
   applyFontSizeInEditor,
+  containReportBodyLayout,
   DEFAULT_REPORT_FONT_PX,
   findReportBodyEditor,
   getBlockAtCursor,
@@ -58,6 +59,7 @@ import {
   rangeHasVisibleText,
   resolveFontSizeTarget,
   sanitizePastedHtml,
+  selectBlockContents,
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
@@ -400,13 +402,13 @@ export function EditableReportPanel({
   const saveEditorSelection = useCallback(() => {
     const sel = window.getSelection();
     if (!sel?.rangeCount) {
-      setFormatTarget("none");
+      // 툴바 클릭 등으로 선택이 비어도 저장된 Range는 유지
       return;
     }
     const range = sel.getRangeAt(0);
     const editor = findReportBodyEditor(range.commonAncestorContainer);
     if (!editor) {
-      setFormatTarget("none");
+      // 본문 밖(셀렉트·버튼)으로 포커스가 가도 이전 선택 유지
       return;
     }
 
@@ -418,6 +420,11 @@ export function EditableReportPanel({
 
     const block = getBlockAtCursor(editor);
     if (block?.textContent?.replace(/\u00a0/g, " ").trim()) {
+      // 커서가 문단에만 있을 때도 문단 Range를 저장해 크기 적용 가능하게
+      const blockRange = selectBlockContents(block);
+      if (blockRange) {
+        savedSelectionRef.current = blockRange;
+      }
       setFormatTarget("paragraph");
       return;
     }
@@ -437,19 +444,38 @@ export function EditableReportPanel({
 
   const applyFontSize = useCallback(
     (px: number) => {
-      const editor =
+      const editors = document.querySelectorAll<HTMLElement>(
+        "#report .report-body[contenteditable]"
+      );
+      let editor =
         focusActiveBodyEditor() ||
         (window.getSelection() &&
           findReportBodyEditor(window.getSelection()!.anchorNode)) ||
-        document.querySelector<HTMLElement>(
-          `#sec-body-${draftRef.current?.sections[activeSectionIdx]?.sectionId ?? ""}`
-        ) ||
-        document.querySelector<HTMLElement>("#report .report-body[contenteditable]");
+        null;
+
+      // 저장된 선택이 어느 본문에 속하는지 우선
+      const saved = savedSelectionRef.current;
+      if (saved) {
+        const fromSaved = findReportBodyEditor(saved.commonAncestorContainer);
+        if (fromSaved) editor = fromSaved;
+      }
+      if (!editor) {
+        editor =
+          document.querySelector<HTMLElement>(
+            `#sec-body-${draftRef.current?.sections[activeSectionIdx]?.sectionId ?? ""}`
+          ) ||
+          editors[activeSectionIdx] ||
+          editors[0] ||
+          null;
+      }
 
       if (!editor) {
         showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
         return;
       }
+
+      // RichBody가 blur 상태로 html을 덮어쓰지 않도록 포커스 유지
+      editor.focus();
 
       const result = applyFontSizeInEditor(
         editor,
@@ -461,7 +487,21 @@ export function EditableReportPanel({
         return;
       }
 
-      result.editor.dispatchEvent(new Event("input", { bubbles: true }));
+      const html = result.editor.innerHTML;
+      // 어느 섹션인지 찾기
+      let idx = activeSectionIdx;
+      editors.forEach((el, i) => {
+        if (el === result.editor) idx = i;
+      });
+      const id = result.editor.id?.replace(/^sec-body-/, "");
+      if (id) {
+        const found = draftRef.current?.sections.findIndex(
+          (s) => s.sectionId === id
+        );
+        if (found !== undefined && found >= 0) idx = found;
+      }
+
+      patchSection(idx, { body: html, rich: true }, "immediate");
       showFormatHint(
         result.mode === "paragraph"
           ? `${px}px — 현재 문단 전체에 적용했습니다.`
@@ -1042,7 +1082,6 @@ export function EditableReportPanel({
                 }}
                 onBeforeFontSizeSelect={() => {
                   saveEditorSelection();
-                  focusActiveBodyEditor();
                 }}
               />
             </div>
@@ -2471,33 +2510,24 @@ function FormatToolbar({
       >
         <Minus className="h-4 w-4" />
       </ToolBtn>
-      <label className="inline-flex items-center gap-1 text-xs text-ink-500">
-        크기
-        <select
-          className="min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-xs text-ink-800"
-          defaultValue=""
-          onMouseDown={() => {
-            // select는 preventDefault 하면 모바일에서 열리지 않음 — 선택만 저장
-            onBeforeFontSizeSelect?.();
-          }}
-          onFocus={() => onBeforeFontSizeSelect?.()}
-          onChange={(e) => {
-            const px = Number(e.target.value);
-            if (px) onFontSize(px);
-            e.currentTarget.value = "";
-          }}
-          title="선택 글자 또는 커서 문단에 적용"
-        >
-          <option value="" disabled>
-            선택
-          </option>
-          {FONT_SIZES.map((size) => (
-            <option key={size} value={size}>
-              {size}px
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-ink-200 bg-white px-1 py-0.5">
+        <span className="text-[10px] text-ink-400 px-1">크기</span>
+        {FONT_SIZES.map((size) => (
+          <button
+            key={size}
+            type="button"
+            title={`${size}px`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onBeforeFontSizeSelect?.();
+            }}
+            onClick={() => onFontSize(size)}
+            className="min-h-7 min-w-7 rounded-md px-1.5 text-[11px] font-medium text-ink-700 hover:bg-accent-muted hover:text-ink-900"
+          >
+            {size}
+          </button>
+        ))}
+      </div>
       <ToolBtn
         onClick={() => onFontSizeStep(1)}
         title="글자 크게"
@@ -2611,6 +2641,9 @@ function RichBody({
 
   const syncChange = () => {
     if (composingRef.current) return;
+    if (ref.current) {
+      containReportBodyLayout(ref.current);
+    }
     onChange(ref.current?.innerHTML ?? "");
   };
 
@@ -2631,6 +2664,7 @@ function RichBody({
       } else if (text) {
         document.execCommand("insertHTML", false, wrapPlainPasteText(text));
       }
+      if (ref.current) containReportBodyLayout(ref.current);
       syncChange();
       return;
     }
@@ -2638,8 +2672,18 @@ function RichBody({
     if (text) {
       e.preventDefault();
       document.execCommand("insertHTML", false, wrapPlainPasteText(text));
+      if (ref.current) containReportBodyLayout(ref.current);
       syncChange();
     }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Enter 시 브라우저가 들여쓰기·div를 물려주지 않도록 새 문단만 삽입
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    document.execCommand("insertHTML", false, "<p><br></p>");
+    if (ref.current) containReportBodyLayout(ref.current);
+    syncChange();
   };
 
   return (
@@ -2648,7 +2692,7 @@ function RichBody({
       ref={ref}
       contentEditable
       suppressContentEditableWarning
-      className="report-body min-h-[120px] w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed"
+      className="report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed"
       onFocus={() => {
         focusedRef.current = true;
         onFocus?.();
@@ -2659,6 +2703,7 @@ function RichBody({
       }}
       onMouseUp={onSaveSelection}
       onKeyUp={onSaveSelection}
+      onKeyDown={handleKeyDown}
       onPaste={handlePaste}
       onCompositionStart={() => {
         composingRef.current = true;
