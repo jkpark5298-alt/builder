@@ -103,13 +103,27 @@ export async function POST(req: Request, ctx: Ctx) {
   const body = (await req.json().catch(() => ({}))) as {
     channel?: "email" | "kakao" | "goodnotes";
     rebuild?: boolean;
+    /** null = 자동 수집으로 되돌림 / string[] = 수동 지정 */
+    bridgeImages?: string[] | null;
   };
 
   let next = video;
-  if (body.rebuild || !video.infographic) {
-    const infographic = await buildInfographic(video);
+  if (body.bridgeImages !== undefined) {
     next = {
-      ...video,
+      ...next,
+      infographicBridgeImages: Array.isArray(body.bridgeImages)
+        ? body.bridgeImages
+            .filter((u): u is string => typeof u === "string" && Boolean(u.trim()))
+            .slice(0, 6)
+        : null,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  if (body.rebuild || !next.infographic || body.bridgeImages !== undefined) {
+    const infographic = await buildInfographic(next);
+    next = {
+      ...next,
       infographic,
       updatedAt: new Date().toISOString(),
     };

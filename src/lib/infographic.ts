@@ -2,6 +2,12 @@ import type { InfographicData, VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls } from "./image-urls";
 import { isFailedVerdict, verdictBadge, normalizeAiAnswer } from "./text-format";
+import { resolveInfographicBridgeImages } from "./infographic-bridge";
+
+export {
+  collectInfographicBridgeImages,
+  resolveInfographicBridgeImages,
+} from "./infographic-bridge";
 
 const imageCache = new Map<string, string | null>();
 const FONT =
@@ -169,10 +175,69 @@ function concisePlain(text: string, maxChars = 160): string {
   return cut.replace(/\s+\S*$/, "").trim() + "…";
 }
 
+/** 제목/주장과 본문 앞부분이 겹치면 본문에서 제거 (배지+본문 이중 표시 방지) */
+function stripLeadingEcho(body: string, lead: string): string {
+  let b = body.replace(/\s+/g, " ").trim();
+  const t = lead.replace(/\s+/g, " ").trim();
+  if (!b || !t) return b;
+
+  if (b === t) return "";
+
+  const trimLeadPunct = (s: string) =>
+    s.replace(/^[\s:：\-–—·.,，、)）\]】【\[]+/u, "").replace(/^[©ⓒ\u00a9\u24b8]+/u, "").trim();
+
+  if (b.startsWith(t)) {
+    return trimLeadPunct(b.slice(t.length));
+  }
+
+  // 본문 첫 단어(또는 조사 포함)가 제목과 같으면 제거
+  const leadToken = (t.split(/[\s·]/)[0] ?? t).trim();
+  if (leadToken.length >= 2) {
+    const re = new RegExp(
+      `^${escapeRegExp(leadToken)}(?:\\s|[©ⓒ\\u00a9\\u24b8(:：]|$)`
+    );
+    if (re.test(b)) {
+      return trimLeadPunct(b.slice(leadToken.length));
+    }
+  }
+
+  // 앞 8~40자 공유 시 해당 접두 제거
+  const probe = t.slice(0, Math.min(40, t.length));
+  if (probe.length >= 6 && b.startsWith(probe)) {
+    let i = probe.length;
+    while (i < t.length && i < b.length && t[i] === b[i]) i += 1;
+    return trimLeadPunct(b.slice(i));
+  }
+
+  // "1. 주장..." 형태로 답이 주장을 다시 말하는 경우
+  const numbered = b.match(/^\d+[\.)]\s*(.+)$/);
+  if (numbered?.[1]) {
+    const rest = stripLeadingEcho(numbered[1], t);
+    if (rest !== numbered[1]) {
+      return rest || b;
+    }
+  }
+
+  return b;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeInfographicBody(heading: string, bodyHtml: string): string {
+  const short = concisePlain(bodyHtml || "", 200);
+  const cleaned = stripLeadingEcho(short, heading);
+  // 본문이 제목만 있던 경우(빈 details) — 제목 반복하지 않음
+  if (!cleaned || cleaned === heading) return "";
+  return cleaned;
+}
+
 export async function buildInfographic(
   video: VideoRecord
 ): Promise<InfographicData> {
   const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
+  const report = video.report;
   const fcItems = video.items.filter((i) => i.needsFactCheck);
 
   const hero =
@@ -191,27 +256,75 @@ export async function buildInfographic(
   };
 
   const cards: Card[] = [];
-  for (const item of fcItems) {
-    const fc = fcMap.get(item.id);
-    const verdict = fc?.verdict ?? "pending";
+
+  /** 보고서 factChecks / entries 우선 — 없으면 items 폴백 */
+  const reportFcList =
+    report?.factChecks?.filter((f) => f.statement?.trim()) ?? [];
+  const sourceList =
+    reportFcList.length > 0
+      ? reportFcList.map((rf) => {
+          const item = rf.itemId
+            ? fcItems.find((i) => i.id === rf.itemId)
+            : undefined;
+          const fc = rf.itemId ? fcMap.get(rf.itemId) : undefined;
+          return {
+            id: rf.itemId || rf.statement,
+            statement: rf.statement,
+            item,
+            fc,
+            answerHint: rf.checkGuide,
+            answerParts: rf.answerParts ?? fc?.answerParts,
+            answerImageUrl: rf.answerImageUrl ?? fc?.answerImageUrl,
+            answerImageUrls: rf.answerImageUrls ?? fc?.answerImageUrls,
+            verdict: rf.verdict ?? fc?.verdict ?? ("pending" as const),
+          };
+        })
+      : fcItems.map((item) => {
+          const fc = fcMap.get(item.id);
+          return {
+            id: item.id,
+            statement: item.statement,
+            item,
+            fc,
+            answerHint: undefined as string | undefined,
+            answerParts: fc?.answerParts,
+            answerImageUrl: fc?.answerImageUrl,
+            answerImageUrls: fc?.answerImageUrls,
+            verdict: fc?.verdict ?? ("pending" as const),
+          };
+        });
+
+  for (const row of sourceList) {
+    const verdict = row.verdict;
     const badge = verdictBadge(verdict);
     const fail = isFailedVerdict(verdict);
-    const answer = fc?.explanation?.trim() ?? "";
-    const isPrompt = !answer || /^다음 주장을/.test(answer);
-    const summary = concisePlain(
-      isPrompt ? item.statement : normalizeAiAnswer(answer),
-      140
-    );
+    const rawAnswer =
+      (row.answerHint && !/^다음 주장을/.test(row.answerHint)
+        ? row.answerHint
+        : "") ||
+      (row.fc?.explanation?.trim() &&
+      !/^다음 주장을/.test(row.fc.explanation)
+        ? normalizeAiAnswer(row.fc.explanation)
+        : "");
+    const statement = concisePlain(row.statement, 90);
+    let summary = concisePlain(rawAnswer || statement, 160);
+    summary = stripLeadingEcho(summary, statement);
+    // 답이 주장과 같으면 요약란 비움 (이중 표시 방지)
+    if (!summary || summary === statement) {
+      summary = rawAnswer ? concisePlain(rawAnswer, 160) : "";
+      summary = stripLeadingEcho(summary, statement);
+      if (summary === statement) summary = "";
+    }
 
     let related: string | null = null;
-    const partImgs = (fc?.answerParts ?? []).flatMap((p) => p.imageUrls ?? []);
+    const partImgs = (row.answerParts ?? []).flatMap((p) => p.imageUrls ?? []);
     const answerImages = [
-      ...normalizeImageUrls(fc?.answerImageUrl, fc?.answerImageUrls),
+      ...normalizeImageUrls(row.answerImageUrl, row.answerImageUrls),
       ...partImgs,
     ].filter((u) => !isYoutubeThumb(u));
     const itemImages = normalizeImageUrls(
-      item.imageUrl,
-      item.imageUrls
+      row.item?.imageUrl,
+      row.item?.imageUrls
     ).filter((u) => !isYoutubeThumb(u));
     const pick = answerImages[0] ?? itemImages[0];
     if (pick) {
@@ -219,7 +332,7 @@ export async function buildInfographic(
     }
 
     cards.push({
-      statement: concisePlain(item.statement, 90),
+      statement,
       summary,
       mark: fail ? "✗" : badge.mark,
       label: badge.label,
@@ -236,16 +349,10 @@ export async function buildInfographic(
   };
 
   const sectionHints: SectionHint[] = [];
-  for (const s of video.report?.sections ?? []) {
-    if (s.heading === "추가 검증") continue;
-    const short = concisePlain(s.body || "", 170);
-    if (!short) continue;
-    const kind: SectionHint["kind"] =
-      s.heading === "도입"
-        ? "intro"
-        : s.heading === "결론"
-          ? "conclusion"
-          : "body";
+  for (const s of report?.sections ?? []) {
+    if (s.heading === "추가 검증" || s.heading === "검증 상세") continue;
+    const short = normalizeInfographicBody(s.heading, s.body || "");
+    // 제목만 있고 본문 중복인 섹션도 이미지가 있으면 카드로 유지
     const fromSec = [s.imageUrl, ...(s.images ?? [])].filter(
       (u): u is string => Boolean(u) && !isYoutubeThumb(u)
     );
@@ -259,25 +366,27 @@ export async function buildInfographic(
       ].filter((u) => !isYoutubeThumb(u));
     });
     const images = Array.from(new Set([...fromSec, ...fromEntries]));
-    sectionHints.push({ heading: s.heading, short, kind, images });
+    if (!short && !images.length) continue;
+    const kind: SectionHint["kind"] =
+      s.heading === "도입"
+        ? "intro"
+        : s.heading === "결론"
+          ? "conclusion"
+          : "body";
+    sectionHints.push({
+      heading: s.heading,
+      short: short || "",
+      kind,
+      images,
+    });
   }
 
   const intro = sectionHints.filter((s) => s.kind === "intro");
   const bodySecs = sectionHints.filter((s) => s.kind === "body");
   const conclusions = sectionHints.filter((s) => s.kind === "conclusion");
 
-  // 도입↔내용 사이에 넣을 관련 이미지 (소주제·FC 이미지)
-  const bridgeImages: string[] = [];
-  const seenBridge = new Set<string>();
-  for (const s of [...bodySecs, ...conclusions, ...intro]) {
-    for (const u of s.images) {
-      if (seenBridge.has(u)) continue;
-      seenBridge.add(u);
-      bridgeImages.push(u);
-      if (bridgeImages.length >= 6) break;
-    }
-    if (bridgeImages.length >= 6) break;
-  }
+  // 도입↔내용 사이에 넣을 관련 이미지 (수동 지정 또는 자동 수집)
+  const bridgeImages = resolveInfographicBridgeImages(video, 6);
   const bridgeDataUrls = (
     await Promise.all(bridgeImages.map((u) => fetchImageDataUrl(u)))
   ).filter((u): u is string => Boolean(u));
@@ -322,57 +431,77 @@ export async function buildInfographic(
     y += 34;
   };
 
-  /** 간결 카드 — 사용자 참고 이미지 스타일(좌측 오렌지 바 + 배지) */
+  /** 간결 카드 — 제목 배지 구역 / 본문 구역을 완전히 분리 */
   const renderConciseCard = async (
     heading: string,
     short: string,
     imageUrls: string[] = []
   ) => {
-    const lines = wrapSvgText(short, contentW - 44, 13);
-    const bodyH = textBlockHeight(lines, 20, 10);
+    const bodyText = stripLeadingEcho(short, heading);
+    const bodyFs = 13;
+    const bodyLh = 22;
+    const lines = bodyText
+      ? wrapSvgText(bodyText, contentW - 48, bodyFs)
+      : [];
+    const bodyH = textBlockHeight(lines, bodyLh, 12);
     const imgs = (
       await Promise.all(
-        imageUrls.slice(0, 3).map((u) => fetchImageDataUrl(u))
+        imageUrls.slice(0, 2).map((u) => fetchImageDataUrl(u))
       )
     ).filter((u): u is string => Boolean(u));
-    const imgRowH = imgs.length ? 110 : 0;
-    const padTop = 36;
+    const imgRowH = imgs.length ? 148 : 0;
+
+    // 헤더 밴드(배지 전용)와 본문 y가 절대 겹치지 않게
+    const headerBand = 52;
+    const bodyTopPad = 10;
     const padBot = 16;
-    const gap = imgs.length ? 12 : 0;
-    const hgt = padTop + bodyH + gap + imgRowH + padBot;
+    const gap = imgs.length && lines.length ? 16 : imgs.length ? 12 : 0;
+    const bodyBlock = lines.length ? bodyTopPad + bodyH + 4 : 8;
+    const cardH = headerBand + bodyBlock + gap + imgRowH + padBot;
     const top = y;
+
+    // SVG text y = baseline → 헤더 끝 + pad + fontSize
+    const bodyY = top + headerBand + bodyTopPad + bodyFs;
     const body = renderLines(
       lines,
       padX + 22,
-      top + padTop,
-      20,
-      `font-size="13" fill="#3a4a5c"`
+      bodyY,
+      bodyLh,
+      `font-size="${bodyFs}" fill="#3a4a5c"`
     );
 
     let imgSvg = "";
     if (imgs.length) {
       const slotW = (contentW - 44 - (imgs.length - 1) * 10) / imgs.length;
-      const iy = top + padTop + bodyH + gap;
+      const iy = top + headerBand + bodyBlock + gap;
       imgs.forEach((dataUrl, ii) => {
         const ix = padX + 22 + ii * (slotW + 10);
-        const clip = `ic${y}_${ii}`;
+        const clip = `ic${Math.round(top)}_${ii}`;
         imgSvg += `
         <clipPath id="${clip}"><rect x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" rx="10"/></clipPath>
-        <image href="${dataUrl}" xlink:href="${dataUrl}" x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>
-        <rect x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" rx="10" fill="none" stroke="#d0d9e2"/>`;
+        <image href="${dataUrl}" xlink:href="${dataUrl}" x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" preserveAspectRatio="xMidYMid meet" clip-path="url(#${clip})"/>
+        <rect x="${ix}" y="${iy}" width="${slotW}" height="${imgRowH}" rx="10" fill="#f4f7fa" stroke="#d0d9e2"/>`;
       });
     }
 
+    const badgeLabel = heading.length > 28 ? `${heading.slice(0, 28)}…` : heading;
+    const badgeW = Math.min(
+      contentW - 36,
+      Math.max(72, badgeLabel.length * 14 + 32)
+    );
+    const badgeH = 28;
+    const badgeTop = 12;
+
     blocks.push(`
       <g>
-        <rect x="${padX}" y="${top}" width="${contentW}" height="${hgt}" rx="14" fill="#ffffff" stroke="#e5ebf0"/>
-        <rect x="${padX}" y="${top}" width="6" height="${hgt}" rx="3" fill="#c45c26"/>
-        <rect x="${padX + 18}" y="${top + 12}" width="${Math.max(48, heading.length * 14 + 20)}" height="22" rx="6" fill="#fff4ee"/>
-        <text x="${padX + 28}" y="${top + 27}" font-size="12" font-weight="700" fill="#c45c26">${escapeXml(heading)}</text>
+        <rect x="${padX}" y="${top}" width="${contentW}" height="${cardH}" rx="14" fill="#ffffff" stroke="#e5ebf0"/>
+        <rect x="${padX}" y="${top}" width="6" height="${cardH}" rx="3" fill="#c45c26"/>
+        <rect x="${padX + 18}" y="${top + badgeTop}" width="${badgeW}" height="${badgeH}" rx="7" fill="#fff4ee"/>
+        <text x="${padX + 28}" y="${top + badgeTop + 19}" font-size="12" font-weight="700" fill="#c45c26">${escapeXml(badgeLabel)}</text>
         ${body.svg}
         ${imgSvg}
       </g>`);
-    y += hgt + 14;
+    y += cardH + 16;
   };
 
   // 1) 도입 → (관련 이미지 브릿지) → 내용(소주제·결론)
@@ -430,15 +559,21 @@ export async function buildInfographic(
     const imgGap = hasImg ? 20 : 0;
     const textW = contentW - 52 - imgW - imgGap;
     const stmtLines = wrapSvgText(c.statement, textW, 13.5);
-    const sumLines = wrapSvgText(c.summary, textW, 12);
+    const sumText = c.summary
+      ? stripLeadingEcho(c.summary, c.statement)
+      : "";
+    const sumLines = sumText ? wrapSvgText(sumText, textW, 12) : [];
     const stmtH = textBlockHeight(stmtLines, 20);
     const sumH = textBlockHeight(sumLines, 18, 10);
     const topPad = 16;
-    const gap = 12;
+    const gap = sumLines.length ? 12 : 0;
     const padBot = 20;
-    const labelRow = 26;
+    const labelRow = 28;
+    const afterLabelGap = 14;
+    const stmtAscent = Math.round(13.5 * 0.9);
+    const stmtOffset = labelRow + afterLabelGap + stmtAscent;
     const textBlock =
-      topPad + labelRow + stmtH + gap + sumH + padBot;
+      topPad + stmtOffset + stmtH + gap + sumH + padBot;
     const imgH = hasImg ? 112 : 0;
     const blockH = Math.max(textBlock, hasImg ? imgH + 32 : 0, 96);
     const top = y;
@@ -446,7 +581,7 @@ export async function buildInfographic(
     const accent = c.fail ? "#c03030" : "#2d6a3e";
     const soft = c.fail ? "#fde8e8" : "#e8f5ec";
     const labelW = Math.min(120, 16 + c.label.length * 11);
-    const stmtY = top + topPad + labelRow + 2;
+    const stmtY = top + topPad + stmtOffset;
 
     let imgBlock = "";
     if (c.img) {

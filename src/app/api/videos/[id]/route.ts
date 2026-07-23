@@ -36,6 +36,8 @@ import {
 } from "@/lib/answer-parts";
 import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { reportThumbnailUrl } from "@/lib/input-mode";
+import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 
 function jsonVideo(next: VideoRecord, extra: Record<string, unknown> = {}) {
   return NextResponse.json({
@@ -221,6 +223,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     };
     /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
     dismissFactCheckRevisionNotice?: boolean;
+    /** 상세·목록 상단 표지(썸네일) 이미지 */
+    updateThumbnail?: { thumbnailUrl: string | null };
   };
 
   try {
@@ -233,6 +237,38 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   let next = { ...video };
+
+  if (body.updateThumbnail) {
+    const raw = body.updateThumbnail.thumbnailUrl;
+    let thumb: string;
+    if (raw === null || raw === "") {
+      thumb =
+        video.inputMode === "report"
+          ? reportThumbnailUrl()
+          : youtubeThumbnailUrl(video.videoId);
+    } else {
+      const t = raw.trim();
+      if (
+        !t.startsWith("http://") &&
+        !t.startsWith("https://") &&
+        !t.startsWith("/api/media/") &&
+        !t.startsWith("data:image/")
+      ) {
+        return NextResponse.json(
+          { error: "유효한 이미지 URL이 아닙니다." },
+          { status: 400 }
+        );
+      }
+      thumb = t;
+    }
+    next = {
+      ...next,
+      thumbnailUrl: thumb,
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "thumbnail_updated" });
+  }
 
   if (body.updateReportInput && video.status === "report_input_draft") {
     const title = (body.updateReportInput.title ?? video.title).trim();

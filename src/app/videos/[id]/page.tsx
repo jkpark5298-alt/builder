@@ -1,4 +1,5 @@
 import { ReportCreateForm } from "@/components/ReportCreateForm";
+import { ThumbnailEditor } from "@/components/ThumbnailEditor";
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
@@ -96,14 +97,11 @@ export default async function VideoDetailPage({
       </ol>
 
       <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] print:hidden">
-        <div className="overflow-hidden rounded-2xl border border-ink-200 bg-ink-900">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={video.thumbnailUrl}
-            alt=""
-            className="w-full aspect-video object-cover opacity-95"
-          />
-        </div>
+        <ThumbnailEditor
+          videoId={video.id}
+          thumbnailUrl={video.thumbnailUrl}
+          emphasize={ready}
+        />
         <div className="space-y-4">
           <div>
             <p className="text-sm text-accent font-medium">{video.channel}</p>

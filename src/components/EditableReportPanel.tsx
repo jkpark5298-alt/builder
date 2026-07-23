@@ -904,7 +904,7 @@ export function EditableReportPanel({
           </h2>
           <div className="flex flex-wrap gap-2">
             <a
-              href="/"
+              href="#cover"
               className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent"
             >
               <Home className="h-4 w-4" />

@@ -223,6 +223,11 @@ export interface VideoRecord {
   /** legacy */
   legacyReport?: ReportSection | null;
   infographic: InfographicData | null;
+  /**
+   * 인포그래픽 「관련 이미지」 갤러리.
+   * 없으면 보고서·팩트체크에서 자동 수집(최대 6장).
+   */
+  infographicBridgeImages?: string[] | null;
   status: PipelineStatus;
   errorMessage?: string;
   tags: string[];
