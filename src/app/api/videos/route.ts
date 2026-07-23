@@ -4,6 +4,8 @@ import {
   createManualOverviewJob,
   createVideoJob,
   runVideoPipeline,
+  saveReportInputDraft,
+  startReportFromDraft,
 } from "@/lib/process";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { readAllVideos, searchVideos, storageMode } from "@/lib/store";
@@ -34,8 +36,8 @@ export async function POST(req: Request) {
   }
   try {
     const body = (await req.json()) as {
-      /** youtube (기본) | report — Report 생성은 URL·자막 자동 수집 없음 */
-      mode?: "youtube" | "report";
+      /** youtube (기본) | report | report_draft */
+      mode?: "youtube" | "report" | "report_draft";
       youtubeUrl?: string;
       title?: string;
       channel?: string;
@@ -44,6 +46,27 @@ export async function POST(req: Request) {
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
     };
+
+    if (body.mode === "report_draft") {
+      const title = body.title?.trim();
+      if (!title || title.length < 2) {
+        return NextResponse.json(
+          { error: "제목을 2자 이상 입력해 주세요." },
+          { status: 400 }
+        );
+      }
+      const video = await saveReportInputDraft({
+        title,
+        channel: body.channel?.trim(),
+        pastedScript: body.pastedScript,
+        creatorNotes: body.creatorNotes?.trim(),
+      });
+      return NextResponse.json({
+        video,
+        draft: true,
+        storage: storageMode(),
+      });
+    }
 
     if (body.mode === "report") {
       const title = body.title?.trim();

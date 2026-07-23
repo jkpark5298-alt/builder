@@ -18,6 +18,7 @@ export type FactCheckVerdict =
 export type FactCheckMode = "auto" | "manual";
 
 export type PipelineStatus =
+  | "report_input_draft"
   | "queued"
   | "fetching"
   | "summarizing"
@@ -197,6 +198,13 @@ export interface VideoRecord {
   items: SummaryItem[];
   factChecks: FactCheckResult[];
   /**
+   * 팩트체크 초안 출처.
+   * llm_draft: 인앱 OpenAI 초안 / prompt·heuristic: 질문만 두고 외부 AI 붙여넣기
+   */
+  factCheckSource?: "llm_draft" | "prompt" | "heuristic";
+  /** 팩트체크 단계 안내 (인앱 초안 성공·폴백 설명) */
+  factCheckNotice?: string;
+  /**
    * 요약 수정으로 팩트체크 항목이 다시 만들어진 경우 안내.
    * dismissed면 배너 숨김.
    */
@@ -208,6 +216,10 @@ export interface VideoRecord {
   } | null;
   reportType: ReportType;
   report: TypedReport | null;
+  /** llm: 글쓰기 AI / assembled: 요약·FC 조립(내용 적응형) */
+  reportSource?: "llm" | "assembled";
+  /** 보고서 작성 방식 안내 (AI 비용·폴백) */
+  reportWriteNotice?: string;
   /** legacy */
   legacyReport?: ReportSection | null;
   infographic: InfographicData | null;

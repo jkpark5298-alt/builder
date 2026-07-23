@@ -2,11 +2,19 @@ import type { PipelineStatus, VideoRecord } from "./types";
 import { factCheckProgress } from "./factcheck-client";
 
 export type LibraryStage =
+  | "report_input_draft"
   | "processing"
   | "factcheck_draft"
   | "report_pending"
   | "complete"
   | "error";
+
+/** Report 생성 — 제목·스크립트 입력만 저장된 단계 */
+export function isReportInputDraft(
+  video: Pick<VideoRecord, "status">
+): boolean {
+  return video.status === "report_input_draft";
+}
 
 /** 완료: 보고서·인포그래픽까지 생성됨 */
 export function isComplete(video: Pick<VideoRecord, "status">): boolean {
@@ -15,12 +23,13 @@ export function isComplete(video: Pick<VideoRecord, "status">): boolean {
 
 /**
  * 1) 임시 저장 — 팩트체크를 이어서 할 수 있는 단계
- * (진행 중·오류·팩트체크 미완료)
+ * (입력 중·진행 중·오류·팩트체크 미완료)
  */
 export function isFactCheckDraft(
   video: Pick<VideoRecord, "status" | "items" | "factChecks">
 ): boolean {
   if (video.status === "ready") return false;
+  if (video.status === "report_input_draft") return true;
   if (video.status === "error") return true;
   if (
     video.status === "queued" ||
@@ -51,6 +60,7 @@ export function libraryStage(
 ): LibraryStage {
   if (video.status === "ready") return "complete";
   if (video.status === "error") return "error";
+  if (video.status === "report_input_draft") return "report_input_draft";
   if (isReportPending(video)) return "report_pending";
   if (
     video.status === "queued" ||
@@ -71,6 +81,8 @@ export function libraryCardLabel(
       return "완료";
     case "report_pending":
       return "보고서 저장";
+    case "report_input_draft":
+      return "입력 중";
     case "factcheck_draft":
       return "임시 저장";
     case "error":
@@ -86,6 +98,8 @@ export function libraryStatusLabel(status: PipelineStatus): string {
   switch (status) {
     case "ready":
       return "완료";
+    case "report_input_draft":
+      return "입력 중";
     case "awaiting_factcheck":
       return "임시 저장";
     case "queued":

@@ -1,7 +1,7 @@
 import { v4 as uuid } from "uuid";
 import { buildInfographic } from "./infographic";
 import { autoFactCheck, hasLlm, summarizeContent } from "./pipeline";
-import { buildTypedReport } from "./report";
+import { buildReportDocument } from "./report-write";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
 import type { ReportType, VideoRecord } from "./types";
@@ -145,6 +145,126 @@ export async function createReportJob(opts: {
   };
   await upsertVideo(record);
   return record;
+}
+
+/** Report 입력 임시 저장 — 제목·스크립트 일부만 있어도 서버에 보관 */
+export async function saveReportInputDraft(opts: {
+  id?: string;
+  title: string;
+  channel?: string;
+  pastedScript?: string;
+  creatorNotes?: string;
+}): Promise<VideoRecord> {
+  const title = opts.title.trim();
+  if (title.length < 2) {
+    throw new Error("제목을 2자 이상 입력해 주세요.");
+  }
+
+  const script = normalizePastedText(opts.pastedScript ?? "");
+  const channel = opts.channel?.trim() || "직접 입력";
+  const description = opts.creatorNotes?.trim() ?? "";
+  const chapters = description
+    ? parseChaptersFromDescription(description)
+    : [];
+  const now = new Date().toISOString();
+  const scriptNotice = script
+    ? `입력 중 · 스크립트 ${script.length.toLocaleString()}자 (80자 이상이면 요약·검증을 시작할 수 있습니다)`
+  : "입력 중 · 제목만 저장됨. 스크립트를 이어서 붙여넣어 주세요.";
+
+  if (opts.id) {
+    const existing = await getVideo(opts.id);
+    if (!existing) {
+      throw new Error("항목을 찾을 수 없습니다.");
+    }
+    if (
+      existing.inputMode !== "report" ||
+      existing.status !== "report_input_draft"
+    ) {
+      throw new Error("이 항목은 입력 임시 저장을 수정할 수 없습니다.");
+    }
+    const record: VideoRecord = {
+      ...existing,
+      title,
+      channel,
+      description,
+      chapters,
+      transcript: script,
+      transcriptSource: script ? "pasted" : "none",
+      scriptNotice,
+      tags: Array.from(
+        new Set([
+          ...existing.tags.filter((t) => t !== "has-script"),
+          "report",
+          channel,
+          ...(script ? ["has-script"] : []),
+        ])
+      ),
+      updatedAt: now,
+    };
+    await upsertVideo(record);
+    return record;
+  }
+
+  const id = uuid();
+  const record: VideoRecord = {
+    id,
+    inputMode: "report",
+    youtubeUrl: "",
+    videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
+    title,
+    channel,
+    thumbnailUrl: reportThumbnailUrl(),
+    description,
+    chapters,
+    transcript: script,
+    transcriptSource: script ? "pasted" : "none",
+    scriptNotice,
+    overview: "",
+    summarySource: "none",
+    summaryBullets: [],
+    items: [],
+    factChecks: [],
+    reportType: "C",
+    report: null,
+    infographic: null,
+    status: "report_input_draft",
+    tags: ["report", channel, ...(script ? ["has-script"] : [])],
+    createdAt: now,
+    updatedAt: now,
+  };
+  await upsertVideo(record);
+  return record;
+}
+
+/** 입력 임시 저장 → 요약·팩트체크 파이프라인 시작 */
+export async function startReportFromDraft(
+  id: string,
+  creatorNotes?: string
+): Promise<VideoRecord> {
+  const existing = await getVideo(id);
+  if (!existing) {
+    throw new Error("항목을 찾을 수 없습니다.");
+  }
+  if (existing.status !== "report_input_draft") {
+    throw new Error("이미 요약·검증이 시작된 항목입니다.");
+  }
+
+  const script = normalizePastedText(existing.transcript ?? "");
+  if (!hasUsablePastedScript(script)) {
+    throw new Error("스크립트(본문)를 80자 이상 붙여넣어 주세요.");
+  }
+
+  const now = new Date().toISOString();
+  let record: VideoRecord = {
+    ...existing,
+    transcript: script,
+    transcriptSource: "pasted",
+    scriptNotice: `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`,
+    status: "queued",
+    updatedAt: now,
+  };
+  await upsertVideo(record);
+  return runVideoPipeline(id, creatorNotes, script);
 }
 
 function buildReportMeta(
@@ -299,7 +419,7 @@ export async function runVideoPipeline(
     };
     await upsertVideo(record);
 
-    const factChecks = await autoFactCheck(summary.items, {
+    const fcResult = await autoFactCheck(summary.items, {
       ...meta,
       transcriptSource: source,
       videoId: record.videoId,
@@ -307,14 +427,22 @@ export async function runVideoPipeline(
     record = {
       ...record,
       items: summary.items,
-      factChecks,
+      factChecks: fcResult.factChecks,
+      factCheckSource: fcResult.source,
+      factCheckNotice: fcResult.notice,
       report: null,
       infographic: null,
+      reportSource: undefined,
+      reportWriteNotice: undefined,
       status: "awaiting_factcheck",
       tags: Array.from(
         new Set([
           ...record.tags,
-          hasLlm() ? "auto-factcheck" : "heuristic-factcheck",
+          fcResult.source === "llm_draft"
+            ? "fc-llm-draft"
+            : hasLlm()
+              ? "auto-factcheck"
+              : "heuristic-factcheck",
           "manual-review",
         ])
       ),
@@ -380,7 +508,7 @@ export async function createAndProcessReport(opts: {
   return runVideoPipeline(job.id, opts.creatorNotes, opts.pastedScript);
 }
 
-/** 3) 요약+팩트체크 → 유형별 보고서 + 인포그래픽 */
+/** 3) 요약+팩트체크 → 글쓰기 AI 보고서(실패 시 조립) + 인포그래픽 */
 export async function finalizeReport(
   video: VideoRecord,
   reportType?: ReportType,
@@ -391,13 +519,26 @@ export async function finalizeReport(
     reportType: reportType ?? video.reportType,
     updatedAt: new Date().toISOString(),
   };
-  const report = buildTypedReport(typed);
-  const withReport = { ...typed, report };
+  const built = await buildReportDocument(typed);
+  const withReport = {
+    ...typed,
+    report: built.report,
+    reportSource: built.source,
+    reportWriteNotice: built.notice,
+  };
   const infographic = await buildInfographic(withReport);
   const next: VideoRecord = {
     ...withReport,
     infographic,
     status: "ready",
+    tags: Array.from(
+      new Set([
+        ...typed.tags.filter(
+          (t) => t !== "report-llm" && t !== "report-assembled"
+        ),
+        built.source === "llm" ? "report-llm" : "report-assembled",
+      ])
+    ),
     updatedAt: new Date().toISOString(),
   };
   return upsertVideo(next, expectedUpdatedAt);

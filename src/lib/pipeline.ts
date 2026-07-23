@@ -1,9 +1,17 @@
 import { v4 as uuid } from "uuid";
-import type { FactCheckResult, SummaryItem, VideoRecord } from "./types";
+import type {
+  FactCheckResult,
+  FactCheckVerdict,
+  SummaryItem,
+  VideoRecord,
+} from "./types";
 import type { YoutubeMeta } from "./youtube";
 import { detectReportType } from "./report";
 import type { ReportType } from "./types";
-import { buildFactCheckPrompt } from "./text-format";
+import { buildFactCheckPrompt, normalizeAiAnswer } from "./text-format";
+import { chatJson, chatText, hasLlm } from "./llm";
+
+export { hasLlm } from "./llm";
 
 export type SummaryMeta = YoutubeMeta & {
   transcriptSource:
@@ -16,125 +24,36 @@ export type SummaryMeta = YoutubeMeta & {
   videoId?: string;
 };
 
-export function hasLlm(): boolean {
-  return Boolean(process.env.OPENAI_API_KEY);
+export type FactCheckPipelineResult = {
+  factChecks: FactCheckResult[];
+  /** llm_draft: 인앱 초안 답변 / prompt: 질문만(외부 붙여넣기) / heuristic: 규칙 질문 */
+  source: "llm_draft" | "prompt" | "heuristic";
+  notice?: string;
+};
+
+const VERDICTS: FactCheckVerdict[] = [
+  "true",
+  "mostly_true",
+  "mixed",
+  "mostly_false",
+  "false",
+  "unverifiable",
+];
+
+function parseVerdict(raw: unknown): FactCheckVerdict {
+  const v = String(raw ?? "").trim();
+  return VERDICTS.includes(v as FactCheckVerdict)
+    ? (v as FactCheckVerdict)
+    : "unverifiable";
 }
 
-function parseJsonLoose<T>(raw: string): T | null {
-  const trimmed = raw.trim();
-  try {
-    return JSON.parse(trimmed) as T;
-  } catch {
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced?.[1]) {
-      try {
-        return JSON.parse(fenced[1].trim()) as T;
-      } catch {
-        /* continue */
-      }
-    }
-    const start = trimmed.indexOf("{");
-    const end = trimmed.lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(trimmed.slice(start, end + 1)) as T;
-      } catch {
-        return null;
-      }
-    }
-    return null;
+function ensureFactCheckGuide(item: SummaryItem, prompt: string) {
+  if (!item.evidence.some((e) => e.sourceHint === "factcheck-guide")) {
+    item.evidence = [
+      ...item.evidence,
+      { text: prompt, sourceHint: "factcheck-guide" },
+    ];
   }
-}
-
-async function chatJson<T>(
-  system: string,
-  user: string,
-  opts?: { maxTokens?: number; temperature?: number }
-): Promise<T | null> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    console.error("[pipeline] OPENAI_API_KEY 없음 — AI 요약 불가");
-    return null;
-  }
-  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(60_000),
-    body: JSON.stringify({
-      model,
-      temperature: opts?.temperature ?? 0.25,
-      max_tokens: opts?.maxTokens ?? 8_000,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("[pipeline] LLM JSON error", res.status, err.slice(0, 400));
-    throw new Error(`LLM error: ${res.status} ${err}`);
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) return null;
-  return parseJsonLoose<T>(content);
-}
-
-/** JSON 없이 상세 요약 본문만 받기 (안정적) */
-async function chatText(
-  system: string,
-  user: string,
-  opts?: { maxTokens?: number; temperature?: number }
-): Promise<string | null> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    console.error("[pipeline] OPENAI_API_KEY 없음 — AI 요약 불가");
-    return null;
-  }
-  const base = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
-
-  const res = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(60_000),
-    body: JSON.stringify({
-      model,
-      temperature: opts?.temperature ?? 0.3,
-      max_tokens: opts?.maxTokens ?? 8_000,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("[pipeline] LLM text error", res.status, err.slice(0, 400));
-    throw new Error(`LLM error: ${res.status} ${err}`);
-  }
-
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = data.choices?.[0]?.message?.content?.trim();
-  return content || null;
 }
 
 const DETAILED_TEXT_SYSTEM = `당신은 한국어 유튜브 강연 심층 요약가입니다.
@@ -1518,83 +1437,86 @@ function thumb(videoId: string, index: number) {
   return `https://i.ytimg.com/vi/${videoId}/${variants[index % variants.length]}.jpg`;
 }
 
-/** 2) 요약 주장 기준 자동 팩트체크 가이드 (상세) */
-export async function autoFactCheck(
+/** 인앱 LLM으로 팩트체크 초안 답변·판정 생성. 실패 시 null */
+async function draftFactCheckAnswersLlm(
   items: SummaryItem[],
   meta: SummaryMeta
-): Promise<FactCheckResult[]> {
-  const targets = items.filter((i) => i.needsFactCheck);
-  if (!targets.length) return [];
+): Promise<Map<
+  string,
+  { explanation: string; verdict: FactCheckVerdict; sources: string[] }
+> | null> {
+  if (!hasLlm() || !items.length) return null;
 
-  const system = `한국어 팩트체크 프롬프트 작성자입니다.
-각 항목의 statement/detail을 보고, 제미나이·ChatGPT 등 AI에게 바로 붙여넣어 팩트체크할 수 있는 **질문 한 문장**을 만드세요.
-필수: 주장 인용 + 검증 포인트(수치·시기·인명·지명·사료) + 출처 요청 + 사실/과장/미확인 구분 요청.
-금지: ①②③ 목록, "전반적으로 확인" 같은 포괄 문구, 여러 문장.
-
-JSON: { "results": [{ "itemId": string, "explanation": string }] }
-explanation = AI에게 물어볼 한 문장.`;
+  const system = `당신은 한국어 팩트체커입니다. 각 주장에 대해 검증 초안을 작성하세요.
+규칙:
+- 확실하지 않으면 unverifiable 또는 mixed를 쓰고, 모르는 사실을 단정하지 마세요.
+- 설명은 1. 2. 번호 목록(한국어), 근거·반론·한계를 포함. ** 표시 금지.
+- verdict는 다음 중 하나: true, mostly_true, mixed, mostly_false, false, unverifiable
+JSON: { "results": [{ "itemId": string, "verdict": string, "explanation": string, "sources": string[] }] }`;
 
   try {
     const llm = await chatJson<{
-      results: Array<{ itemId: string; explanation: string }>;
+      results?: Array<{
+        itemId?: string;
+        verdict?: string;
+        explanation?: string;
+        sources?: string[];
+      }>;
     }>(
       system,
       JSON.stringify({
         title: meta.title,
-        items: targets.map((t) => ({
+        channel: meta.channel,
+        overviewHint: "",
+        items: items.map((t) => ({
           itemId: t.id,
           statement: t.statement,
           detail: t.detail,
-          evidence: t.evidence,
+          guide: t.evidence.find((e) => e.sourceHint === "factcheck-guide")
+            ?.text,
         })),
-      })
+      }),
+      { maxTokens: 6_000, temperature: 0.2, timeoutMs: 120_000 }
     );
-    if (llm?.results?.length) {
-      const now = new Date().toISOString();
-      const byId = new Map(llm.results.map((r) => [r.itemId, r.explanation]));
-      return targets.map((item) => {
-        const prompt =
-          byId.get(item.id) ||
-          item.evidence.find((e) => e.sourceHint === "factcheck-guide")?.text ||
-          aiPromptFor(item.statement, item.detail);
-        // 질문은 evidence에 두고, explanation(답변)은 비워 사용자가 입력
-        if (
-          !item.evidence.some((e) => e.sourceHint === "factcheck-guide")
-        ) {
-          item.evidence = [
-            ...item.evidence,
-            { text: prompt, sourceHint: "factcheck-guide" },
-          ];
-        }
-        return {
-          itemId: item.id,
-          mode: "auto" as const,
-          verdict: "pending" as const,
-          explanation: "",
-          sources: [],
-          checkedAt: now,
-        };
+
+    if (!llm?.results?.length) return null;
+    const map = new Map<
+      string,
+      { explanation: string; verdict: FactCheckVerdict; sources: string[] }
+    >();
+    for (const r of llm.results) {
+      if (!r?.itemId) continue;
+      const explanation = normalizeAiAnswer(String(r.explanation ?? "").trim());
+      if (explanation.length < 20) continue;
+      if (/^다음 주장을/.test(explanation) && /팩트체크/.test(explanation)) {
+        continue;
+      }
+      map.set(r.itemId, {
+        explanation,
+        verdict: parseVerdict(r.verdict),
+        sources: Array.isArray(r.sources)
+          ? r.sources.map((s) => String(s).trim()).filter(Boolean).slice(0, 8)
+          : [],
       });
     }
-  } catch {
-    /* heuristic */
+    return map.size ? map : null;
+  } catch (e) {
+    console.error("[pipeline] draftFactCheckAnswersLlm failed", e);
+    return null;
   }
-
-  return heuristicGuides(targets);
 }
 
-function heuristicGuides(items: SummaryItem[]): FactCheckResult[] {
+function promptOnlyFactChecks(
+  targets: SummaryItem[],
+  promptById?: Map<string, string>
+): FactCheckResult[] {
   const now = new Date().toISOString();
-  return items.map((item) => {
+  return targets.map((item) => {
     const prompt =
+      promptById?.get(item.id) ||
       item.evidence.find((e) => e.sourceHint === "factcheck-guide")?.text ||
       aiPromptFor(item.statement, item.detail);
-    if (!item.evidence.some((e) => e.sourceHint === "factcheck-guide")) {
-      item.evidence = [
-        ...item.evidence,
-        { text: prompt, sourceHint: "factcheck-guide" },
-      ];
-    }
+    ensureFactCheckGuide(item, prompt);
     return {
       itemId: item.id,
       mode: "auto" as const,
@@ -1604,6 +1526,198 @@ function heuristicGuides(items: SummaryItem[]): FactCheckResult[] {
       checkedAt: now,
     };
   });
+}
+
+/**
+ * 2) 팩트체크: 인앱 LLM 초안 답변 시도 → 실패 시 기존처럼 질문(가이드)만 두고 수동 붙여넣기
+ */
+export async function autoFactCheck(
+  items: SummaryItem[],
+  meta: SummaryMeta
+): Promise<FactCheckPipelineResult> {
+  const targets = items.filter((i) => i.needsFactCheck);
+  if (!targets.length) {
+    return { factChecks: [], source: "heuristic" };
+  }
+
+  const promptById = new Map<string, string>();
+
+  // (A) 질문 가이드 생성 (기존)
+  const guideSystem = `한국어 팩트체크 프롬프트 작성자입니다.
+각 항목의 statement/detail을 보고, 제미나이·ChatGPT 등 AI에게 바로 붙여넣어 팩트체크할 수 있는 **질문 한 문장**을 만드세요.
+필수: 주장 인용 + 검증 포인트(수치·시기·인명·지명·사료) + 출처 요청 + 사실/과장/미확인 구분 요청.
+금지: ①②③ 목록, "전반적으로 확인" 같은 포괄 문구, 여러 문장.
+
+JSON: { "results": [{ "itemId": string, "explanation": string }] }
+explanation = AI에게 물어볼 한 문장.`;
+
+  let guideSource: "prompt" | "heuristic" = "heuristic";
+  if (hasLlm()) {
+    try {
+      const llm = await chatJson<{
+        results: Array<{ itemId: string; explanation: string }>;
+      }>(
+        guideSystem,
+        JSON.stringify({
+          title: meta.title,
+          items: targets.map((t) => ({
+            itemId: t.id,
+            statement: t.statement,
+            detail: t.detail,
+            evidence: t.evidence,
+          })),
+        })
+      );
+      if (llm?.results?.length) {
+        guideSource = "prompt";
+        for (const r of llm.results) {
+          if (r?.itemId && r.explanation?.trim()) {
+            promptById.set(r.itemId, r.explanation.trim());
+          }
+        }
+      }
+    } catch {
+      /* heuristic guides below */
+    }
+  }
+
+  for (const item of targets) {
+    const prompt =
+      promptById.get(item.id) ||
+      item.evidence.find((e) => e.sourceHint === "factcheck-guide")?.text ||
+      aiPromptFor(item.statement, item.detail);
+    promptById.set(item.id, prompt);
+    ensureFactCheckGuide(item, prompt);
+  }
+
+  // (B) 인앱 초안 답변 (시간 단축) — 실패 시 질문만 남기고 수동 흐름
+  const drafts = await draftFactCheckAnswersLlm(targets, meta);
+  if (drafts?.size) {
+    const now = new Date().toISOString();
+    let drafted = 0;
+    const factChecks = targets.map((item) => {
+      const d = drafts.get(item.id);
+      if (d) {
+        drafted += 1;
+        return {
+          itemId: item.id,
+          mode: "auto" as const,
+          verdict: d.verdict,
+          explanation: d.explanation,
+          sources: d.sources,
+          checkedAt: now,
+        };
+      }
+      return {
+        itemId: item.id,
+        mode: "auto" as const,
+        verdict: "pending" as const,
+        explanation: "",
+        sources: [],
+        checkedAt: now,
+      };
+    });
+
+    if (drafted > 0) {
+      const pending = targets.length - drafted;
+      return {
+        factChecks,
+        source: "llm_draft",
+        notice:
+          pending > 0
+            ? `인앱 AI가 ${drafted}건 초안을 채웠습니다. 나머지 ${pending}건은 질문을 복사해 외부 AI에 물어본 뒤 붙여넣거나, 「초안 다시 생성」을 눌러 주세요.`
+            : `인앱 AI가 팩트체크 초안 ${drafted}건을 채웠습니다. 내용을 확인·수정한 뒤 보고서를 저장하세요.`,
+      };
+    }
+  }
+
+  const fallbackNotice = !hasLlm()
+    ? "OPENAI_API_KEY가 없어 인앱 초안을 만들 수 없습니다. 아래 AI 질문을 복사해 제미나이·ChatGPT에 물어본 뒤 답변을 붙여넣으세요."
+    : "인앱 AI 초안 생성에 실패했습니다. 기존처럼 AI 질문을 복사해 외부 AI에 물어본 뒤, 답변·판정을 이 화면에 붙여넣으세요.";
+
+  return {
+    factChecks: promptOnlyFactChecks(targets, promptById),
+    source: guideSource,
+    notice: fallbackNotice,
+  };
+}
+
+function heuristicGuides(items: SummaryItem[]): FactCheckResult[] {
+  return promptOnlyFactChecks(items);
+}
+
+function hasRealFcAnswer(
+  itemId: string,
+  factChecks: FactCheckResult[]
+): boolean {
+  const fc = factChecks.find((f) => f.itemId === itemId);
+  if (!fc) return false;
+  const answer = fc.explanation.trim();
+  if (answer.length < 20) return false;
+  if (/^다음 주장을/.test(answer) && /팩트체크해 주세요/.test(answer)) {
+    return false;
+  }
+  return fc.verdict !== "pending";
+}
+
+/** 대기 중인 항목만 인앱 초안 재시도 (이미 답 있는 항목 유지) */
+export async function redraftPendingFactChecks(
+  items: SummaryItem[],
+  factChecks: FactCheckResult[],
+  meta: SummaryMeta
+): Promise<FactCheckPipelineResult> {
+  const targets = items.filter(
+    (i) => i.needsFactCheck && !hasRealFcAnswer(i.id, factChecks)
+  );
+  if (!targets.length) {
+    return {
+      factChecks,
+      source: "llm_draft",
+      notice: "이미 모든 항목이 채워져 있습니다.",
+    };
+  }
+
+  for (const item of targets) {
+    const prompt =
+      item.evidence.find((e) => e.sourceHint === "factcheck-guide")?.text ||
+      aiPromptFor(item.statement, item.detail);
+    ensureFactCheckGuide(item, prompt);
+  }
+
+  const drafts = await draftFactCheckAnswersLlm(targets, meta);
+  if (!drafts?.size) {
+    return {
+      factChecks,
+      source: hasLlm() ? "prompt" : "heuristic",
+      notice: hasLlm()
+        ? "인앱 초안 재생성에 실패했습니다. AI 질문을 복사해 외부 AI에 붙여넣는 기존 방식을 이용해 주세요."
+        : "OPENAI_API_KEY가 없어 초안을 만들 수 없습니다. AI 질문을 복사해 외부 AI에 물어보세요.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const byId = new Map(factChecks.map((f) => [f.itemId, f]));
+  for (const item of targets) {
+    const d = drafts.get(item.id);
+    if (!d) continue;
+    byId.set(item.id, {
+      itemId: item.id,
+      mode: "auto",
+      verdict: d.verdict,
+      explanation: d.explanation,
+      sources: d.sources,
+      checkedAt: now,
+      answerImageUrl: byId.get(item.id)?.answerImageUrl,
+      answerImageUrls: byId.get(item.id)?.answerImageUrls,
+      answerParts: byId.get(item.id)?.answerParts,
+    });
+  }
+
+  return {
+    factChecks: Array.from(byId.values()),
+    source: "llm_draft",
+    notice: `인앱 AI 초안을 ${drafts.size}건 갱신했습니다. 확인 후 수정하세요.`,
+  };
 }
 
 export function verdictLabel(v: FactCheckResult["verdict"]) {

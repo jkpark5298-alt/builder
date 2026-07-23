@@ -3,9 +3,16 @@ import { factCheckProgress } from "@/lib/factcheck";
 import { buildInfographic } from "@/lib/infographic";
 import {
   rebuildFactChecksFromOverview,
+  redraftPendingFactChecks,
 } from "@/lib/pipeline";
-import { finalizeReport } from "@/lib/process";
+import {
+  finalizeReport,
+  saveReportInputDraft,
+  startReportFromDraft,
+} from "@/lib/process";
+import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { buildTypedReport, reportBodyPlain } from "@/lib/report";
+import { buildReportDocument } from "@/lib/report-write";
 import {
   deleteVideo,
   getVideo,
@@ -75,7 +82,7 @@ function applyItemEdit(
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -166,13 +173,25 @@ async function patchVideo(req: Request, ctx: Ctx) {
       answerParts?: AnswerPart[];
     };
     reportType?: ReportType;
-    draft?: boolean;
+    /** Report 입력 임시 저장 필드 수정 */
+    updateReportInput?: {
+      title?: string;
+      channel?: string;
+      creatorNotes?: string;
+      pastedScript?: string;
+    };
+    /** Report 입력 임시 저장 → 요약·검증 시작 */
+    startReportPipeline?: boolean;
     /** 완료(ready) → 임시 저장(awaiting_factcheck)으로 되돌림 */
     reopenAsDraft?: boolean;
     completeManual?: boolean;
+    /** 미완료 FC만 인앱 LLM 초안 재생성 */
+    redraftFactChecks?: boolean;
     rebuild?: boolean;
     itemImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
     itemImages?: { itemId: string; imageUrls: string[] };
+    /** 보고서 편집 중 FC 수정·삭제 시 ready 상태 유지 */
+    preserveReadyStatus?: boolean;
     /** 팩트체크 대상(주장) 문구 수정 */
     updateItem?: {
       itemId: string;
@@ -211,6 +230,56 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   let next = { ...video };
+
+  if (body.updateReportInput && video.status === "report_input_draft") {
+    const title = (body.updateReportInput.title ?? video.title).trim();
+    if (title.length < 2) {
+      return NextResponse.json(
+        { error: "제목을 2자 이상 입력해 주세요." },
+        { status: 400 }
+      );
+    }
+    const saved = await saveReportInputDraft({
+      id: video.id,
+      title,
+      channel: body.updateReportInput.channel,
+      pastedScript: body.updateReportInput.pastedScript ?? video.transcript,
+      creatorNotes: body.updateReportInput.creatorNotes,
+    });
+    return jsonVideo(saved, { mode: "report_input_draft" });
+  }
+
+  if (body.startReportPipeline) {
+    if (video.status !== "report_input_draft") {
+      return NextResponse.json(
+        { error: "이미 요약·검증이 시작된 항목입니다." },
+        { status: 400 }
+      );
+    }
+    const script = normalizePastedText(
+      body.updateReportInput?.pastedScript ?? video.transcript ?? ""
+    );
+    if (!hasUsablePastedScript(script)) {
+      return NextResponse.json(
+        { error: "스크립트(본문)를 80자 이상 붙여넣어 주세요." },
+        { status: 400 }
+      );
+    }
+    if (body.updateReportInput) {
+      await saveReportInputDraft({
+        id: video.id,
+        title: body.updateReportInput.title ?? video.title,
+        channel: body.updateReportInput.channel,
+        pastedScript: script,
+        creatorNotes: body.updateReportInput.creatorNotes,
+      });
+    }
+    const processed = await startReportFromDraft(
+      video.id,
+      body.updateReportInput?.creatorNotes?.trim()
+    );
+    return jsonVideo(processed, { mode: "report_pipeline_started" });
+  }
 
   if (body.dismissFactCheckRevisionNotice) {
     next = {
@@ -312,11 +381,28 @@ async function patchVideo(req: Request, ctx: Ctx) {
         return fc;
       }),
       updatedAt: new Date().toISOString(),
-      status:
-        next.status === "ready" || next.status === "awaiting_factcheck"
+      status: body.preserveReadyStatus && next.status === "ready"
+        ? "ready"
+        : next.status === "ready" || next.status === "awaiting_factcheck"
           ? "awaiting_factcheck"
           : next.status,
     };
+    if (body.preserveReadyStatus && next.report) {
+      next.report = {
+        ...next.report,
+        factChecks: (next.report.factChecks ?? []).map((rf) =>
+          rf.itemId === updated.id
+            ? { ...rf, statement: updated.statement }
+            : rf
+        ),
+        sections: next.report.sections.map((sec) => ({
+          ...sec,
+          entries: (sec.entries ?? []).map((e) =>
+            e.itemId === updated.id ? { ...e, text: updated.statement } : e
+          ),
+        })),
+      };
+    }
   }
 
   if (body.deleteItem?.itemId) {
@@ -327,13 +413,26 @@ async function patchVideo(req: Request, ctx: Ctx) {
         { status: 404 }
       );
     }
+    const stripFromReport = (report: typeof next.report) => {
+      if (!report) return report;
+      return {
+        ...report,
+        sections: report.sections.map((sec) => ({
+          ...sec,
+          entries: (sec.entries ?? []).filter((e) => e.itemId !== itemId),
+        })),
+        factChecks: (report.factChecks ?? []).filter((f) => f.itemId !== itemId),
+      };
+    };
     next = {
       ...next,
       items: next.items.filter((i) => i.id !== itemId),
       factChecks: next.factChecks.filter((f) => f.itemId !== itemId),
+      report: stripFromReport(next.report),
       updatedAt: new Date().toISOString(),
-      status:
-        next.status === "ready" || next.status === "awaiting_factcheck"
+      status: body.preserveReadyStatus && next.status === "ready"
+        ? "ready"
+        : next.status === "ready" || next.status === "awaiting_factcheck"
           ? "awaiting_factcheck"
           : next.status,
     };
@@ -448,6 +547,9 @@ async function patchVideo(req: Request, ctx: Ctx) {
       summarySource: "manual",
       items: rebuilt.items,
       factChecks: rebuilt.factChecks,
+      factCheckSource: "heuristic",
+      factCheckNotice:
+        "요약을 수정해 팩트체크 항목을 다시 만들었습니다. 「인앱 AI 초안 생성」으로 답을 채우거나, AI 질문을 복사해 외부 AI에 물어본 뒤 붙여넣으세요.",
       factCheckRevisionNotice: {
         at: new Date().toISOString(),
         itemCount: rebuilt.items.filter((i) => i.needsFactCheck).length,
@@ -457,14 +559,56 @@ async function patchVideo(req: Request, ctx: Ctx) {
       updatedAt: new Date().toISOString(),
     };
 
-    // 변경된 요약 기준으로 보고서·인포그래픽도 자동 재생성
+    // 변경된 요약 기준으로 조립 보고서·인포그래픽 골격 (답변 비어 있음)
     next.report = buildTypedReport(next);
+    next.reportSource = "assembled";
+    next.reportWriteNotice =
+      "요약 수정 후 골격만 조립했습니다. 팩트체크를 마친 뒤 보고서 저장 시 글쓰기 AI를 다시 시도합니다.";
     next.infographic = await buildInfographic(next);
     // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
     next.status = "awaiting_factcheck";
 
     const saved = await upsertVideo(next, expectedUpdatedAt);
     return jsonVideo(saved, { mode: "overview_complete" });
+  }
+
+  if (body.redraftFactChecks) {
+    if (
+      next.status !== "awaiting_factcheck" &&
+      next.status !== "ready"
+    ) {
+      return NextResponse.json(
+        { error: "팩트체크 단계에서만 초안을 생성할 수 있습니다." },
+        { status: 400 }
+      );
+    }
+    const result = await redraftPendingFactChecks(
+      next.items,
+      next.factChecks,
+      {
+        title: next.title,
+        channel: next.channel,
+        description: next.description,
+        chapters: next.chapters,
+        transcriptSource: next.transcriptSource,
+        videoId: next.videoId,
+      }
+    );
+    next = {
+      ...next,
+      items: next.items,
+      factChecks: result.factChecks,
+      factCheckSource: result.source,
+      factCheckNotice: result.notice,
+      status: "awaiting_factcheck",
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, {
+      mode: "fc_redraft",
+      factCheckSource: result.source,
+      notice: result.notice,
+    });
   }
 
   if (body.factCheck) {
@@ -523,8 +667,45 @@ async function patchVideo(req: Request, ctx: Ctx) {
       updatedAt: new Date().toISOString(),
     };
 
-    // 완료 항목을 수정하면 임시 저장으로 이동 (보고서 재생성은 다시 완료할 때)
-    if (next.status === "ready") {
+    // 보고서 편집 중이면 ready 유지 · report.factChecks 동기화
+    if (body.preserveReadyStatus && next.status === "ready") {
+      if (next.report) {
+        next.report = {
+          ...next.report,
+          factChecks: (next.report.factChecks ?? []).map((rf) =>
+            rf.itemId === fc.itemId
+              ? {
+                  ...rf,
+                  statement:
+                    next.items.find((i) => i.id === fc.itemId)?.statement ??
+                    rf.statement,
+                  checkGuide: fc.explanation,
+                  verdict: fc.verdict,
+                  answerImageUrl: fc.answerImageUrl,
+                  answerImageUrls: fc.answerImageUrls,
+                  answerParts: fc.answerParts,
+                }
+              : rf
+          ),
+          sections: next.report.sections.map((sec) => ({
+            ...sec,
+            entries: (sec.entries ?? []).map((e) =>
+              e.itemId === fc.itemId
+                ? {
+                    ...e,
+                    text:
+                      next.items.find((i) => i.id === fc.itemId)?.statement ??
+                      e.text,
+                    answerImageUrl: fc.answerImageUrl,
+                    answerImageUrls: fc.answerImageUrls,
+                    answerParts: fc.answerParts,
+                  }
+                : e
+            ),
+          })),
+        };
+      }
+    } else if (next.status === "ready") {
       next.status = "awaiting_factcheck";
     } else if (next.status !== "error") {
       next.status = "awaiting_factcheck";
@@ -554,8 +735,19 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   if (body.rebuild && next.status === "ready") {
-    next.report = buildTypedReport(next);
+    const built = await buildReportDocument(next);
+    next.report = built.report;
+    next.reportSource = built.source;
+    next.reportWriteNotice = built.notice;
     next.infographic = await buildInfographic(next);
+    next.tags = Array.from(
+      new Set([
+        ...next.tags.filter(
+          (t) => t !== "report-llm" && t !== "report-assembled"
+        ),
+        built.source === "llm" ? "report-llm" : "report-assembled",
+      ])
+    );
     next.updatedAt = new Date().toISOString();
   }
 

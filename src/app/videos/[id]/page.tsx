@@ -1,3 +1,4 @@
+import { ReportCreateForm } from "@/components/ReportCreateForm";
 import { getVideo } from "@/lib/store";
 import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
@@ -28,6 +29,26 @@ export default async function VideoDetailPage({
   const video = await getVideo(id);
   if (!video) {
     return <VideoNotFoundRecovery id={id} />;
+  }
+
+  if (video.status === "report_input_draft") {
+    return (
+      <div className="space-y-6 pb-24 sm:pb-8">
+        <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-700">
+          <strong>입력 중</strong> — 제목·스크립트를 채운 뒤 임시 저장하거나, 스크립트가
+          충분하면 요약·검증을 시작하세요.
+        </div>
+        <ReportCreateForm
+          draftId={video.id}
+          initial={{
+            title: video.title,
+            channel: video.channel === "직접 입력" ? "" : video.channel,
+            creatorNotes: video.description ?? "",
+            pastedScript: video.transcript ?? "",
+          }}
+        />
+      </div>
+    );
   }
 
   const awaiting = video.status === "awaiting_factcheck";
@@ -285,6 +306,17 @@ export default async function VideoDetailPage({
 
           {video.report && (
             <div className="space-y-3">
+              {video.reportWriteNotice ? (
+                <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800 print:hidden">
+                  <span className="font-medium">
+                    {video.reportSource === "llm"
+                      ? "글쓰기 AI"
+                      : "내용 적응형 조립"}
+                  </span>
+                  {" — "}
+                  {video.reportWriteNotice}
+                </div>
+              ) : null}
               <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
                 <h2 className="font-display text-lg sm:text-xl mb-3">
                   보고서 보기 · 수정 · 공유 · 저장

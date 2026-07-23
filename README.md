@@ -55,7 +55,13 @@ http://localhost:3000
 
 ### 선택: OpenAI
 
-`.env.local`에 `OPENAI_API_KEY`를 설정하면 요약·팩트체크 가이드 품질이 향상됩니다. 없으면 규칙 기반으로 동작합니다.
+`.env.local`에 `OPENAI_API_KEY`를 설정하면 다음이 동작합니다.
+
+1. **요약** — AI 상세 요약 (실패 시 휴리스틱·수동 요약)
+2. **팩트체크** — 인앱 초안 답변·판정 (실패 시 기존처럼 질문 복사 → 외부 AI 붙여넣기)
+3. **보고서** — 글쓰기 AI 작성 (실패 시 요약·FC 조립, 추가 토큰 없음)
+
+선택: `OPENAI_MODEL`(기본 `gpt-4o-mini`), `OPENAI_BASE_URL`. 키가 없으면 규칙 기반으로 동작합니다.
 
 ## 배포 (GitHub + Vercel)
 

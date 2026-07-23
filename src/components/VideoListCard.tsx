@@ -2,11 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
 import { isReportInput } from "@/lib/input-mode";
-import { libraryCardLabel, libraryStage } from "@/lib/library";
+import { isReportInputDraft, libraryCardLabel, libraryStage } from "@/lib/library";
 import { ReportActions } from "@/components/ReportActions";
 import { formatDistanceToNow } from "date-fns";
 import { ko } from "date-fns/locale";
@@ -24,6 +24,7 @@ export function VideoListCard({
   const [busy, setBusy] = useState(false);
   const stage = libraryStage(video);
   const ready = canExportArtifacts(video);
+  const inputDraft = isReportInputDraft(video);
 
   async function remove(e: React.MouseEvent) {
     e.preventDefault();
@@ -67,7 +68,9 @@ export function VideoListCard({
                   ? "bg-verify-true/10 text-verify-true"
                   : stage === "report_pending"
                     ? "bg-ink-900 text-white"
-                    : stage === "factcheck_draft"
+                    : stage === "report_input_draft"
+                      ? "bg-amber-100 text-amber-900"
+                      : stage === "factcheck_draft"
                       ? "bg-accent-muted text-accent"
                       : stage === "error"
                         ? "bg-verify-false/10 text-verify-false"
@@ -93,10 +96,14 @@ export function VideoListCard({
           </h3>
           <p className="text-sm text-ink-500 mt-1">{video.channel}</p>
           <p className="text-xs text-ink-400 mt-2">
-            항목 {video.items.length} · 검증 {video.factChecks.length}
-            {listKind === "draft" &&
-              video.status === "awaiting_factcheck" &&
-              ` · 팩트체크 진행 중`}
+            {inputDraft
+              ? `스크립트 ${(video.transcript?.length ?? 0).toLocaleString()}자 · 입력 중`
+              : `항목 ${video.items.length} · 검증 ${video.factChecks.length}${
+                  listKind === "draft" &&
+                  video.status === "awaiting_factcheck"
+                    ? " · 팩트체크 진행 중"
+                    : ""
+                }`}
           </p>
         </div>
       </a>
@@ -106,13 +113,6 @@ export function VideoListCard({
           <ReportActions video={video} compact />
         ) : (
           <>
-            <a
-              href={`/videos/${video.id}`}
-              className={`${btn} border-accent/40 bg-accent-muted/40 text-ink-900 hover:bg-accent-muted`}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-              수정
-            </a>
             {listKind === "report-pending" && (
               <a
                 href={`/videos/${video.id}#complete-report`}
@@ -124,9 +124,13 @@ export function VideoListCard({
             {listKind === "draft" && (
               <a
                 href={`/videos/${video.id}`}
-                className={`${btn} border-ink-200 bg-white hover:border-accent text-ink-700`}
+                className={`${btn} ${
+                  inputDraft
+                    ? "border-accent/40 bg-accent-muted/40 text-ink-900 hover:bg-accent-muted"
+                    : "border-ink-900 bg-ink-900 text-white hover:opacity-90"
+                }`}
               >
-                이어서 하기
+                {inputDraft ? "이어서 작성" : "이어서 하기"}
               </a>
             )}
           </>

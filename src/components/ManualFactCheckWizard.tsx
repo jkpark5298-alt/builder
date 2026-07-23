@@ -72,7 +72,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       setLocalVideo(video);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only when server props change
-  }, [video.updatedAt, video.factChecks, video.factCheckRevisionNotice?.at]);
+  }, [video.updatedAt, video.factChecks, video.factCheckRevisionNotice?.at, video.factCheckNotice, video.factCheckSource]);
 
   const required = useMemo(
     () => localVideo.items.filter((i) => i.needsFactCheck),
@@ -86,6 +86,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
   const [step, setStep] = useState(firstOpen === -1 ? 0 : firstOpen);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
 
@@ -278,14 +279,29 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     setCompleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/videos/${localVideo.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          completeManual: true,
-          reportType: localVideo.reportType,
-        }),
-      });
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 150_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/videos/${localVideo.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            completeManual: true,
+            reportType: localVideo.reportType,
+          }),
+        });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          throw new Error(
+            "보고서 작성 시간이 초과됐습니다. 네트워크를 확인한 뒤 다시 시도해 주세요."
+          );
+        }
+        throw e;
+      } finally {
+        window.clearTimeout(timer);
+      }
       const data = (await res.json()) as {
         error?: string;
         video?: VideoRecord;
@@ -299,6 +315,49 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       setError(e instanceof Error ? e.message : "보고서 생성 실패");
     } finally {
       setCompleting(false);
+    }
+  }
+
+  async function redraftDrafts() {
+    setDrafting(true);
+    setError(null);
+    try {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 150_000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/videos/${localVideo.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({ redraftFactChecks: true }),
+        });
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") {
+          throw new Error(
+            "초안 생성 시간이 초과됐습니다. 질문을 복사해 외부 AI에 붙여넣는 기존 방식을 이용해 주세요."
+          );
+        }
+        throw e;
+      } finally {
+        window.clearTimeout(timer);
+      }
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+        notice?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "초안 생성 실패");
+      if (data.video) setLocalVideo(data.video);
+      if (data.notice || data.video?.factCheckNotice) {
+        setSavedFlash(true);
+        window.setTimeout(() => setSavedFlash(false), 2500);
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "초안 생성 실패");
+    } finally {
+      setDrafting(false);
     }
   }
 
@@ -402,7 +461,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             disabled={completing}
             className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60 scroll-mt-24"
           >
-            {completing ? "생성 중…" : "보고서 저장 → PDF·인포그래픽"}
+            {completing ? "글쓰기 AI 작성 중…" : "보고서 저장 → PDF·인포그래픽"}
           </button>
         </div>
       </div>
@@ -424,10 +483,48 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           video={localVideo}
           onDismissed={setLocalVideo}
         />
+        {localVideo.factCheckNotice ? (
+          <p className="text-sm text-ink-700 rounded-xl border border-accent/25 bg-white/80 px-3 py-2.5">
+            {localVideo.factCheckNotice}
+          </p>
+        ) : null}
         <p className="text-sm text-ink-600">
-          아래 <strong>AI 질문</strong>을 복사해 제미나이 등에 물어본 뒤,{" "}
-          <strong>AI 답변·팩트체크 결과</strong>를 이 화면에 붙여넣으세요.
+          {localVideo.factCheckSource === "llm_draft" ? (
+            <>
+              인앱 AI가 초안 답변·판정을 채운 항목은 확인·수정만 하면 됩니다.
+              비어 있는 항목은 <strong>AI 질문</strong>을 복사해 제미나이 등에
+              물어본 뒤 붙여넣거나, 아래 「인앱 AI 초안 생성」을 다시 누르세요.
+            </>
+          ) : (
+            <>
+              인앱 초안을 쓰지 못한 경우(키 없음·API 실패)에는{" "}
+              <strong>기존 방식</strong>입니다: 아래 <strong>AI 질문</strong>을
+              복사해 제미나이·ChatGPT에 물어본 뒤,{" "}
+              <strong>AI 답변·팩트체크 결과</strong>를 이 화면에 붙여넣으세요.
+            </>
+          )}
         </p>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          <button
+            type="button"
+            disabled={drafting || saving || completing}
+            onClick={() => void redraftDrafts()}
+            className="inline-flex items-center justify-center gap-2 min-h-11 rounded-xl border border-accent/40 bg-white px-4 text-sm font-medium text-ink-900 hover:bg-accent-muted/50 disabled:opacity-50"
+          >
+            {drafting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                초안 생성 중…
+              </>
+            ) : (
+              "인앱 AI 초안 생성 (미완료만)"
+            )}
+          </button>
+          <p className="text-xs text-ink-500 self-center">
+            OpenAI 키 사용 · 실패 시 질문 복사 방식 유지
+          </p>
+        </div>
 
         <div className="mt-4">
           <ReportTypePicker
@@ -592,7 +689,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           >
             <FileText className="h-4 w-4" />
             {completing
-              ? "보고서 생성 중…"
+              ? "글쓰기 AI로 보고서 작성 중…"
               : progress.complete
                 ? "보고서 저장 → PDF·인포그래픽"
                 : `미완료 ${progress.total - progress.doneCount}건`}
@@ -600,7 +697,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         </div>
         <p className="text-xs text-ink-500 text-center sm:text-left">
           {progress.complete
-            ? "팩트체크가 끝났습니다. 보고서를 만들면 «보고서 저장» 완료로 이동합니다."
+            ? "팩트체크가 끝났습니다. 보고서 저장 시 글쓰기 AI로 작성하고, 실패하면 요약·FC 조립(내용 적응형)으로 대체합니다. (AI 작성 시 OpenAI 토큰 사용)"
             : "「이 항목 저장하고 다음」을 누르면 바로 저장됩니다. 한 번이면 충분합니다."}
         </p>
       </div>

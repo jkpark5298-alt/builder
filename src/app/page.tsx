@@ -94,15 +94,16 @@ export default async function HomePage({
             1. 임시 저장 목록
           </h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크가 끝나지 않은 항목입니다. 카드에서 <strong>수정</strong>·
-            <strong>삭제</strong>할 수 있습니다.
+            팩트체크·Report 입력 중인 항목입니다. 카드에서{" "}
+            <strong>이어서 작성</strong> 또는 <strong>이어서 하기</strong>로
+            이어갈 수 있습니다.
           </p>
         </div>
         <VideoGrid
           videos={drafts}
           listKind="draft"
           emptyTitle="임시 저장된 항목이 없습니다"
-          emptyHint="링크 붙여넣기 → 조회·검증 후, 팩트체크 전까지 여기에 남습니다."
+          emptyHint="유튜브·Report 생성 후 팩트체크 전, 또는 Report 제목·스크립트 입력 중인 항목이 여기에 남습니다."
         />
       </section>
 

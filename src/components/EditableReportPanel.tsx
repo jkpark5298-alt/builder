@@ -41,7 +41,7 @@ import {
 } from "@/lib/fc-markers";
 import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
-import { normalizeImageUrls } from "@/lib/image-urls";
+import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import { isFailedVerdict, verdictBadge } from "@/lib/text-format";
 import {
   applyFontSizeInEditor,
@@ -55,6 +55,11 @@ import {
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
 import { TextToImageModal } from "@/components/TextToImageModal";
+import {
+  ReportFactCheckToolbox,
+  type ReportFcRow,
+} from "@/components/ReportFactCheckToolbox";
+import { resolveAnswerParts } from "@/lib/answer-parts";
 
 const TEXT_COLORS = [
   { id: "black", label: "검정", color: "#1a2430" },
@@ -107,6 +112,7 @@ export function EditableReportPanel({
 }) {
   const router = useRouter();
   const report = video.report;
+  const [localVideo, setLocalVideo] = useState(video);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<TypedReport | null>(report);
@@ -278,6 +284,14 @@ export function EditableReportPanel({
   useEffect(() => {
     setDraft(report);
   }, [report]);
+
+  useEffect(() => {
+    const serverTs = new Date(video.updatedAt).getTime();
+    const localTs = new Date(localVideo.updatedAt).getTime();
+    if (serverTs >= localTs) {
+      setLocalVideo(video);
+    }
+  }, [video, localVideo.updatedAt]);
 
   useEffect(() => {
     if (editing && !wasEditingRef.current && report) {
@@ -639,6 +653,103 @@ export function EditableReportPanel({
     setOpenFcKey(null);
   }
 
+  function pasteFcHtmlToActiveSection(html: string) {
+    if (!draft || !html.trim()) return;
+    if (!editing) setEditing(true);
+    const idx = Math.min(
+      Math.max(0, activeSectionIdx),
+      Math.max(0, draft.sections.length - 1)
+    );
+
+    const sel = window.getSelection();
+    if (sel?.rangeCount) {
+      const range = sel.getRangeAt(0);
+      const editor = findReportBodyEditor(range.commonAncestorContainer);
+      if (editor) {
+        editor.focus();
+        try {
+          document.execCommand("insertHTML", false, html);
+          patchSection(idx, { body: editor.innerHTML, rich: true });
+          return;
+        } catch {
+          /* append below */
+        }
+      }
+    }
+
+    const sec = draft.sections[idx];
+    const body = (sec?.body || "").trim();
+    patchSection(idx, {
+      body: body ? `${body}${html}` : html,
+      rich: true,
+    });
+  }
+
+  function pasteFcImagesToActiveSection(urls: string[]) {
+    if (!draft || !urls.length) return;
+    if (!editing) setEditing(true);
+    const idx = Math.min(
+      Math.max(0, activeSectionIdx),
+      Math.max(0, draft.sections.length - 1)
+    );
+    updateDraft((prev) => {
+      const sections = [...prev.sections];
+      const sec = sections[idx];
+      const merged = Array.from(new Set([...(sec.images ?? []), ...urls]));
+      sections[idx] = { ...sec, images: merged };
+      return { ...prev, sections };
+    });
+  }
+
+  function linkFcToActiveSection(row: ReportFcRow) {
+    if (!draft) return;
+    if (!editing) setEditing(true);
+    const idx = Math.min(
+      Math.max(0, activeSectionIdx),
+      Math.max(0, draft.sections.length - 1)
+    );
+    const parts = resolveAnswerParts({
+      explanation: row.answerText,
+      answerImageUrl: row.fc?.answerImageUrl,
+      answerImageUrls: row.fc?.answerImageUrls,
+      answerParts: row.fc?.answerParts,
+    });
+    const flat = parts.flatMap((p) => p.imageUrls ?? []);
+    const split = splitPrimaryImage(flat.length ? flat : row.images);
+
+    updateDraft((prev) => {
+      const sections = [...prev.sections];
+      const sec = sections[idx];
+      const entries = [...(sec.entries ?? [])];
+      if (entries.some((e) => e.itemId === row.item.id)) {
+        return prev;
+      }
+      entries.push({
+        itemId: row.item.id,
+        text: row.item.statement,
+        answerImageUrl: split.imageUrl,
+        answerImageUrls: split.imageUrls,
+        answerParts: parts.length ? parts : undefined,
+      });
+      sections[idx] = { ...sec, entries };
+
+      const factChecks = [...(prev.factChecks ?? [])];
+      if (!factChecks.some((f) => f.itemId === row.item.id)) {
+        factChecks.push({
+          itemId: row.item.id,
+          statement: row.item.statement,
+          checkGuide: row.answerText,
+          verdict: row.fc?.verdict,
+          answerImageUrl: split.imageUrl,
+          answerImageUrls: split.imageUrls,
+          answerParts: parts.length ? parts : undefined,
+        });
+      }
+
+      return { ...prev, sections, factChecks };
+    });
+  }
+
   async function addImagesToSection(idx: number, files: File[]) {
     const imageFiles = files.filter((f) => f.type.startsWith("image/"));
     if (!imageFiles.length) return;
@@ -809,11 +920,13 @@ export function EditableReportPanel({
         {editing && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
             단락마다 「이 단락 저장」으로 저장하거나, 상단 「전체 저장 후 닫기」로
-            편집을 마칠 수 있습니다. 글자 크기는 선택 영역 또는 커서가 있는 문단에
-            적용됩니다. 되돌리기 Ctrl+Z · 다시 실행 Ctrl+Y
+            편집을 마칠 수 있습니다. 오른쪽(또는 아래) 팩트체크 자료에서 내용·사진을
+            복사·붙여넣기·수정·삭제할 수 있습니다. 글자 크기 Ctrl+Z / Ctrl+Y
           </p>
         )}
 
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(16rem,20rem)] lg:gap-4 lg:items-start">
+          <div className="min-w-0 space-y-5">
         <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1 print:hidden">
           <p>
             <span className="text-ink-500">영상 제목</span> · {draft.meta.title}
@@ -1206,6 +1319,28 @@ export function EditableReportPanel({
             onClose={() => setOpenFcKey(null)}
           />
         )}
+          </div>
+
+          <div className="mt-4 lg:mt-0 lg:sticky lg:top-[calc(env(safe-area-inset-top,0px)+5rem)] print:hidden">
+            <ReportFactCheckToolbox
+              video={localVideo}
+              draft={draft}
+              editing={editing}
+              activeSectionIdx={activeSectionIdx}
+              busy={saving || rebuilding}
+              onVideoUpdate={(v) => {
+                setLocalVideo(v);
+                router.refresh();
+              }}
+              onDraftUpdate={(r) => {
+                setDraft(r);
+              }}
+              onPasteTextToSection={pasteFcHtmlToActiveSection}
+              onPasteImagesToSection={pasteFcImagesToActiveSection}
+              onLinkToSection={linkFcToActiveSection}
+            />
+          </div>
+        </div>
       </section>
 
       {/* 인쇄·PDF용 부록 — 화면에서는 숨김 */}
@@ -1283,9 +1418,29 @@ function FcDetailModal({
               {badge.mark} {badge.label}
             </span>
           </div>
-          <button type="button" onClick={onClose} className="p-1 shrink-0">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              className="rounded-lg border border-ink-200 px-2 py-1 text-xs font-medium hover:border-accent"
+              onClick={() => {
+                const text = [
+                  marker.entry.text,
+                  fc?.checkGuide ||
+                    marker.entry.html?.replace(/<[^>]+>/g, "") ||
+                    parts?.map((p) => `${p.number}. ${p.text}`).join("\n") ||
+                    "",
+                ]
+                  .filter(Boolean)
+                  .join("\n\n");
+                void navigator.clipboard.writeText(text).catch(() => undefined);
+              }}
+            >
+              텍스트 복사
+            </button>
+            <button type="button" onClick={onClose} className="p-1">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
         <div className="p-4 space-y-3 text-sm">
           <p className="font-medium text-ink-900 leading-snug">
