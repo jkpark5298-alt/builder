@@ -118,7 +118,7 @@ export function ReportCreateForm({
     setThumbBusy(true);
     setError(null);
     try {
-      const compressed = await compressImageFiles([file], 280_000, 960);
+      const compressed = await compressImageFiles([file]);
       if (!compressed.length) throw new Error("이미지를 읽지 못했습니다.");
       const uploaded = await uploadDataUrls(
         compressed,
