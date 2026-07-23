@@ -43,6 +43,7 @@ export async function POST(req: Request) {
       channel?: string;
       creatorNotes?: string;
       pastedScript?: string;
+      thumbnailUrl?: string;
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
     };
@@ -60,6 +61,7 @@ export async function POST(req: Request) {
         channel: body.channel?.trim(),
         pastedScript: body.pastedScript,
         creatorNotes: body.creatorNotes?.trim(),
+        thumbnailUrl: body.thumbnailUrl?.trim(),
       });
       return NextResponse.json({
         video,
@@ -93,6 +95,7 @@ export async function POST(req: Request) {
         channel: body.channel?.trim(),
         pastedScript,
         creatorNotes: body.creatorNotes?.trim(),
+        thumbnailUrl: body.thumbnailUrl?.trim(),
       });
       return NextResponse.json({
         video,

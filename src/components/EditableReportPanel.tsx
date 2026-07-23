@@ -437,13 +437,14 @@ export function EditableReportPanel({
 
   const applyFontSize = useCallback(
     (px: number) => {
-      const sel = window.getSelection();
       const editor =
-        (sel && findReportBodyEditor(sel.anchorNode)) ||
+        focusActiveBodyEditor() ||
+        (window.getSelection() &&
+          findReportBodyEditor(window.getSelection()!.anchorNode)) ||
         document.querySelector<HTMLElement>(
           `#sec-body-${draftRef.current?.sections[activeSectionIdx]?.sectionId ?? ""}`
         ) ||
-        document.querySelector<HTMLElement>(".report-body");
+        document.querySelector<HTMLElement>("#report .report-body[contenteditable]");
 
       if (!editor) {
         showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
@@ -473,8 +474,10 @@ export function EditableReportPanel({
 
   const stepActiveFontSize = useCallback(
     (delta: number) => {
-      const sel = window.getSelection();
-      const editor = sel && findReportBodyEditor(sel.anchorNode);
+      const editor =
+        focusActiveBodyEditor() ||
+        (window.getSelection() &&
+          findReportBodyEditor(window.getSelection()!.anchorNode));
       if (!editor) {
         showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
         return;
@@ -667,19 +670,14 @@ export function EditableReportPanel({
       Math.max(0, draft.sections.length - 1)
     );
 
-    const sel = window.getSelection();
-    if (sel?.rangeCount) {
-      const range = sel.getRangeAt(0);
-      const editor = findReportBodyEditor(range.commonAncestorContainer);
-      if (editor) {
-        editor.focus();
-        try {
-          document.execCommand("insertHTML", false, html);
-          patchSection(idx, { body: editor.innerHTML, rich: true });
-          return;
-        } catch {
-          /* append below */
-        }
+    const editor = focusActiveBodyEditor();
+    if (editor && findReportBodyEditor(editor)) {
+      try {
+        document.execCommand("insertHTML", false, html);
+        patchSection(idx, { body: editor.innerHTML, rich: true });
+        return;
+      } catch {
+        /* append below */
       }
     }
 
@@ -780,16 +778,10 @@ export function EditableReportPanel({
     }
   }
 
-  function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
-    if (!editing) return;
-    const files = extractImageFilesFromDataTransfer(e.clipboardData);
-    if (!files.length) return;
-    e.preventDefault();
-    void addImagesToSection(idx, files);
-  }
-
   async function pasteImagesToSection(idx: number) {
     if (!editing) return;
+    setActiveSectionIdx(idx);
+    focusActiveBodyEditor();
     try {
       const files = await readImagesFromClipboard();
       if (files.length) {
@@ -802,8 +794,24 @@ export function EditableReportPanel({
     const el = document.getElementById(`sec-paste-${idx}`) as HTMLTextAreaElement | null;
     el?.focus();
     alert(
-      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 입력칸을 길게 눌러 붙여넣기하세요."
+      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 본문 상자를 탭한 뒤 붙여넣기하세요."
     );
+  }
+
+  function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
+    if (!editing) return;
+    // 섹션 래퍼가 아니라 본문 상자에만 붙여넣기
+    const inBody = findReportBodyEditor(e.target as Node);
+    if (!inBody) {
+      e.preventDefault();
+      setActiveSectionIdx(idx);
+      focusActiveBodyEditor();
+      return;
+    }
+    const files = extractImageFilesFromDataTransfer(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    void addImagesToSection(idx, files);
   }
 
   async function insertHandwriting(idx: number, dataUrl: string) {
@@ -846,12 +854,42 @@ export function EditableReportPanel({
   }
 
   function onBodyClick(e: React.MouseEvent) {
-    const t = (e.target as HTMLElement).closest(".fc-badge") as HTMLElement | null;
+    const t = (e.target as HTMLElement).closest("[data-fc-key]") as HTMLElement | null;
     if (!t) return;
     e.preventDefault();
+    e.stopPropagation();
     const key = t.getAttribute("data-fc-key");
     if (!key) return;
+    // 같은 F 다시 선택 → DETAIL 닫기
     setOpenFcKey((prev) => (prev === key ? null : key));
+  }
+
+  function focusActiveBodyEditor(): HTMLElement | null {
+    const sec = draft?.sections[activeSectionIdx];
+    const byId = sec?.sectionId
+      ? document.getElementById(`sec-body-${sec.sectionId}`)
+      : null;
+    const editors = document.querySelectorAll<HTMLElement>(
+      "#report .report-body[contenteditable]"
+    );
+    const el =
+      (byId as HTMLElement | null) ||
+      editors[activeSectionIdx] ||
+      editors[0] ||
+      null;
+    if (!el) return null;
+    el.focus();
+    const saved = savedSelectionRef.current;
+    if (saved) {
+      try {
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(saved);
+      } catch {
+        /* ignore stale range */
+      }
+    }
+    return el;
   }
 
   return (
@@ -984,14 +1022,28 @@ export function EditableReportPanel({
                   document.execCommand("hiliteColor", false, c)
                 }
                 onImage={() => {
+                  focusActiveBodyEditor();
                   const input = document.getElementById(
                     `sec-img-${activeSectionIdx}`
                   ) as HTMLInputElement | null;
                   input?.click();
                 }}
-                onPasteImage={() => void pasteImagesToSection(activeSectionIdx)}
-                onTextImage={() => setTextImageFor(activeSectionIdx)}
-                onHandwriting={() => setHandwritingFor(activeSectionIdx)}
+                onPasteImage={() => {
+                  focusActiveBodyEditor();
+                  void pasteImagesToSection(activeSectionIdx);
+                }}
+                onTextImage={() => {
+                  focusActiveBodyEditor();
+                  setTextImageFor(activeSectionIdx);
+                }}
+                onHandwriting={() => {
+                  focusActiveBodyEditor();
+                  setHandwritingFor(activeSectionIdx);
+                }}
+                onBeforeFontSizeSelect={() => {
+                  saveEditorSelection();
+                  focusActiveBodyEditor();
+                }}
               />
             </div>
 
@@ -1011,7 +1063,6 @@ export function EditableReportPanel({
                     className={`p-4 sm:p-5 space-y-3 transition-colors ${
                       activeSectionIdx === idx ? "bg-accent-muted/20" : ""
                     }`}
-                    tabIndex={0}
                     onPaste={(e) => handleSectionPaste(idx, e)}
                     onFocusCapture={() => setActiveSectionIdx(idx)}
                   >
@@ -1245,29 +1296,101 @@ export function EditableReportPanel({
                 )}
 
                 {unmatched.length > 0 && (
-                  <ul className="space-y-1.5 print:hidden">
-                    {unmatched.map((m) => (
-                      <li key={m.key} className="text-sm text-ink-800">
-                        <button
-                          type="button"
-                          className="inline-flex items-start gap-2 text-left hover:text-accent"
-                          onClick={() =>
-                            setOpenFcKey((prev) =>
-                              prev === m.key ? null : m.key
-                            )
-                          }
-                        >
-                          <span className="fc-badge shrink-0 mt-0.5" aria-hidden>
-                            F{m.n}
-                          </span>
-                          <u className="leading-relaxed decoration-accent/70 underline-offset-2">
-                            {m.entry.text}
-                          </u>
-                        </button>
-                      </li>
-                    ))}
+                  <ul className="space-y-2 print:hidden">
+                    {unmatched.map((m) => {
+                      const isOpen = openFcKey === m.key;
+                      return (
+                        <li key={m.key} className="text-sm text-ink-800">
+                          <button
+                            type="button"
+                            className="inline-flex items-start gap-2 text-left hover:text-accent"
+                            onClick={() =>
+                              setOpenFcKey((prev) =>
+                                prev === m.key ? null : m.key
+                              )
+                            }
+                          >
+                            <span className="fc-badge shrink-0 mt-0.5" aria-hidden>
+                              F{m.n}
+                            </span>
+                            <u className="leading-relaxed decoration-accent/70 underline-offset-2">
+                              {m.entry.text}
+                            </u>
+                          </button>
+                          {isOpen && (
+                            <div className="mt-2 ml-8">
+                              <InlineFcDetailPanel
+                                marker={m}
+                                item={
+                                  m.entry.itemId
+                                    ? localVideo.items.find(
+                                        (i) => i.id === m.entry.itemId
+                                      )
+                                    : undefined
+                                }
+                                videoFc={
+                                  m.entry.itemId
+                                    ? localVideo.factChecks.find(
+                                        (f) => f.itemId === m.entry.itemId
+                                      )
+                                    : undefined
+                                }
+                                reportFc={
+                                  m.entry.itemId
+                                    ? fcByItem.get(m.entry.itemId)
+                                    : undefined
+                                }
+                                videoId={localVideo.id}
+                                onClose={() => setOpenFcKey(null)}
+                                onVideoUpdate={(v) => {
+                                  setLocalVideo(v);
+                                  if (v.report) setDraft(v.report);
+                                  router.refresh();
+                                }}
+                              />
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
+
+                {openMarker &&
+                  openMarker.sectionIdx === idx &&
+                  !unmatched.some((m) => m.key === openMarker.key) && (
+                    <div className="print:hidden">
+                      <InlineFcDetailPanel
+                        marker={openMarker}
+                        item={
+                          openMarker.entry.itemId
+                            ? localVideo.items.find(
+                                (i) => i.id === openMarker.entry.itemId
+                              )
+                            : undefined
+                        }
+                        videoFc={
+                          openMarker.entry.itemId
+                            ? localVideo.factChecks.find(
+                                (f) => f.itemId === openMarker.entry.itemId
+                              )
+                            : undefined
+                        }
+                        reportFc={
+                          openMarker.entry.itemId
+                            ? fcByItem.get(openMarker.entry.itemId)
+                            : undefined
+                        }
+                        videoId={localVideo.id}
+                        onClose={() => setOpenFcKey(null)}
+                        onVideoUpdate={(v) => {
+                          setLocalVideo(v);
+                          if (v.report) setDraft(v.report);
+                          router.refresh();
+                        }}
+                      />
+                    </div>
+                  )}
 
                 {unmatched.length > 0 && (
                   <ul className="hidden print:block space-y-1 text-sm">
@@ -1327,8 +1450,8 @@ export function EditableReportPanel({
           />
         )}
 
-        {/* 화면: F 클릭 시 상세 — 보기·편집 모두 */}
-        {openMarker && (
+        {/* 편집 모드: F 상세 모달 / 보기 모드는 인라인 DETAIL */}
+        {openMarker && editing && (
           <FcDetailModal
             marker={openMarker}
             editing={editing}
@@ -1401,6 +1524,197 @@ export function EditableReportPanel({
         fcByItem={fcByItem}
       />
     </>
+  );
+}
+
+function InlineFcDetailPanel({
+  marker,
+  item,
+  videoFc,
+  reportFc,
+  videoId,
+  onClose,
+  onVideoUpdate,
+}: {
+  marker: FcMarker;
+  item?: SummaryItem;
+  videoFc?: FactCheckResult;
+  reportFc?: TypedReport["factChecks"][number];
+  videoId: string;
+  onClose: () => void;
+  onVideoUpdate: (video: VideoRecord) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const answerFromVideo = !isPromptOnly(videoFc?.explanation)
+    ? normalizeAiAnswer(videoFc?.explanation || "")
+    : "";
+  const answerText =
+    answerFromVideo ||
+    (reportFc?.checkGuide || "").trim() ||
+    marker.entry.answerParts?.map((p) => `${p.number}. ${p.text}`).join("\n") ||
+    marker.entry.html?.replace(/<[^>]+>/g, "") ||
+    "";
+  const verdict = (videoFc?.verdict ??
+    reportFc?.verdict ??
+    "pending") as FactCheckVerdict;
+  const badge = verdictBadge(verdict);
+  const images = Array.from(
+    new Set(
+      [
+        ...normalizeImageUrls(
+          marker.entry.answerImageUrl,
+          marker.entry.answerImageUrls
+        ),
+        ...normalizeImageUrls(videoFc?.answerImageUrl, videoFc?.answerImageUrls),
+        ...(marker.entry.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+        ...(videoFc?.answerParts ?? []).flatMap((p) => p.imageUrls ?? []),
+      ].filter((u) => Boolean(u) && !/i\.ytimg\.com|ytimg\.com\/vi\//i.test(u))
+    )
+  );
+
+  async function clearDetail() {
+    const itemId = marker.entry.itemId;
+    if (!itemId) {
+      setError("이 항목은 DETAIL만 비울 수 없습니다.");
+      return;
+    }
+    if (!window.confirm("팩트체크 제목은 남기고 DETAIL(답변·이미지)만 삭제할까요?")) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clearFactCheckDetail: { itemId },
+          preserveReadyStatus: true,
+        }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "DETAIL 삭제 실패");
+      if (data.video) onVideoUpdate(data.video);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "DETAIL 삭제 실패");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAll() {
+    const itemId = marker.entry.itemId;
+    if (!itemId) {
+      onClose();
+      return;
+    }
+    if (
+      !window.confirm(
+        "팩트체크 제목과 DETAIL을 모두 삭제할까요? 보고서 연결도 제거됩니다."
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deleteItem: { itemId },
+          preserveReadyStatus: true,
+        }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "전체 삭제 실패");
+      if (data.video) onVideoUpdate(data.video);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "전체 삭제 실패");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyText() {
+    const text = [item?.statement || marker.entry.text, answerText]
+      .filter(Boolean)
+      .join("\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      setError("복사 실패");
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-accent/30 bg-white p-3 space-y-2 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-ink-500">
+          F{marker.n} DETAIL · {badge.mark} {badge.label}
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-xs text-ink-500 underline"
+        >
+          닫기
+        </button>
+      </div>
+      <p className="text-sm font-medium text-ink-900">
+        {item?.statement || marker.entry.text}
+      </p>
+      {answerText ? (
+        <p className="text-sm text-ink-700 whitespace-pre-wrap leading-relaxed">
+          {answerText}
+        </p>
+      ) : (
+        <p className="text-xs text-ink-400">DETAIL 없음</p>
+      )}
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {images.map((src) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={src.slice(0, 48)}
+              src={src}
+              alt=""
+              className="h-20 w-auto rounded-lg border border-ink-100 object-cover"
+            />
+          ))}
+        </div>
+      )}
+      {error && <p className="text-xs text-verify-false">{error}</p>}
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        <button
+          type="button"
+          onClick={() => void copyText()}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200 px-2 py-1 text-[11px] font-medium"
+        >
+          <ClipboardCopy className="h-3 w-3" />
+          복사
+        </button>
+        <button
+          type="button"
+          disabled={busy || !answerText}
+          onClick={() => void clearDetail()}
+          className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 disabled:opacity-40"
+        >
+          DETAIL 삭제
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void deleteAll()}
+          className="inline-flex items-center gap-1 rounded-lg border border-verify-false/40 bg-verify-false/5 px-2 py-1 text-[11px] font-medium text-verify-false disabled:opacity-40"
+        >
+          <Trash2 className="h-3 w-3" />
+          전체 삭제
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1554,6 +1868,45 @@ function FcDetailModal({
     }
   }
 
+  async function clearDetailOnly() {
+    const itemId = marker.entry.itemId;
+    if (!itemId) {
+      setError("이 항목은 DETAIL만 비울 수 없습니다.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "팩트체크 제목은 남기고 DETAIL(답변·이미지)만 삭제할까요?"
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clearFactCheckDetail: { itemId },
+          preserveReadyStatus: true,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "DETAIL 삭제 실패");
+      if (data.video) onVideoUpdate(data.video);
+      notify("DETAIL 삭제됨 (제목 유지)");
+      setMode("view");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "DETAIL 삭제 실패");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function deleteFc() {
     const itemId = marker.entry.itemId;
     if (!itemId) {
@@ -1562,7 +1915,7 @@ function FcDetailModal({
     }
     if (
       !window.confirm(
-        "이 팩트체크를 삭제할까요? 보고서 연결·답변도 함께 제거됩니다."
+        "팩트체크 제목과 DETAIL을 모두 삭제할까요? 보고서 연결도 제거됩니다."
       )
     ) {
       return;
@@ -1917,6 +2270,14 @@ function FcDetailModal({
                 </button>
                 <button
                   type="button"
+                  disabled={busy || saving || !marker.entry.itemId || !answerText}
+                  onClick={() => void clearDetailOnly()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-40"
+                >
+                  DETAIL 삭제
+                </button>
+                <button
+                  type="button"
                   disabled={busy || saving}
                   onClick={() => void deleteFc()}
                   className="inline-flex items-center gap-1 rounded-lg border border-verify-false/40 bg-verify-false/5 px-2.5 py-1.5 text-xs font-medium text-verify-false disabled:opacity-40"
@@ -1926,7 +2287,7 @@ function FcDetailModal({
                   ) : (
                     <Trash2 className="h-3.5 w-3.5" />
                   )}
-                  삭제
+                  전체 삭제
                 </button>
               </div>
             </>
@@ -2056,6 +2417,7 @@ function FormatToolbar({
   onPasteImage,
   onTextImage,
   onHandwriting,
+  onBeforeFontSizeSelect,
 }: {
   canUndo: boolean;
   canRedo: boolean;
@@ -2071,6 +2433,7 @@ function FormatToolbar({
   onPasteImage: () => void;
   onTextImage: () => void;
   onHandwriting: () => void;
+  onBeforeFontSizeSelect?: () => void;
 }) {
   const keepSelection = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2108,14 +2471,16 @@ function FormatToolbar({
       >
         <Minus className="h-4 w-4" />
       </ToolBtn>
-      <label
-        className="inline-flex items-center gap-1 text-xs text-ink-500"
-        onMouseDown={keepSelection}
-      >
+      <label className="inline-flex items-center gap-1 text-xs text-ink-500">
         크기
         <select
           className="min-h-8 rounded-lg border border-ink-200 bg-white px-2 text-xs text-ink-800"
           defaultValue=""
+          onMouseDown={() => {
+            // select는 preventDefault 하면 모바일에서 열리지 않음 — 선택만 저장
+            onBeforeFontSizeSelect?.();
+          }}
+          onFocus={() => onBeforeFontSizeSelect?.()}
           onChange={(e) => {
             const px = Number(e.target.value);
             if (px) onFontSize(px);

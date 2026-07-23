@@ -99,6 +99,7 @@ export async function createReportJob(opts: {
   channel?: string;
   pastedScript: string;
   creatorNotes?: string;
+  thumbnailUrl?: string;
 }): Promise<VideoRecord> {
   const script = normalizePastedText(opts.pastedScript);
   if (!hasUsablePastedScript(script)) {
@@ -124,7 +125,7 @@ export async function createReportJob(opts: {
     videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
     title,
     channel,
-    thumbnailUrl: reportThumbnailUrl(),
+    thumbnailUrl: opts.thumbnailUrl?.trim() || reportThumbnailUrl(),
     description,
     chapters,
     transcript: script,
@@ -154,6 +155,7 @@ export async function saveReportInputDraft(opts: {
   channel?: string;
   pastedScript?: string;
   creatorNotes?: string;
+  thumbnailUrl?: string;
 }): Promise<VideoRecord> {
   const title = opts.title.trim();
   if (title.length < 2) {
@@ -191,6 +193,7 @@ export async function saveReportInputDraft(opts: {
       transcript: script,
       transcriptSource: script ? "pasted" : "none",
       scriptNotice,
+      thumbnailUrl: opts.thumbnailUrl?.trim() || existing.thumbnailUrl,
       tags: Array.from(
         new Set([
           ...existing.tags.filter((t) => t !== "has-script"),
@@ -213,7 +216,7 @@ export async function saveReportInputDraft(opts: {
     videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
     title,
     channel,
-    thumbnailUrl: reportThumbnailUrl(),
+    thumbnailUrl: opts.thumbnailUrl?.trim() || reportThumbnailUrl(),
     description,
     chapters,
     transcript: script,
@@ -503,6 +506,7 @@ export async function createAndProcessReport(opts: {
   channel?: string;
   pastedScript: string;
   creatorNotes?: string;
+  thumbnailUrl?: string;
 }): Promise<VideoRecord> {
   const job = await createReportJob(opts);
   return runVideoPipeline(job.id, opts.creatorNotes, opts.pastedScript);

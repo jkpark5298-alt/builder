@@ -179,6 +179,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       channel?: string;
       creatorNotes?: string;
       pastedScript?: string;
+      thumbnailUrl?: string;
     };
     /** Report 입력 임시 저장 → 요약·검증 시작 */
     startReportPipeline?: boolean;
@@ -190,6 +191,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     rebuild?: boolean;
     itemImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
     itemImages?: { itemId: string; imageUrls: string[] };
+    /** 팩트체크 답변(DETAIL)만 비우기 — 주장 제목 유지 */
+    clearFactCheckDetail?: { itemId: string };
     /** 보고서 편집 중 FC 수정·삭제 시 ready 상태 유지 */
     preserveReadyStatus?: boolean;
     /** 팩트체크 대상(주장) 문구 수정 */
@@ -245,6 +248,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       channel: body.updateReportInput.channel,
       pastedScript: body.updateReportInput.pastedScript ?? video.transcript,
       creatorNotes: body.updateReportInput.creatorNotes,
+      thumbnailUrl: body.updateReportInput.thumbnailUrl,
     });
     return jsonVideo(saved, { mode: "report_input_draft" });
   }
@@ -272,6 +276,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
         channel: body.updateReportInput.channel,
         pastedScript: script,
         creatorNotes: body.updateReportInput.creatorNotes,
+        thumbnailUrl: body.updateReportInput.thumbnailUrl,
       });
     }
     const processed = await startReportFromDraft(
@@ -399,6 +404,72 @@ async function patchVideo(req: Request, ctx: Ctx) {
           ...sec,
           entries: (sec.entries ?? []).map((e) =>
             e.itemId === updated.id ? { ...e, text: updated.statement } : e
+          ),
+        })),
+      };
+    }
+  }
+
+  if (body.clearFactCheckDetail?.itemId) {
+    const itemId = body.clearFactCheckDetail.itemId;
+    if (!next.items.some((i) => i.id === itemId)) {
+      return NextResponse.json(
+        { error: "DETAIL을 지울 팩트체크가 없습니다." },
+        { status: 404 }
+      );
+    }
+    const now = new Date().toISOString();
+    next = {
+      ...next,
+      factChecks: next.factChecks.map((fc) =>
+        fc.itemId === itemId
+          ? {
+              ...fc,
+              explanation: "",
+              sources: [],
+              answerImageUrl: undefined,
+              answerImageUrls: undefined,
+              answerParts: undefined,
+              verdict: "pending" as const,
+              checkedAt: now,
+            }
+          : fc
+      ),
+      updatedAt: now,
+      status:
+        body.preserveReadyStatus && next.status === "ready"
+          ? "ready"
+          : next.status === "ready" || next.status === "awaiting_factcheck"
+            ? "awaiting_factcheck"
+            : next.status,
+    };
+    if (next.report) {
+      next.report = {
+        ...next.report,
+        factChecks: (next.report.factChecks ?? []).map((rf) =>
+          rf.itemId === itemId
+            ? {
+                ...rf,
+                checkGuide: "",
+                verdict: "pending" as const,
+                answerImageUrl: undefined,
+                answerImageUrls: undefined,
+                answerParts: undefined,
+              }
+            : rf
+        ),
+        sections: next.report.sections.map((sec) => ({
+          ...sec,
+          entries: (sec.entries ?? []).map((e) =>
+            e.itemId === itemId
+              ? {
+                  ...e,
+                  html: undefined,
+                  answerImageUrl: undefined,
+                  answerImageUrls: undefined,
+                  answerParts: undefined,
+                }
+              : e
           ),
         })),
       };

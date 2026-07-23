@@ -45,6 +45,9 @@ export default async function VideoDetailPage({
             channel: video.channel === "직접 입력" ? "" : video.channel,
             creatorNotes: video.description ?? "",
             pastedScript: video.transcript ?? "",
+            thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+              ? ""
+              : video.thumbnailUrl,
           }}
         />
       </div>

@@ -150,10 +150,46 @@ export function ReportFactCheckToolbox({
     }
   }
 
+  async function clearDetail(itemId: string) {
+    if (
+      !window.confirm(
+        "팩트체크 제목은 남기고 DETAIL(답변·이미지)만 삭제할까요?"
+      )
+    ) {
+      return;
+    }
+    setSavingId(itemId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clearFactCheckDetail: { itemId },
+          preserveReadyStatus: true,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: string;
+        video?: VideoRecord;
+      };
+      if (!res.ok) throw new Error(data.error || "DETAIL 삭제 실패");
+      if (data.video) {
+        onVideoUpdate(data.video);
+        if (data.video.report) onDraftUpdate(data.video.report);
+      }
+      notify("DETAIL 삭제됨 (제목 유지)");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "DETAIL 삭제 실패");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function deleteFc(itemId: string) {
     if (
       !window.confirm(
-        "이 팩트체크를 삭제할까요? 보고서 연결·답변도 함께 제거됩니다."
+        "팩트체크 제목과 DETAIL을 모두 삭제할까요? 보고서 연결·답변도 함께 제거됩니다."
       )
     ) {
       return;
@@ -456,6 +492,14 @@ export function ReportFactCheckToolbox({
                     </button>
                     <button
                       type="button"
+                      disabled={saving || Boolean(busy) || !row.answerText}
+                      onClick={() => void clearDetail(row.item.id)}
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 disabled:opacity-40"
+                    >
+                      DETAIL 삭제
+                    </button>
+                    <button
+                      type="button"
                       disabled={saving || Boolean(busy)}
                       onClick={() => void deleteFc(row.item.id)}
                       className="inline-flex items-center gap-1 rounded-md border border-verify-false/40 bg-verify-false/5 px-2 py-1 text-[11px] font-medium text-verify-false"
@@ -465,7 +509,7 @@ export function ReportFactCheckToolbox({
                       ) : (
                         <Trash2 className="h-3 w-3" />
                       )}
-                      삭제
+                      전체 삭제
                     </button>
                   </div>
                 )}

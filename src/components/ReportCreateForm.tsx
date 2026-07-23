@@ -4,11 +4,16 @@ import {
   Check,
   ClipboardPaste,
   FileText,
+  ImagePlus,
   Loader2,
   Save,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
+import { reportThumbnailUrl } from "@/lib/input-mode";
+import { compressImageFiles } from "@/lib/image-client";
+import { uploadDataUrls } from "@/lib/media-upload-client";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
 
 const STORAGE_KEY = "yfc-report-form-v1";
@@ -19,6 +24,7 @@ export type ReportFormValues = {
   channel: string;
   creatorNotes: string;
   pastedScript: string;
+  thumbnailUrl?: string;
 };
 
 function loadSaved(): Partial<ReportFormValues> {
@@ -48,11 +54,16 @@ export function ReportCreateForm({
   initial?: Partial<ReportFormValues>;
 }) {
   const feedbackRef = useRef<HTMLDivElement>(null);
+  const thumbInputRef = useRef<HTMLInputElement>(null);
   const [activeDraftId, setActiveDraftId] = useState(draftId);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [channel, setChannel] = useState(initial?.channel ?? "");
   const [creatorNotes, setCreatorNotes] = useState(initial?.creatorNotes ?? "");
   const [pastedScript, setPastedScript] = useState(initial?.pastedScript ?? "");
+  const [thumbnailUrl, setThumbnailUrl] = useState(
+    initial?.thumbnailUrl?.trim() || ""
+  );
+  const [thumbBusy, setThumbBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draftSaving, setDraftSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -66,19 +77,30 @@ export function ReportCreateForm({
     if (saved.channel) setChannel(saved.channel);
     if (saved.creatorNotes) setCreatorNotes(saved.creatorNotes);
     if (saved.pastedScript) setPastedScript(saved.pastedScript);
+    if (saved.thumbnailUrl) setThumbnailUrl(saved.thumbnailUrl);
     setHydrated(true);
   }, [draftId, initial]);
 
   useEffect(() => {
     if (!hydrated || draftId || initial) return;
-    saveForm({ title, channel, creatorNotes, pastedScript });
-  }, [title, channel, creatorNotes, pastedScript, hydrated, draftId, initial]);
+    saveForm({ title, channel, creatorNotes, pastedScript, thumbnailUrl });
+  }, [
+    title,
+    channel,
+    creatorNotes,
+    pastedScript,
+    thumbnailUrl,
+    hydrated,
+    draftId,
+    initial,
+  ]);
 
   const scriptLen = normalizePastedText(pastedScript).length;
   const hasScript = hasUsablePastedScript(pastedScript);
   const step1Done = title.trim().length >= 2;
   const step2Done = hasScript;
   const isContinuing = Boolean(activeDraftId);
+  const previewThumb = thumbnailUrl.trim() || reportThumbnailUrl();
 
   function formPayload() {
     return {
@@ -86,7 +108,32 @@ export function ReportCreateForm({
       channel: channel.trim() || undefined,
       creatorNotes: creatorNotes.trim() || undefined,
       pastedScript: normalizePastedText(pastedScript),
+      thumbnailUrl: thumbnailUrl.trim() || undefined,
     };
+  }
+
+  async function onPickThumbnail(files: FileList | null) {
+    const file = files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    setThumbBusy(true);
+    setError(null);
+    try {
+      const compressed = await compressImageFiles([file], 280_000, 960);
+      if (!compressed.length) throw new Error("이미지를 읽지 못했습니다.");
+      const uploaded = await uploadDataUrls(
+        compressed,
+        activeDraftId
+          ? `videos/${activeDraftId}/thumb`
+          : "videos/report-thumbs"
+      );
+      if (!uploaded[0]) throw new Error("이미지 업로드에 실패했습니다.");
+      setThumbnailUrl(uploaded[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "표지 이미지 업로드 실패");
+    } finally {
+      setThumbBusy(false);
+      if (thumbInputRef.current) thumbInputRef.current.value = "";
+    }
   }
 
   async function saveDraft() {
@@ -272,6 +319,55 @@ export function ReportCreateForm({
             className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-4 py-3.5 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
           />
         </label>
+
+        <div className="space-y-2">
+          <p className="text-sm text-ink-600">초기 화면(표지) 이미지</p>
+          <div className="overflow-hidden rounded-xl border border-ink-200 bg-ink-50">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewThumb}
+              alt="표지 미리보기"
+              className="w-full aspect-video object-cover"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={thumbInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onPickThumbnail(e.target.files)}
+            />
+            <button
+              type="button"
+              disabled={thumbBusy}
+              onClick={() => thumbInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-sm font-medium disabled:opacity-50"
+            >
+              {thumbBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ImagePlus className="h-4 w-4" />
+              )}
+              {thumbnailUrl ? "이미지 바꾸기" : "이미지 선택"}
+            </button>
+            {thumbnailUrl ? (
+              <button
+                type="button"
+                disabled={thumbBusy}
+                onClick={() => setThumbnailUrl("")}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-sm font-medium text-ink-600"
+              >
+                <X className="h-4 w-4" />
+                기본 이미지로
+              </button>
+            ) : null}
+          </div>
+          <p className="text-xs text-ink-400">
+            목록·상세 상단에 보이는 표지입니다. 없으면 기본 Report 이미지가
+            사용됩니다.
+          </p>
+        </div>
 
         <label className="block text-sm text-ink-600">
           채널·작성자 (선택)
