@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2,
+  ClipboardCopy,
   Eye,
   FileDown,
   ImagePlus,
@@ -16,6 +17,11 @@ import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
 import { compressImageFiles } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
+import {
+  formatFactChecksText,
+  formatReportText,
+  formatReportWithFactChecksText,
+} from "@/lib/report";
 
 /** 완료 보고서용: 표지 변경 / 보기 / 본문 수정 / 공유 / PDF·인쇄 */
 export function ReportActions({
@@ -32,6 +38,9 @@ export function ReportActions({
   const [coverBusy, setCoverBusy] = useState(false);
 
   if (!ready) return null;
+  const report = video.report;
+  if (!report) return null;
+  const readyReport = report;
 
   const viewHref = `/videos/${video.id}#report`;
   const editHref = `/videos/${video.id}#report-edit`;
@@ -55,6 +64,27 @@ export function ReportActions({
     } finally {
       setSharing(false);
     }
+  }
+
+  async function copyText(kind: "report" | "factchecks" | "all") {
+    const text =
+      kind === "report"
+        ? formatReportText(readyReport)
+        : kind === "factchecks"
+          ? formatFactChecksText(readyReport)
+          : formatReportWithFactChecksText(readyReport);
+    if (!text.trim()) {
+      alert("복사할 텍스트가 없습니다.");
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    alert(
+      kind === "report"
+        ? "보고서 텍스트를 복사했습니다."
+        : kind === "factchecks"
+          ? "팩트체크 텍스트를 복사했습니다."
+          : "보고서+팩트체크 텍스트를 복사했습니다."
+    );
   }
 
   function printReport() {
@@ -205,6 +235,30 @@ export function ReportActions({
       >
         <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
         팩트체크
+      </button>
+      <button
+        type="button"
+        onClick={() => void copyText("report")}
+        className={`${btn} ${enabled}`}
+      >
+        <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
+        보고서 text
+      </button>
+      <button
+        type="button"
+        onClick={() => void copyText("factchecks")}
+        className={`${btn} ${enabled}`}
+      >
+        <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
+        팩트체크 text
+      </button>
+      <button
+        type="button"
+        onClick={() => void copyText("all")}
+        className={`${btn} ${enabled}`}
+      >
+        <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
+        전체 text
       </button>
       <button
         type="button"

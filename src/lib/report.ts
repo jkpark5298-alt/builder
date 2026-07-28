@@ -55,6 +55,113 @@ export function reportBodyPlain(body: string, rich?: boolean): string {
   return rich ? stripHtml(body) : body;
 }
 
+export function formatSectionText(
+  report: TypedReport,
+  sectionIdx: number
+): string {
+  const sec = report.sections[sectionIdx];
+  if (!sec) return "";
+  const body = reportBodyPlain(sec.body, sec.rich).trim();
+  const lines = [`## ${sec.heading}`];
+  if (body) lines.push(body);
+  return lines.join("\n\n").trim();
+}
+
+export function formatReportText(report: TypedReport): string {
+  return report.sections
+    .map((_, idx) => formatSectionText(report, idx))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+export function formatFactChecksText(report: TypedReport): string {
+  return (report.factChecks ?? [])
+    .map((fc, idx) => {
+      const lines = [
+        `### F${idx + 1}. ${fc.statement}`.trim(),
+        fc.verdict ? `판정: ${fc.verdict}` : "",
+        fc.checkGuide?.trim() || "",
+      ].filter(Boolean);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+export function formatReportWithFactChecksText(report: TypedReport): string {
+  const reportText = formatReportText(report);
+  const fcText = formatFactChecksText(report);
+  return [
+    report.meta.title ? `# ${report.meta.title}` : "",
+    reportText ? `## 보고서\n\n${reportText}` : "",
+    fcText ? `## 팩트체크\n\n${fcText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function plainTextToHtml(text: string): string {
+  const parts = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (!parts.length) return "<p></p>";
+  return parts
+    .map(
+      (p) =>
+        `<p>${escapeHtml(p)
+          .replace(/\n/g, "<br>")}</p>`
+    )
+    .join("");
+}
+
+function normalizeHeadingKey(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+export function importReportText(
+  report: TypedReport,
+  raw: string
+): TypedReport {
+  const text = raw.replace(/\r\n/g, "\n").trim();
+  if (!text) return report;
+
+  const bodyOnly = text
+    .replace(/^# .+\n+/, "")
+    .replace(/^## 보고서\s*/m, "")
+    .replace(/\n## 팩트체크[\s\S]*$/m, "")
+    .trim();
+
+  const matches = Array.from(
+    bodyOnly.matchAll(/^##\s+(.+)\n([\s\S]*?)(?=^##\s+.+\n|$)/gm)
+  );
+  if (!matches.length) return report;
+
+  const sectionMap = new Map(
+    report.sections.map((sec, idx) => [normalizeHeadingKey(sec.heading), idx])
+  );
+
+  const nextSections = [...report.sections];
+  let changed = false;
+
+  for (const match of matches) {
+    const heading = match[1]?.trim();
+    const content = match[2]?.trim() ?? "";
+    if (!heading) continue;
+    const idx = sectionMap.get(normalizeHeadingKey(heading));
+    if (idx === undefined) continue;
+    const prev = nextSections[idx];
+    const body = plainTextToHtml(content);
+    if (prev && prev.body !== body) {
+      nextSections[idx] = { ...prev, body, rich: true };
+      changed = true;
+    }
+  }
+
+  if (!changed) return report;
+  return { ...report, sections: nextSections };
+}
+
 function isYoutubeThumb(url?: string | null): boolean {
   if (!url) return false;
   return /i\.ytimg\.com|ytimg\.com\/vi\//i.test(url);

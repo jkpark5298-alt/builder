@@ -64,6 +64,11 @@ import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
+import {
+  formatFactChecksText,
+  formatSectionText,
+  importReportText,
+} from "@/lib/report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = { url: string; tag?: string; note?: string };
@@ -107,6 +112,8 @@ export function EditableReportPanel({
   const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
   const [sectionSavedFlash, setSectionSavedFlash] = useState<
@@ -493,6 +500,30 @@ export function EditableReportPanel({
       formatHintTimerRef.current = null;
     }, 2800);
   }, []);
+
+  async function copyToClipboard(text: string, label: string) {
+    if (!text.trim()) {
+      alert(`복사할 ${label} 텍스트가 없습니다.`);
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    alert(`${label} 텍스트를 복사했습니다.`);
+  }
+
+  function applyImportedReportText() {
+    const current = draftRef.current;
+    if (!current) return;
+    const next = importReportText(current, importText);
+    if (next === current) {
+      alert("붙여넣은 텍스트에서 일치하는 섹션을 찾지 못했습니다.");
+      return;
+    }
+    setDraft(next);
+    setImportOpen(false);
+    setImportText("");
+    setMode("body");
+    alert("정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다.");
+  }
 
   const resolveActiveTipTap = useCallback(() => {
     const sec = draftRef.current?.sections[activeSectionIdx];
@@ -1328,6 +1359,16 @@ export function EditableReportPanel({
                     {formatHint}
                   </p>
                 )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportOpen((prev) => !prev);
+                    setMode("body");
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 hover:border-accent hover:text-accent"
+                >
+                  정리본 붙여넣기
+                </button>
               </div>
               <FormatToolbar
                 canUndo={historyUi.canUndo}
@@ -1381,6 +1422,42 @@ export function EditableReportPanel({
                 }}
               />
             </div>
+
+            {importOpen && (
+              <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
+                <p className="text-xs text-ink-700">
+                  AI가 정리한 텍스트를 붙여넣으면 <strong>`## 섹션 제목`</strong>{" "}
+                  기준으로 본문만 교체합니다. 이미지, 이미지 룸, 팩트체크는
+                  유지됩니다.
+                </p>
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  rows={10}
+                  placeholder={"## 결론\n정리된 본문...\n\n## 핵심 설명\n정리된 본문..."}
+                  className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={applyImportedReportText}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white"
+                  >
+                    보고서에 반영
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportOpen(false);
+                      setImportText("");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -1708,7 +1785,37 @@ export function EditableReportPanel({
                 key={`${sec.heading}-${idx}`}
                 className="space-y-3 report-section"
               >
-                <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
+                  <div className="flex flex-wrap gap-1 print:hidden">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyToClipboard(
+                          formatSectionText(draft, idx),
+                          "현재 섹션"
+                        )
+                      }
+                      className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
+                    >
+                      섹션 text 복사
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyToClipboard(
+                          [formatSectionText(draft, idx), formatFactChecksText(draft)]
+                            .filter(Boolean)
+                            .join("\n\n"),
+                          "섹션+팩트체크"
+                        )
+                      }
+                      className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
+                    >
+                      섹션+FC 복사
+                    </button>
+                  </div>
+                </div>
 
                 {sec.body && (
                   <div
