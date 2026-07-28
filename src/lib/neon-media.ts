@@ -26,7 +26,9 @@ async function ensureMediaSchema(): Promise<void> {
   return mediaSchemaReady;
 }
 
-/** Neon에 이미지 저장 → /api/media/{id} URL 반환 */
+/** Neon에 이미지 저장 → /api/media/{id} URL 반환.
+ *  idHint가 안정적이면(해시 포함) 같은 파일을 재사용해 용량을 줄인다.
+ */
 export async function putNeonMedia(
   buffer: Buffer,
   contentType: string,
@@ -36,11 +38,26 @@ export async function putNeonMedia(
   const safeHint = (idHint || "")
     .replace(/[^a-zA-Z0-9_-]/g, "_")
     .replace(/_+/g, "_")
-    .slice(0, 60);
-  const key = `${safeHint || "img"}_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`.slice(0, 100);
+    .slice(0, 80);
+  const looksStable = /_[a-f0-9]{16,}$/i.test(safeHint);
+  const key = (
+    looksStable
+      ? safeHint
+      : `${safeHint || "img"}_${Date.now().toString(36)}_${Math.random()
+          .toString(36)
+          .slice(2, 8)}`
+  ).slice(0, 100);
   const dataBase64 = buffer.toString("base64");
+
+  if (looksStable) {
+    const existing = await sql()`
+      SELECT id FROM media_files WHERE id = ${key} LIMIT 1
+    `;
+    if ((existing as Array<{ id?: string }>).length > 0) {
+      return `/api/media/${encodeURIComponent(key)}`;
+    }
+  }
+
   await sql()`
     INSERT INTO media_files (id, content_type, data_base64)
     VALUES (${key}, ${contentType}, ${dataBase64})

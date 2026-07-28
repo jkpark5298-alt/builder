@@ -1,6 +1,6 @@
-/** API/DB 요청 한도(약 4.5MB) 안에 여러 장을 넣기 위한 목표 크기 */
-const DEFAULT_MAX_BYTES = 220_000;
-const DEFAULT_MAX_WIDTH = 720;
+/** API/저장소 효율용 목표 크기 (base64 전 바이너리 기준) */
+export const DEFAULT_MAX_BYTES = 120_000;
+export const DEFAULT_MAX_WIDTH = 640;
 
 /** data URL → JPEG 압축 (텍스트→이미지 PNG 등) */
 export async function compressDataUrl(
@@ -9,7 +9,7 @@ export async function compressDataUrl(
   maxWidth = DEFAULT_MAX_WIDTH
 ): Promise<string> {
   if (!dataUrl.startsWith("data:image/")) return dataUrl;
-  // 이미 충분히 작으면 그대로 (HEIC 제외)
+  // 이미 충분히 작은 JPEG면 그대로 (HEIC 제외)
   if (
     dataUrl.length <= maxBytes * 1.37 &&
     /^data:image\/jpe?g/i.test(dataUrl)
@@ -30,15 +30,15 @@ export async function compressDataUrl(
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
 
-  let quality = 0.82;
+  let quality = 0.72;
   let out = canvas.toDataURL("image/jpeg", quality);
-  while (out.length > maxBytes * 1.37 && quality > 0.4) {
-    quality -= 0.08;
+  while (out.length > maxBytes * 1.37 && quality > 0.32) {
+    quality -= 0.07;
     out = canvas.toDataURL("image/jpeg", quality);
   }
   // 여전히 크면 한 번 더 축소
-  if (out.length > maxBytes * 1.37 && maxWidth > 480) {
-    return compressDataUrl(out, maxBytes, Math.round(maxWidth * 0.7));
+  if (out.length > maxBytes * 1.37 && maxWidth > 360) {
+    return compressDataUrl(out, maxBytes, Math.round(maxWidth * 0.72));
   }
   return out;
 }

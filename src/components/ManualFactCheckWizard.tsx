@@ -191,11 +191,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         try {
           compressedParts = [];
           for (const p of rawParts) {
-            const compressed = await compressDataUrls(
-              p.imageUrls ?? [],
-              220_000,
-              720
-            );
+            const compressed = await compressDataUrls(p.imageUrls ?? []);
             const uploaded = await uploadDataUrls(
               compressed,
               `videos/${localVideo.id}/answers`

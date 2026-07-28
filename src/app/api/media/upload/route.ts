@@ -36,8 +36,8 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  // ~1.5MB base64 상한 (클라이언트 압축 220KB면 여유)
-  if (dataUrl.length > 2_000_000) {
+  // ~1.0MB base64 상한 (클라이언트 압축 ~120KB면 여유)
+  if (dataUrl.length > 1_400_000) {
     return NextResponse.json(
       { error: "이미지가 너무 큽니다. 다시 압축해 주세요." },
       { status: 413 }

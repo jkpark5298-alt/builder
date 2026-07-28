@@ -1,7 +1,7 @@
 import { hasDatabase } from "./db";
 import fs from "fs";
 import path from "path";
-import { randomUUID } from "crypto";
+import { createHash } from "crypto";
 import { put } from "@vercel/blob";
 import type {
   AnswerPart,
@@ -42,6 +42,10 @@ function extFromContentType(ct: string): string {
   return "jpg";
 }
 
+function contentHash(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex").slice(0, 20);
+}
+
 function parseDataUrl(dataUrl: string): { contentType: string; buffer: Buffer } | null {
   const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i.exec(dataUrl);
   if (!m) return null;
@@ -66,9 +70,15 @@ export function isPersistedMediaUrl(url: string | undefined | null): boolean {
   return /^https?:\/\//i.test(url) || url.startsWith("/api/media/");
 }
 
+function isBlobFailureRecoverable(msg: string): boolean {
+  return /suspended|unauthorized|forbidden|401|403|404|not found|quota|limit|network|fetch failed|ECONN|ETIMEDOUT/i.test(
+    msg
+  );
+}
+
 /**
- * data URL → Neon(또는 Blob/로컬) URL.
- * Blob 스토어가 정지된 환경에서는 Neon을 우선 사용.
+ * data URL → Blob URL (1차). Blob 이상/미연결 시 Neon(또는 로컬)으로 폴백.
+ * 동일 바이너리는 content hash로 재사용해 중복 저장을 줄인다.
  */
 export async function persistMediaDataUrl(
   dataUrl: string,
@@ -83,19 +93,16 @@ export async function persistMediaDataUrl(
 
   const prefix = (opts?.prefix || "media").replace(/[^a-zA-Z0-9/_-]/g, "");
   const ext = extFromContentType(parsed.contentType);
-  const name = `${opts?.filenameHint || randomUUID()}.${ext}`;
-  const key = `${prefix}/${name}`;
+  const hash = contentHash(parsed.buffer);
+  const key = `${prefix}/${hash}.${ext}`;
+  const neonHint = `${prefix.replace(/\//g, "_")}_${hash}`;
 
   const forceNeon = readEnv("NEON_MEDIA_FORCE") === "1";
   const token = blobToken();
 
   const saveToNeon = async () => {
     const { putNeonMedia } = await import("./neon-media");
-    return putNeonMedia(
-      parsed.buffer,
-      parsed.contentType,
-      `${prefix.replace(/\//g, "_")}_${opts?.filenameHint || "img"}`
-    );
+    return putNeonMedia(parsed.buffer, parsed.contentType, neonHint);
   };
 
   const formatMediaError = (msg: string) => {
@@ -105,34 +112,42 @@ export async function persistMediaDataUrl(
         "Vercel Blob 스토어를 연결하거나 미사용 이미지를 정리해 주세요."
       );
     }
+    if (/suspended/i.test(msg)) {
+      return "Vercel Blob 스토어가 정지(suspended) 상태입니다.";
+    }
     return msg;
   };
 
-  // 기본: Blob 우선 (이미지는 DB에 넣지 않음). NEON_MEDIA_FORCE=1 이면 Neon 먼저.
+  // 1차: Blob (토큰 있고 Neon 강제 아님)
   if (token && !forceNeon) {
     try {
       const blob = await put(key, parsed.buffer, {
         access: "public",
         contentType: parsed.contentType,
         token,
-        addRandomSuffix: true,
+        addRandomSuffix: false,
+        allowOverwrite: true,
       });
       return blob.url;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn("[media-store] Blob upload failed, trying Neon:", msg);
+      console.warn("[media-store] Blob upload failed → Neon fallback:", msg);
+      if (!isBlobFailureRecoverable(msg) && !hasDatabase()) {
+        throw new Error(`이미지 저장 실패 (Blob: ${formatMediaError(msg)})`);
+      }
       try {
         return await saveToNeon();
       } catch (neonErr) {
         const nmsg =
           neonErr instanceof Error ? neonErr.message : String(neonErr);
         throw new Error(
-          `이미지 저장 실패 (Blob: ${msg} / Neon: ${formatMediaError(nmsg)})`
+          `이미지 저장 실패 (Blob: ${formatMediaError(msg)} / Neon: ${formatMediaError(nmsg)})`
         );
       }
     }
   }
 
+  // 2차: Neon (Blob 미연결·강제 Neon·Blob 실패 폴백)
   if (onVercel() || hasDatabase()) {
     try {
       return await saveToNeon();
@@ -144,14 +159,15 @@ export async function persistMediaDataUrl(
             access: "public",
             contentType: parsed.contentType,
             token,
-            addRandomSuffix: true,
+            addRandomSuffix: false,
+            allowOverwrite: true,
           });
           return blob.url;
         } catch (blobErr) {
           const bmsg =
             blobErr instanceof Error ? blobErr.message : String(blobErr);
           throw new Error(
-            `이미지 저장 실패 (Neon: ${formatMediaError(nmsg)} / Blob: ${bmsg})`
+            `이미지 저장 실패 (Neon: ${formatMediaError(nmsg)} / Blob: ${formatMediaError(bmsg)})`
           );
         }
       }
@@ -163,7 +179,9 @@ export async function persistMediaDataUrl(
   fs.mkdirSync(dir, { recursive: true });
   const safeName = key.replace(/\//g, "__");
   const filePath = path.join(dir, safeName);
-  fs.writeFileSync(filePath, parsed.buffer);
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, parsed.buffer);
+  }
   return `/api/media/${encodeURIComponent(safeName)}`;
 }
 
