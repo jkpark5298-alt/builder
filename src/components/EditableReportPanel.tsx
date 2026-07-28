@@ -34,6 +34,12 @@ import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromCl
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
+  collectSectionImages as collectSectionImagesFromRoom,
+  normalizeRoomItems,
+  normalizeReportImageRefs,
+  upsertRoomUrls,
+} from "@/lib/report-images";
+import {
   DEFAULT_REPORT_FONT_PX,
   findReportBodyEditor,
   parseFontSizeToPx,
@@ -44,7 +50,6 @@ import {
 } from "@/lib/report-editor-registry";
 import {
   cloneReport,
-  collectSectionImages,
   HISTORY_DEBOUNCE_MS,
   HISTORY_LIMIT,
   newSectionId,
@@ -72,24 +77,8 @@ import {
 } from "@/lib/report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
-type RoomImageItem = { url: string; tag?: string; note?: string };
+type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
 const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "기타"] as const;
-
-function normalizeRoomItems(raw: TypedReport["imageRoom"]): RoomImageItem[] {
-  const out: RoomImageItem[] = [];
-  const seen = new Set<string>();
-  for (const entry of raw ?? []) {
-    const item =
-      typeof entry === "string"
-        ? { url: entry }
-        : { url: entry.url, tag: entry.tag, note: entry.note };
-    const url = item.url?.trim();
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-    out.push({ ...item, url });
-  }
-  return out;
-}
 
 export function EditableReportPanel({
   video,
@@ -106,7 +95,9 @@ export function EditableReportPanel({
   const editing = mode === "body";
   const factcheckMode = mode === "factcheck";
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<TypedReport | null>(report);
+  const [draft, setDraft] = useState<TypedReport | null>(
+    report ? normalizeReportImageRefs(report) : report
+  );
   const [openFcKey, setOpenFcKey] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
@@ -138,6 +129,10 @@ export function EditableReportPanel({
   >("idle");
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedSnapRef = useRef<string>("");
+
+  useEffect(() => {
+    setDraft(report ? normalizeReportImageRefs(report) : report);
+  }, [report]);
 
   const syncHistoryUi = useCallback(() => {
     setHistoryUi({
@@ -454,7 +449,7 @@ export function EditableReportPanel({
     const seed = normalizeImageUrls(
       undefined,
       draft.sections.flatMap((sec) => [
-        ...collectSectionImages(sec),
+          ...collectSectionImagesFromRoom(sec, draft.imageRoom),
         ...collectSectionFcImages(sec, fcByItem),
       ])
     );
@@ -760,14 +755,9 @@ export function EditableReportPanel({
 
   function patchImageRoom(urls: string[], history: "immediate" | "debounced" | "none" = "immediate") {
     updateDraft((prev) => {
-      const current = normalizeRoomItems(prev.imageRoom);
-      const seen = new Set(current.map((x) => x.url));
-      const appended = urls
-        .map((u) => u.trim())
-        .filter((u) => u && !seen.has(u))
-        .map((url) => ({ url }));
-      if (!appended.length) return prev;
-      return { ...prev, imageRoom: [...current, ...appended] };
+      const { room } = upsertRoomUrls(prev.imageRoom, urls);
+      if (room.length === normalizeRoomItems(prev.imageRoom).length) return prev;
+      return { ...prev, imageRoom: room };
     }, { history });
   }
 
@@ -791,10 +781,19 @@ export function EditableReportPanel({
   }
 
   function removeImageFromRoom(src: string) {
-    updateDraft((prev) => ({
-      ...prev,
-      imageRoom: normalizeRoomItems(prev.imageRoom).filter((u) => u.url !== src),
-    }));
+    updateDraft((prev) => {
+      const room = normalizeRoomItems(prev.imageRoom);
+      const removed = room.find((u) => u.url === src);
+      if (!removed) return prev;
+      return {
+        ...prev,
+        imageRoom: room.filter((u) => u.url !== src),
+        sections: prev.sections.map((sec) => ({
+          ...sec,
+          imageRefs: sec.imageRefs?.filter((ref) => ref !== removed.id),
+        })),
+      };
+    });
   }
 
   function updateRoomMeta(src: string, patch: Partial<Pick<RoomImageItem, "tag" | "note">>) {
@@ -817,12 +816,12 @@ export function EditableReportPanel({
       Math.max(0, activeSectionIdx),
       Math.max(0, (draft?.sections.length ?? 1) - 1)
     );
+    const { refs } = upsertRoomUrls(draft?.imageRoom, [src]);
     patchSection(
       idx,
       {
-        images: normalizeImageUrls(
-          undefined,
-          [...(draft?.sections[idx]?.images ?? []), src]
+        imageRefs: Array.from(
+          new Set([...(draft?.sections[idx]?.imageRefs ?? []), ...refs])
         ),
       },
       "immediate"
@@ -934,17 +933,15 @@ export function EditableReportPanel({
     updateDraft((prev) => {
       const sections = [...prev.sections];
       const sec = sections[idx];
-      const merged = Array.from(new Set([...(sec.images ?? []), ...urls]));
-      sections[idx] = { ...sec, images: merged };
+      const { room, refs } = upsertRoomUrls(prev.imageRoom, urls);
+      sections[idx] = {
+        ...sec,
+        imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
+      };
       return {
         ...prev,
         sections,
-        imageRoom: [
-          ...normalizeRoomItems(prev.imageRoom),
-          ...urls
-            .filter((u) => !normalizeRoomItems(prev.imageRoom).some((x) => x.url === u))
-            .map((url) => ({ url })),
-        ],
+        imageRoom: room,
       };
     });
   }
@@ -1015,17 +1012,15 @@ export function EditableReportPanel({
       updateDraft((prev) => {
         const sections = [...prev.sections];
         const sec = sections[idx];
-        const images = [...(sec.images ?? []), ...uploaded];
-        sections[idx] = { ...sec, images };
+        const { room, refs } = upsertRoomUrls(prev.imageRoom, uploaded);
+        sections[idx] = {
+          ...sec,
+          imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
+        };
         return {
           ...prev,
           sections,
-          imageRoom: [
-            ...normalizeRoomItems(prev.imageRoom),
-            ...uploaded
-              .filter((u) => !normalizeRoomItems(prev.imageRoom).some((x) => x.url === u))
-              .map((url) => ({ url })),
-          ],
+          imageRoom: room,
         };
       });
     } catch (e) {
@@ -1086,14 +1081,15 @@ export function EditableReportPanel({
       updateDraft((prev) => {
         const sections = [...prev.sections];
         const sec = sections[idx];
-        const images = [...(sec.images ?? []), url];
-        sections[idx] = { ...sec, images };
+        const { room, refs } = upsertRoomUrls(prev.imageRoom, [url]);
+        sections[idx] = {
+          ...sec,
+          imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
+        };
         return {
           ...prev,
           sections,
-          imageRoom: normalizeRoomItems(prev.imageRoom).some((x) => x.url === url)
-            ? normalizeRoomItems(prev.imageRoom)
-            : [...normalizeRoomItems(prev.imageRoom), { url }],
+          imageRoom: room,
         };
       });
     } catch (e) {
@@ -1111,14 +1107,17 @@ export function EditableReportPanel({
       );
       updateDraft((prev) => {
         const sections = [...prev.sections];
-        const images = [...(sections[idx].images ?? []), url];
-        sections[idx] = { ...sections[idx], images };
+        const { room, refs } = upsertRoomUrls(prev.imageRoom, [url]);
+        sections[idx] = {
+          ...sections[idx],
+          imageRefs: Array.from(
+            new Set([...(sections[idx].imageRefs ?? []), ...refs])
+          ),
+        };
         return {
           ...prev,
           sections,
-          imageRoom: normalizeRoomItems(prev.imageRoom).some((x) => x.url === url)
-            ? normalizeRoomItems(prev.imageRoom)
-            : [...normalizeRoomItems(prev.imageRoom), { url }],
+          imageRoom: room,
         };
       });
     } catch (e) {
@@ -1578,7 +1577,10 @@ export function EditableReportPanel({
                 const sectionMarkers = markers.filter(
                   (m) => m.sectionIdx === idx
                 );
-                const sectionImages = collectSectionImages(sec);
+                const sectionImages = collectSectionImagesFromRoom(
+                  sec,
+                  draft.imageRoom
+                );
                 const dirty = isSectionDirty(idx);
                 const savingThis = savingSectionIdx === idx;
                 const savedFlash = sectionSavedFlash[idx];
@@ -1682,9 +1684,12 @@ export function EditableReportPanel({
                     {sectionImages.length > 0 && (
                       <div className="space-y-2 pt-1">
                         {sectionImages.map((src) => {
-                          const imgIdx = (sec.images ?? []).indexOf(src);
-                          const isAttached = imgIdx >= 0;
-                          const isHero = sec.imageUrl === src;
+                          const roomItem = normalizeRoomItems(draft.imageRoom).find(
+                            (item) => item.url === src
+                          );
+                          const isAttached = Boolean(
+                            roomItem && sec.imageRefs?.includes(roomItem.id)
+                          );
                           return (
                             <div
                               key={src.slice(0, 64)}
@@ -1696,20 +1701,17 @@ export function EditableReportPanel({
                                 alt=""
                                 className="w-full max-h-72 object-contain bg-white"
                               />
-                              {(isAttached || isHero) && (
+                              {isAttached && (
                                 <button
                                   type="button"
                                   className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
                                   onClick={() => {
-                                    if (isAttached) {
-                                      patchSection(idx, {
-                                        images: sec.images?.filter(
-                                          (_, j) => j !== imgIdx
-                                        ),
-                                      });
-                                    } else if (isHero) {
-                                      patchSection(idx, { imageUrl: undefined });
-                                    }
+                                    if (!roomItem) return;
+                                    patchSection(idx, {
+                                      imageRefs: sec.imageRefs?.filter(
+                                        (ref) => ref !== roomItem.id
+                                      ),
+                                    });
                                   }}
                                 >
                                   <X className="h-4 w-4" />
@@ -1793,9 +1795,14 @@ export function EditableReportPanel({
               markers
             );
             const fcImages = collectSectionFcImages(sec, fcByItem);
-            const sectionOwn = new Set(collectSectionImages(sec));
+            const sectionOwn = new Set(
+              collectSectionImagesFromRoom(sec, draft.imageRoom)
+            );
             const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));
-            const sectionImages = collectSectionImages(sec);
+            const sectionImages = collectSectionImagesFromRoom(
+              sec,
+              draft.imageRoom
+            );
 
             return (
               <div

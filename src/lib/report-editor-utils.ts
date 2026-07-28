@@ -1,4 +1,5 @@
 import type { ReportSectionBlock, TypedReport } from "./types";
+export { collectSectionImages } from "./report-images";
 
 export const TEXT_COLORS = [
   { id: "black", label: "검정", color: "#1a2430" },
@@ -44,10 +45,3 @@ export function stepFontSize(current: number, delta: number): number {
   return sizes[next]!;
 }
 
-export function collectSectionImages(sec: ReportSectionBlock): string[] {
-  return Array.from(
-    new Set(
-      [sec.imageUrl, ...(sec.images ?? [])].filter(Boolean) as string[]
-    )
-  );
-}

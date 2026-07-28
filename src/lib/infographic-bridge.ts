@@ -1,5 +1,6 @@
 import type { VideoRecord } from "./types";
 import { normalizeImageUrls } from "./image-urls";
+import { collectSectionImages } from "./report-images";
 
 function isYoutubeThumb(url?: string | null): boolean {
   if (!url) return false;
@@ -24,8 +25,7 @@ export function collectInfographicBridgeImages(
 
   for (const s of report?.sections ?? []) {
     if (s.heading === "추가 검증" || s.heading === "검증 상세") continue;
-    push(s.imageUrl);
-    for (const u of s.images ?? []) push(u);
+    for (const u of collectSectionImages(s, report?.imageRoom)) push(u);
     for (const e of s.entries ?? []) {
       for (const u of normalizeImageUrls(e.answerImageUrl, e.answerImageUrls)) {
         push(u);

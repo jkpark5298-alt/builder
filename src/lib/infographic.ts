@@ -1,6 +1,7 @@
 import type { InfographicData, VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls } from "./image-urls";
+import { collectSectionImages } from "./report-images";
 import { isFailedVerdict, verdictBadge, normalizeAiAnswer } from "./text-format";
 import { resolveInfographicBridgeImages } from "./infographic-bridge";
 
@@ -353,7 +354,7 @@ export async function buildInfographic(
     if (s.heading === "추가 검증" || s.heading === "검증 상세") continue;
     const short = normalizeInfographicBody(s.heading, s.body || "");
     // 제목만 있고 본문 중복인 섹션도 이미지가 있으면 카드로 유지
-    const fromSec = [s.imageUrl, ...(s.images ?? [])].filter(
+    const fromSec = collectSectionImages(s, report?.imageRoom).filter(
       (u): u is string => Boolean(u) && !isYoutubeThumb(u)
     );
     const fromEntries = (s.entries ?? []).flatMap((e) => {

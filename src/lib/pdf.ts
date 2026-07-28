@@ -4,6 +4,7 @@ import { jsPDF } from "jspdf";
 import { resolveAnswerParts } from "./answer-parts";
 import { collectFcMarkers } from "./fc-markers";
 import { normalizeImageUrls } from "./image-urls";
+import { collectSectionImages } from "./report-images";
 import { readLocalMedia } from "./media-store";
 import { getNeonMedia } from "./neon-media";
 import { reportBodyPlain } from "./report";
@@ -417,12 +418,8 @@ export async function buildReportPdf(
     const plain = reportBodyPlain(sec.body, sec.rich);
     if (plain) writeWrapped(plain, 10, 12);
 
-    const sectionImages = Array.from(
-      new Set(
-        [sec.imageUrl, ...(sec.images ?? [])].filter(
-          (u): u is string => Boolean(u) && !isYoutubeThumb(u)
-        )
-      )
+    const sectionImages = collectSectionImages(sec, report.imageRoom).filter(
+      (u) => !isYoutubeThumb(u)
     );
     for (const src of sectionImages) {
       await drawImage(src);

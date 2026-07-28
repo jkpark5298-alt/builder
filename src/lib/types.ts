@@ -98,6 +98,8 @@ export interface ReportSectionBlock {
   imageUrl?: string;
   /** 첨부·손글씨 이미지들 */
   images?: string[];
+  /** imageRoom 원본을 가리키는 참조 id들 */
+  imageRefs?: string[];
   /** 본문 아래 항목(팩트체크 연동) */
   entries?: ReportEntry[];
 }
@@ -127,6 +129,7 @@ export interface TypedReport {
   imageRoom?: Array<
     | string
     | {
+        id?: string;
         url: string;
         tag?: string;
         note?: string;

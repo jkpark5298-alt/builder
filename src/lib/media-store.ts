@@ -237,6 +237,21 @@ async function persistReport(
   report: TypedReport,
   videoId: string
 ): Promise<TypedReport> {
+  const imageRoom = [];
+  for (const entry of report.imageRoom ?? []) {
+    if (typeof entry === "string") {
+      imageRoom.push(
+        await persistMediaDataUrl(entry, { prefix: `videos/${videoId}/report-room` })
+      );
+      continue;
+    }
+    imageRoom.push({
+      ...entry,
+      url: await persistMediaDataUrl(entry.url, {
+        prefix: `videos/${videoId}/report-room`,
+      }),
+    });
+  }
   const sections = [];
   for (const s of report.sections) {
     const images = await persistMediaUrls(s.images, {
@@ -321,7 +336,7 @@ async function persistReport(
     });
   }
 
-  return { ...report, sections, factChecks };
+  return { ...report, imageRoom, sections, factChecks };
 }
 
 /** 인포그래픽 SVG를 외부 저장하고 svgUrl만 남김 */
