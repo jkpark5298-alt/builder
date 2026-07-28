@@ -176,6 +176,17 @@ function parseImportedSections(raw: string): Array<{
     .filter((sec) => sec.heading && sec.content);
 }
 
+export function inspectImportedReportText(raw: string): {
+  count: number;
+  headings: string[];
+} {
+  const sections = parseImportedSections(raw);
+  return {
+    count: sections.length,
+    headings: sections.map((sec) => sec.heading),
+  };
+}
+
 export function importReportText(
   report: TypedReport,
   raw: string
@@ -195,7 +206,23 @@ export function importReportText(
     const heading = match.heading.trim();
     const content = match.content.trim();
     if (!heading) continue;
-    const idx = sectionMap.get(normalizeHeadingKey(heading));
+    let idx = sectionMap.get(normalizeHeadingKey(heading));
+    if (idx === undefined) {
+      let bestIdx = -1;
+      let bestScore = 0;
+      for (let i = 0; i < nextSections.length; i++) {
+        if (used.has(i)) continue;
+        const score = overlapScore(
+          normalizeHeadingKey(nextSections[i]?.heading || ""),
+          normalizeHeadingKey(heading)
+        );
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0 && bestScore >= 0.45) idx = bestIdx;
+    }
     if (idx === undefined) continue;
     used.add(idx);
     const prev = nextSections[idx];

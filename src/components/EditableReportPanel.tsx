@@ -68,6 +68,7 @@ import {
   formatFactChecksText,
   formatSectionText,
   importReportText,
+  inspectImportedReportText,
 } from "@/lib/report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
@@ -515,7 +516,12 @@ export function EditableReportPanel({
     if (!current) return;
     const next = importReportText(current, importText);
     if (next === current) {
-      alert("붙여넣은 텍스트에서 일치하는 섹션을 찾지 못했습니다.");
+      const info = inspectImportedReportText(importText);
+      const parsed =
+        info.count > 0
+          ? `읽은 섹션 ${info.count}개: ${info.headings.join(" / ")}`
+          : "읽은 섹션이 없습니다. `## 섹션 제목` 형식을 확인해 주세요.";
+      alert(`붙여넣은 텍스트를 반영하지 못했습니다.\n\n${parsed}`);
       return;
     }
     setDraft(next);
