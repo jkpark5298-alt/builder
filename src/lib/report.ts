@@ -119,27 +119,68 @@ function normalizeHeadingKey(s: string): string {
   return s
     .replace(/\s+/g, " ")
     .replace(/[()[\]{}:：'"“”‘’.,!?·\-–—/\\]/g, " ")
+    .replace(/^[^\p{L}\p{N}]+/gu, "")
+    .replace(/^\d+\)\s*/g, "")
+    .replace(/^\d+\.\s*/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function parseImportedSections(raw: string): Array<{
+  heading: string;
+  content: string;
+}> {
+  const text = raw
+    .replace(/\r\n/g, "\n")
+    .replace(/^\s*---+\s*$/gm, "")
+    .replace(/^# .+\n+/, "")
+    .replace(/^##\s*보고서\s*/m, "")
+    .replace(/\n##\s*팩트체크[\s\S]*$/m, "")
+    .trim();
+  if (!text) return [];
+
+  const lines = text.split("\n");
+  const sections: Array<{ heading: string; content: string }> = [];
+  let current: { heading: string; lines: string[] } | null = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const topHeading = line.match(/^##\s+(.+)$/);
+    if (topHeading) {
+      if (current) {
+        sections.push({
+          heading: current.heading.trim(),
+          content: current.lines.join("\n").trim(),
+        });
+      }
+      current = { heading: topHeading[1].trim(), lines: [] };
+      continue;
+    }
+    if (!current) continue;
+    current.lines.push(line);
+  }
+
+  if (current) {
+    sections.push({
+      heading: current.heading.trim(),
+      content: current.lines.join("\n").trim(),
+    });
+  }
+
+  return sections
+    .map((sec) => ({
+      heading: sec.heading,
+      content: sec.content.replace(/\n{3,}/g, "\n\n").trim(),
+    }))
+    .filter((sec) => sec.heading && sec.content);
 }
 
 export function importReportText(
   report: TypedReport,
   raw: string
 ): TypedReport {
-  const text = raw.replace(/\r\n/g, "\n").trim();
-  if (!text) return report;
-
-  const bodyOnly = text
-    .replace(/^# .+\n+/, "")
-    .replace(/^#{1,3}\s*보고서\s*/m, "")
-    .replace(/\n#{1,3}\s*팩트체크[\s\S]*$/m, "")
-    .trim();
-
-  const matches = Array.from(
-    bodyOnly.matchAll(/^#{1,3}\s+(.+)\n([\s\S]*?)(?=^#{1,3}\s+.+\n|$)/gm)
-  );
+  const matches = parseImportedSections(raw);
   if (!matches.length) return report;
 
   const sectionMap = new Map(
@@ -148,15 +189,15 @@ export function importReportText(
 
   const nextSections = [...report.sections];
   let changed = false;
-  let matchedByHeading = 0;
+  const used = new Set<number>();
 
   for (const match of matches) {
-    const heading = match[1]?.trim();
-    const content = match[2]?.trim() ?? "";
+    const heading = match.heading.trim();
+    const content = match.content.trim();
     if (!heading) continue;
     const idx = sectionMap.get(normalizeHeadingKey(heading));
     if (idx === undefined) continue;
-    matchedByHeading += 1;
+    used.add(idx);
     const prev = nextSections[idx];
     const body = plainTextToHtml(content);
     if (prev && prev.body !== body) {
@@ -165,16 +206,37 @@ export function importReportText(
     }
   }
 
-  if (!changed && matchedByHeading === 0) {
-    const sequential = matches.slice(0, report.sections.length);
-    sequential.forEach((match, idx) => {
-      const content = match[2]?.trim() ?? "";
-      const prev = nextSections[idx];
+  if (!changed) {
+    let reportIdx = 0;
+    matches.forEach((match, importIdx) => {
+      while (used.has(reportIdx) && reportIdx < nextSections.length) reportIdx += 1;
+      if (reportIdx >= nextSections.length) return;
+
+      const currentHeading = normalizeHeadingKey(nextSections[reportIdx]?.heading || "");
+      const importedHeading = normalizeHeadingKey(match.heading);
+      const shouldMapToConclusion =
+        importIdx === 0 &&
+        currentHeading === "결론" &&
+        /(핵심\s*요약|요약)/.test(importedHeading);
+
+      if (!shouldMapToConclusion && used.size > 0) {
+        const score = overlapScore(currentHeading, importedHeading);
+        if (score < 0.2 && currentHeading === "도입") {
+          reportIdx += 1;
+          while (used.has(reportIdx) && reportIdx < nextSections.length) reportIdx += 1;
+        }
+      }
+
+      if (reportIdx >= nextSections.length) return;
+      const prev = nextSections[reportIdx];
+      const content = match.content.trim();
       const body = plainTextToHtml(content);
       if (prev && prev.body !== body) {
-        nextSections[idx] = { ...prev, body, rich: true };
+        nextSections[reportIdx] = { ...prev, body, rich: true };
         changed = true;
       }
+      used.add(reportIdx);
+      reportIdx += 1;
     });
   }
 
