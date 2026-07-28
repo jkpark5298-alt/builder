@@ -113,3 +113,74 @@ export async function getNeonMedia(id: string): Promise<{
     return null;
   }
 }
+
+export async function neonMediaStats(): Promise<{
+  files: number;
+  approxBytes: number;
+  approxMb: number;
+}> {
+  if (!hasDatabase()) {
+    return { files: 0, approxBytes: 0, approxMb: 0 };
+  }
+  await ensureMediaSchema();
+  try {
+    const rows = await sql()`
+      SELECT
+        COUNT(*)::int AS files,
+        COALESCE(SUM(LENGTH(data_base64)), 0)::bigint AS b64_len
+      FROM media_files
+    `;
+    const row = rows[0] as { files?: number; b64_len?: string | number } | undefined;
+    const files = Number(row?.files ?? 0);
+    const b64Len = Number(row?.b64_len ?? 0);
+    // base64 ≈ 4/3 of binary; approx binary size
+    const approxBytes = Math.round((b64Len * 3) / 4);
+    return {
+      files,
+      approxBytes,
+      approxMb: Math.round((approxBytes / (1024 * 1024)) * 10) / 10,
+    };
+  } catch {
+    return { files: 0, approxBytes: 0, approxMb: 0 };
+  }
+}
+
+export async function listNeonMediaIds(): Promise<string[]> {
+  if (!hasDatabase()) return [];
+  await ensureMediaSchema();
+  try {
+    const rows = await sql()`SELECT id FROM media_files`;
+    return (rows as Array<{ id?: string }>)
+      .map((r) => r.id)
+      .filter((id): id is string => Boolean(id));
+  } catch {
+    return [];
+  }
+}
+
+/** 보고서 JSON에서 참조되지 않는 Neon 미디어 삭제 */
+export async function purgeUnusedNeonMedia(
+  referencedIds: Set<string>
+): Promise<{ deleted: number; kept: number; scanned: number }> {
+  if (!hasDatabase()) {
+    return { deleted: 0, kept: 0, scanned: 0 };
+  }
+  await ensureMediaSchema();
+  const ids = await listNeonMediaIds();
+  let deleted = 0;
+  let kept = 0;
+  for (const id of ids) {
+    if (referencedIds.has(id)) {
+      kept += 1;
+      continue;
+    }
+    try {
+      await sql()`DELETE FROM media_files WHERE id = ${id}`;
+      deleted += 1;
+    } catch {
+      /* skip */
+    }
+  }
+  return { deleted, kept, scanned: ids.length };
+}
+

@@ -61,10 +61,11 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[media/upload]", msg);
-    // 사용자에게 Blob 정지 같은 내부 문구는 짧게
-    const friendly = /suspended/i.test(msg)
-      ? "이미지 저장소(Blob)가 정지되어 Neon DB로 저장을 시도했으나 실패했습니다. 새로고침 후 다시 시도해 주세요."
-      : msg.replace(/^이미지 저장 실패:\s*/i, "");
+    const friendly = /project size limit|512\s*MB|could not extend file/i.test(msg)
+      ? "Neon DB 용량(512MB)이 가득 찼습니다. Vercel Blob 스토어를 연결하거나 /api/media/cleanup 으로 미사용 이미지를 정리해 주세요."
+      : /suspended/i.test(msg)
+        ? "이미지 저장소(Blob)가 정지되어 Neon DB로 저장을 시도했으나 실패했습니다. 새로고침 후 다시 시도해 주세요."
+        : msg.replace(/^이미지 저장 실패:\s*/i, "");
     return NextResponse.json(
       { error: `이미지 저장 실패: ${friendly}` },
       { status: 502 }

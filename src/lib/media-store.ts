@@ -86,7 +86,7 @@ export async function persistMediaDataUrl(
   const name = `${opts?.filenameHint || randomUUID()}.${ext}`;
   const key = `${prefix}/${name}`;
 
-  const preferBlob = readEnv("BLOB_FORCE") === "1";
+  const forceNeon = readEnv("NEON_MEDIA_FORCE") === "1";
   const token = blobToken();
 
   const saveToNeon = async () => {
@@ -98,34 +98,18 @@ export async function persistMediaDataUrl(
     );
   };
 
-  // 기본: Neon 우선 (Blob 정지 대응). BLOB_FORCE=1 이면 Blob 먼저.
-  if (!preferBlob && (onVercel() || hasDatabase())) {
-    try {
-      return await saveToNeon();
-    } catch (neonErr) {
-      if (token) {
-        try {
-          const blob = await put(key, parsed.buffer, {
-            access: "public",
-            contentType: parsed.contentType,
-            token,
-            addRandomSuffix: true,
-          });
-          return blob.url;
-        } catch (blobErr) {
-          const nmsg =
-            neonErr instanceof Error ? neonErr.message : String(neonErr);
-          const bmsg =
-            blobErr instanceof Error ? blobErr.message : String(blobErr);
-          throw new Error(`이미지 저장 실패 (Neon: ${nmsg} / Blob: ${bmsg})`);
-        }
-      }
-      const nmsg = neonErr instanceof Error ? neonErr.message : String(neonErr);
-      throw new Error(`이미지 저장 실패 (Neon: ${nmsg})`);
+  const formatMediaError = (msg: string) => {
+    if (/project size limit|512\s*MB|could not extend file/i.test(msg)) {
+      return (
+        "Neon DB 용량(512MB)이 가득 찼습니다. " +
+        "Vercel Blob 스토어를 연결하거나 미사용 이미지를 정리해 주세요."
+      );
     }
-  }
+    return msg;
+  };
 
-  if (token) {
+  // 기본: Blob 우선 (이미지는 DB에 넣지 않음). NEON_MEDIA_FORCE=1 이면 Neon 먼저.
+  if (token && !forceNeon) {
     try {
       const blob = await put(key, parsed.buffer, {
         access: "public",
@@ -142,13 +126,37 @@ export async function persistMediaDataUrl(
       } catch (neonErr) {
         const nmsg =
           neonErr instanceof Error ? neonErr.message : String(neonErr);
-        throw new Error(`이미지 저장 실패 (Blob: ${msg} / Neon: ${nmsg})`);
+        throw new Error(
+          `이미지 저장 실패 (Blob: ${msg} / Neon: ${formatMediaError(nmsg)})`
+        );
       }
     }
   }
 
-  if (onVercel()) {
-    return saveToNeon();
+  if (onVercel() || hasDatabase()) {
+    try {
+      return await saveToNeon();
+    } catch (neonErr) {
+      const nmsg = neonErr instanceof Error ? neonErr.message : String(neonErr);
+      if (token) {
+        try {
+          const blob = await put(key, parsed.buffer, {
+            access: "public",
+            contentType: parsed.contentType,
+            token,
+            addRandomSuffix: true,
+          });
+          return blob.url;
+        } catch (blobErr) {
+          const bmsg =
+            blobErr instanceof Error ? blobErr.message : String(blobErr);
+          throw new Error(
+            `이미지 저장 실패 (Neon: ${formatMediaError(nmsg)} / Blob: ${bmsg})`
+          );
+        }
+      }
+      throw new Error(`이미지 저장 실패 (Neon: ${formatMediaError(nmsg)})`);
+    }
   }
 
   const dir = mediaDir();

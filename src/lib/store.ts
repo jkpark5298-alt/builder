@@ -223,6 +223,8 @@ export function storageDiagnostics() {
     mode: storageMode(),
     onVercel: onVercel(),
     hasDatabaseUrl: Boolean(databaseUrl()),
+    hasBlobToken: Boolean(readEnv("BLOB_READ_WRITE_TOKEN")),
+    mediaPreferBlob: Boolean(readEnv("BLOB_READ_WRITE_TOKEN")) && readEnv("NEON_MEDIA_FORCE") !== "1",
   };
 }
 
