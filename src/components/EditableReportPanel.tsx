@@ -66,6 +66,24 @@ import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
+type RoomImageItem = { url: string; tag?: string; note?: string };
+const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "기타"] as const;
+
+function normalizeRoomItems(raw: TypedReport["imageRoom"]): RoomImageItem[] {
+  const out: RoomImageItem[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw ?? []) {
+    const item =
+      typeof entry === "string"
+        ? { url: entry }
+        : { url: entry.url, tag: entry.tag, note: entry.note };
+    const url = item.url?.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push({ ...item, url });
+  }
+  return out;
+}
 
 export function EditableReportPanel({
   video,
@@ -88,6 +106,7 @@ export function EditableReportPanel({
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
   const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
+  const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
   const [sectionSavedFlash, setSectionSavedFlash] = useState<
@@ -421,7 +440,32 @@ export function EditableReportPanel({
     [draft]
   );
 
+  useEffect(() => {
+    if (!draft) return;
+    if ((draft.imageRoom?.length ?? 0) > 0) return;
+    const seed = normalizeImageUrls(
+      undefined,
+      draft.sections.flatMap((sec) => [
+        ...collectSectionImages(sec),
+        ...collectSectionFcImages(sec, fcByItem),
+      ])
+    );
+    if (!seed.length) return;
+    setDraft((prev) =>
+      prev
+        ? {
+            ...prev,
+            imageRoom: seed.map((url) => ({ url })),
+          }
+        : prev
+    );
+  }, [draft, fcByItem]);
+
   const openMarker = markers.find((m) => m.key === openFcKey) ?? null;
+  const imageRoom = useMemo(
+    () => normalizeRoomItems(draft?.imageRoom),
+    [draft?.imageRoom]
+  );
 
   const saveEditorSelection = useCallback(() => {
     const editor = getActiveReportEditor();
@@ -677,6 +721,77 @@ export function EditableReportPanel({
     }, { history });
   }
 
+  function patchImageRoom(urls: string[], history: "immediate" | "debounced" | "none" = "immediate") {
+    updateDraft((prev) => {
+      const current = normalizeRoomItems(prev.imageRoom);
+      const seen = new Set(current.map((x) => x.url));
+      const appended = urls
+        .map((u) => u.trim())
+        .filter((u) => u && !seen.has(u))
+        .map((url) => ({ url }));
+      if (!appended.length) return prev;
+      return { ...prev, imageRoom: [...current, ...appended] };
+    }, { history });
+  }
+
+  async function addImagesToRoom(files: File[]) {
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (!imageFiles.length) return;
+    setImageRoomBusy(true);
+    try {
+      const dataUrls = await compressImageFiles(imageFiles);
+      if (!dataUrls.length) return;
+      const uploaded = await uploadDataUrls(
+        dataUrls,
+        `videos/${video.id}/report-room`
+      );
+      patchImageRoom(uploaded, "immediate");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "이미지 룸 추가에 실패했습니다.");
+    } finally {
+      setImageRoomBusy(false);
+    }
+  }
+
+  function removeImageFromRoom(src: string) {
+    updateDraft((prev) => ({
+      ...prev,
+      imageRoom: normalizeRoomItems(prev.imageRoom).filter((u) => u.url !== src),
+    }));
+  }
+
+  function updateRoomMeta(src: string, patch: Partial<Pick<RoomImageItem, "tag" | "note">>) {
+    updateDraft((prev) => ({
+      ...prev,
+      imageRoom: normalizeRoomItems(prev.imageRoom).map((it) =>
+        it.url === src
+          ? {
+              ...it,
+              tag: patch.tag !== undefined ? patch.tag || undefined : it.tag,
+              note: patch.note !== undefined ? patch.note || undefined : it.note,
+            }
+          : it
+      ),
+    }), { history: "debounced" });
+  }
+
+  function addRoomImageToActiveSection(src: string) {
+    const idx = Math.min(
+      Math.max(0, activeSectionIdx),
+      Math.max(0, (draft?.sections.length ?? 1) - 1)
+    );
+    patchSection(
+      idx,
+      {
+        images: normalizeImageUrls(
+          undefined,
+          [...(draft?.sections[idx]?.images ?? []), src]
+        ),
+      },
+      "immediate"
+    );
+  }
+
   function deleteSection(idx: number) {
     const heading = draft?.sections[idx]?.heading || "이 섹션";
     if (!confirm(`「${heading}」을(를) 삭제할까요?`)) return;
@@ -687,7 +802,9 @@ export function EditableReportPanel({
     setSavedSections((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  function addSection() {
+  function addSection(
+    preset?: { heading?: string; body?: string }
+  ) {
     const sectionId = newSectionId();
     updateDraft((prev) => {
       const newIdx = prev.sections.length;
@@ -714,13 +831,20 @@ export function EditableReportPanel({
           ...prev.sections,
           {
             sectionId,
-            heading: "새 소주제",
-            body: "<p><br></p>",
+            heading: preset?.heading ?? "새 소주제",
+            body: preset?.body ?? "<p><br></p>",
             rich: true,
             entries: [],
           },
         ],
       };
+    });
+  }
+
+  function addFlowSection() {
+    addSection({
+      heading: "핵심 설명",
+      body: "<p>핵심 메시지를 2~4문장으로 먼저 요약해 주세요.</p><p>아래 대표 이미지를 근거로 핵심 포인트를 짧게 정리하면 읽기 흐름이 좋아집니다.</p>",
     });
   }
 
@@ -775,7 +899,16 @@ export function EditableReportPanel({
       const sec = sections[idx];
       const merged = Array.from(new Set([...(sec.images ?? []), ...urls]));
       sections[idx] = { ...sec, images: merged };
-      return { ...prev, sections };
+      return {
+        ...prev,
+        sections,
+        imageRoom: [
+          ...normalizeRoomItems(prev.imageRoom),
+          ...urls
+            .filter((u) => !normalizeRoomItems(prev.imageRoom).some((x) => x.url === u))
+            .map((url) => ({ url })),
+        ],
+      };
     });
   }
 
@@ -847,7 +980,16 @@ export function EditableReportPanel({
         const sec = sections[idx];
         const images = [...(sec.images ?? []), ...uploaded];
         sections[idx] = { ...sec, images };
-        return { ...prev, sections };
+        return {
+          ...prev,
+          sections,
+          imageRoom: [
+            ...normalizeRoomItems(prev.imageRoom),
+            ...uploaded
+              .filter((u) => !normalizeRoomItems(prev.imageRoom).some((x) => x.url === u))
+              .map((url) => ({ url })),
+          ],
+        };
       });
     } catch (e) {
       alert(
@@ -903,7 +1045,13 @@ export function EditableReportPanel({
         const sec = sections[idx];
         const images = [...(sec.images ?? []), url];
         sections[idx] = { ...sec, images };
-        return { ...prev, sections };
+        return {
+          ...prev,
+          sections,
+          imageRoom: normalizeRoomItems(prev.imageRoom).some((x) => x.url === url)
+            ? normalizeRoomItems(prev.imageRoom)
+            : [...normalizeRoomItems(prev.imageRoom), { url }],
+        };
       });
     } catch (e) {
       alert(e instanceof Error ? e.message : "손글씨 이미지 저장 실패");
@@ -922,7 +1070,13 @@ export function EditableReportPanel({
         const sections = [...prev.sections];
         const images = [...(sections[idx].images ?? []), url];
         sections[idx] = { ...sections[idx], images };
-        return { ...prev, sections };
+        return {
+          ...prev,
+          sections,
+          imageRoom: normalizeRoomItems(prev.imageRoom).some((x) => x.url === url)
+            ? normalizeRoomItems(prev.imageRoom)
+            : [...normalizeRoomItems(prev.imageRoom), { url }],
+        };
       });
     } catch (e) {
       alert(e instanceof Error ? e.message : "텍스트 이미지 저장 실패");
@@ -1228,6 +1382,103 @@ export function EditableReportPanel({
               />
             </div>
 
+            <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-ink-700">
+                  이미지 룸 · 재사용 보관함
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    (
+                      document.getElementById("report-room-upload") as
+                        | HTMLInputElement
+                        | null
+                    )?.click()
+                  }
+                  disabled={imageRoomBusy}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 disabled:opacity-50"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {imageRoomBusy ? "업로드 중…" : "이미지 룸에 추가"}
+                </button>
+              </div>
+              <input
+                id="report-room-upload"
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  void addImagesToRoom(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              {imageRoom.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {imageRoom.map((room) => (
+                    <div
+                      key={`room-${room.url.slice(0, 64)}`}
+                      className="rounded-lg border border-ink-200 bg-white p-1.5 space-y-1"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={room.url}
+                        alt=""
+                        className="h-20 w-full rounded-md object-cover bg-ink-100"
+                      />
+                      <div className="space-y-1">
+                        <select
+                          value={room.tag ?? ""}
+                          onChange={(e) =>
+                            updateRoomMeta(room.url, { tag: e.target.value || undefined })
+                          }
+                          className="w-full rounded-md border border-ink-200 px-1.5 py-1 text-[11px] text-ink-700"
+                        >
+                          <option value="">태그 없음</option>
+                          {ROOM_TAGS.map((tag) => (
+                            <option key={tag} value={tag}>
+                              {tag}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={room.note ?? ""}
+                          onChange={(e) =>
+                            updateRoomMeta(room.url, { note: e.target.value })
+                          }
+                          placeholder="메모"
+                          className="w-full rounded-md border border-ink-200 px-1.5 py-1 text-[11px] text-ink-700"
+                        />
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => addRoomImageToActiveSection(room.url)}
+                          className="flex-1 rounded-md border border-accent/40 bg-accent-muted/40 px-1.5 py-1 text-[11px] font-medium text-accent"
+                        >
+                          현재 섹션에 넣기
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeImageFromRoom(room.url)}
+                          className="rounded-md border border-ink-200 px-1.5 py-1 text-[11px] text-ink-500"
+                          title="룸에서 제거"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-ink-500">
+                  본문/팩트체크에서 사용한 이미지가 자동으로 모이며, 여기서 현재
+                  섹션으로 다시 넣을 수 있습니다.
+                </p>
+              )}
+            </div>
+
             <div className="divide-y divide-ink-100">
               {draft.sections.map((sec, idx) => {
                 const sectionMarkers = markers.filter(
@@ -1421,10 +1672,18 @@ export function EditableReportPanel({
               })}
             </div>
 
-            <div className="border-t border-ink-100 p-3">
+            <div className="border-t border-ink-100 p-3 space-y-2">
               <button
                 type="button"
-                onClick={addSection}
+                onClick={addFlowSection}
+                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-accent/40 bg-accent-muted/40 text-sm font-medium text-accent hover:bg-accent-muted"
+              >
+                <Plus className="h-4 w-4" />
+                본문 흐름용 섹션 추가 (핵심 설명 + 대표 이미지)
+              </button>
+              <button
+                type="button"
+                onClick={() => addSection()}
                 className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-dashed border-ink-300 bg-ink-50 text-sm font-medium text-ink-700 hover:border-accent"
               >
                 <Plus className="h-4 w-4" />
@@ -1605,22 +1864,26 @@ export function EditableReportPanel({
                 )}
 
                 {reportFcImages.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-ink-500 print:hidden">관련 이미지</p>
-                    {reportFcImages.map((src) => (
-                      <div
-                        key={src.slice(0, 64)}
-                        className="overflow-hidden rounded-xl border border-ink-100 bg-white"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={src}
-                          alt=""
-                          className="w-full max-h-72 object-contain bg-white"
-                        />
-                      </div>
-                    ))}
-                  </div>
+                  <details className="space-y-2 print:hidden">
+                    <summary className="cursor-pointer select-none text-xs text-ink-500 rounded-md border border-ink-200 bg-ink-50 px-2.5 py-1.5 hover:border-accent">
+                      관련 이미지 {reportFcImages.length}장
+                    </summary>
+                    <div className="space-y-2 pt-1">
+                      {reportFcImages.map((src) => (
+                        <div
+                          key={src.slice(0, 64)}
+                          className="overflow-hidden rounded-xl border border-ink-100 bg-white"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt=""
+                            className="w-full max-h-72 object-contain bg-white"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </details>
                 )}
               </div>
             );

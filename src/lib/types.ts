@@ -123,6 +123,15 @@ export interface TypedReport {
   sections: ReportSectionBlock[];
   /** 요약 발췌 */
   summaryExcerpt: string;
+  /** 보고서 전용 이미지 룸 (재사용용 URL/태그/메모) */
+  imageRoom?: Array<
+    | string
+    | {
+        url: string;
+        tag?: string;
+        note?: string;
+      }
+  >;
   factChecks: Array<{
     itemId?: string;
     statement: string;
