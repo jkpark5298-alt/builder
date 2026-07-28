@@ -68,17 +68,26 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     const noticeChanged =
       video.factCheckRevisionNotice?.at !==
       localVideo.factCheckRevisionNotice?.at;
-    if (serverNewer || serverMoreChecks || noticeChanged) {
+    const finalizeModeChanged =
+      video.pendingReportFinalize !== localVideo.pendingReportFinalize;
+    const reportChanged =
+      Boolean(video.report) !== Boolean(localVideo.report) ||
+      video.reportSkeletonEdited !== localVideo.reportSkeletonEdited;
+    if (serverNewer || serverMoreChecks || noticeChanged || finalizeModeChanged || reportChanged) {
       setLocalVideo(video);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync only when server props change
-  }, [video.updatedAt, video.factChecks, video.factCheckRevisionNotice?.at, video.factCheckNotice, video.factCheckSource]);
+  }, [video.updatedAt, video.factChecks, video.factCheckRevisionNotice?.at, video.factCheckNotice, video.factCheckSource, video.pendingReportFinalize, video.report, video.reportSkeletonEdited]);
 
   const required = useMemo(
     () => localVideo.items.filter((i) => i.needsFactCheck),
     [localVideo.items]
   );
   const progress = factCheckProgress(localVideo);
+  const keepBodyOnComplete =
+    localVideo.pendingReportFinalize === "keep_body";
+  const rewriteOnComplete =
+    localVideo.pendingReportFinalize === "rewrite";
   const firstOpen = Math.max(
     0,
     required.findIndex((i) => !isItemChecked(i.id, localVideo.factChecks))
@@ -275,7 +284,15 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     }
   }
 
-  async function completeAndGenerate() {
+  async function completeAndGenerate(opts?: { allowPartial?: boolean }) {
+    if (
+      opts?.allowPartial &&
+      !window.confirm(
+        `필수 항목 ${progress.gateTotal - progress.gateDoneCount}건이 아직 미완료입니다.\n\n미완료 항목은 보고서 완료 후 「팩트체크」 탭에서 이어서 채울 수 있습니다. 그래도 보고서를 만들까요?`
+      )
+    ) {
+      return;
+    }
     setCompleting(true);
     setError(null);
     try {
@@ -290,6 +307,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           body: JSON.stringify({
             completeManual: true,
             reportType: localVideo.reportType,
+            ...(opts?.allowPartial ? { allowPartialFactCheck: true } : {}),
           }),
         });
       } catch (e) {
@@ -363,7 +381,11 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
 
   async function updateTarget(
     itemId: string,
-    patch: { statement: string; detail: string }
+    patch: {
+      statement?: string;
+      detail?: string;
+      factCheckOptional?: boolean;
+    }
   ) {
     setSaving(true);
     setError(null);
@@ -374,8 +396,15 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         body: JSON.stringify({
           updateItem: {
             itemId,
-            statement: patch.statement,
-            detail: patch.detail.trim() ? patch.detail : null,
+            ...(patch.statement !== undefined
+              ? { statement: patch.statement }
+              : {}),
+            ...(patch.detail !== undefined
+              ? { detail: patch.detail.trim() ? patch.detail : null }
+              : {}),
+            ...(patch.factCheckOptional !== undefined
+              ? { factCheckOptional: patch.factCheckOptional }
+              : {}),
           },
         }),
       });
@@ -432,8 +461,8 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
   }
 
   function saveDraftAndLeave() {
-    if (progress.complete) {
-      router.push("/#reports");
+    if (progress.gateComplete) {
+      router.push("/#pending");
     } else {
       router.push("/#drafts");
     }
@@ -452,16 +481,16 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             onClick={saveDraftAndLeave}
             className="w-full sm:w-auto min-h-12 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 py-3 font-medium hover:bg-accent-muted"
           >
-            보고서 저장 목록으로
+            작성 대기로
           </button>
           <button
             type="button"
             id="complete-report"
-            onClick={completeAndGenerate}
+            onClick={() => void completeAndGenerate()}
             disabled={completing}
             className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60 scroll-mt-24"
           >
-            {completing ? "글쓰기 AI 작성 중…" : "보고서 저장 → PDF·인포그래픽"}
+            {completing ? "만드는 중…" : "보고서 만들기"}
           </button>
         </div>
       </div>
@@ -486,6 +515,17 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         {localVideo.factCheckNotice ? (
           <p className="text-sm text-ink-700 rounded-xl border border-accent/25 bg-white/80 px-3 py-2.5">
             {localVideo.factCheckNotice}
+          </p>
+        ) : null}
+        {localVideo.pendingReportFinalize === "keep_body" ? (
+          <p className="text-sm text-ink-800 rounded-xl border border-verify-true/30 bg-verify-true/10 px-3 py-2.5">
+            <strong>본문 유지</strong> — 보고서 만들기 시 기존 문장을 유지하고
+            팩트체크만 반영합니다.
+          </p>
+        ) : localVideo.pendingReportFinalize === "rewrite" ? (
+          <p className="text-sm text-ink-800 rounded-xl border border-verify-false/30 bg-verify-false/10 px-3 py-2.5">
+            <strong>본문 새로 작성</strong> — 보고서 만들기 시 본문을 다시
+            만듭니다. 기존 수정 내용은 사라집니다.
           </p>
         ) : null}
         <p className="text-sm text-ink-600">
@@ -537,11 +577,30 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         <div className="mt-4">
           <div className="flex justify-between text-xs text-ink-600 mb-1.5">
             <span>
-              진행 {progress.doneCount} / {progress.total}
+              {progress.optionalCount > 0 ? (
+                <>
+                  필수 {progress.gateDoneCount} / {progress.gateTotal}
+                  <span className="text-ink-400">
+                    {" "}
+                    · 전체 {progress.doneCount} / {progress.total}
+                  </span>
+                </>
+              ) : (
+                <>진행 {progress.doneCount} / {progress.total}</>
+              )}
             </span>
             <span>
               {Math.round(
-                (progress.doneCount / Math.max(progress.total, 1)) * 100
+                ((progress.optionalCount > 0
+                  ? progress.gateDoneCount
+                  : progress.doneCount) /
+                  Math.max(
+                    progress.optionalCount > 0
+                      ? progress.gateTotal
+                      : progress.total,
+                    1
+                  )) *
+                  100
               )}
               %
             </span>
@@ -550,26 +609,30 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             <div
               className="h-full bg-accent transition-all duration-300"
               style={{
-                width: `${(progress.doneCount / Math.max(progress.total, 1)) * 100}%`,
+                width: `${((progress.optionalCount > 0 ? progress.gateDoneCount : progress.doneCount) / Math.max(progress.optionalCount > 0 ? progress.gateTotal : progress.total, 1)) * 100}%`,
               }}
             />
           </div>
           <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
             {required.map((item, i) => {
               const done = isItemChecked(item.id, localVideo.factChecks);
+              const optional = Boolean(item.factCheckOptional);
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => setStep(i)}
-                  className={`shrink-0 min-w-9 min-h-9 rounded-lg text-sm font-medium border transition-colors ${
+                  className={`shrink-0 min-w-9 min-h-9 rounded-lg text-sm font-medium border transition-colors relative ${
                     i === step
                       ? "bg-ink-900 text-white border-ink-900"
                       : done
                         ? "bg-verify-true/15 text-verify-true border-verify-true/30"
-                        : "bg-white text-ink-500 border-ink-200"
+                        : optional
+                          ? "bg-ink-50 text-ink-400 border-ink-200 border-dashed"
+                          : "bg-white text-ink-500 border-ink-200"
                   }`}
-                  aria-label={`${i + 1}번 항목`}
+                  aria-label={`${i + 1}번 항목${optional ? " (선택)" : ""}`}
+                  title={optional ? "나중에 해도 됨" : undefined}
                 >
                   {done ? (
                     <span className="inline-flex items-center justify-center gap-0.5">
@@ -599,6 +662,9 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           onVideoUpdate={setLocalVideo}
           onUpdateTarget={(statement, detail) =>
             updateTarget(current.id, { statement, detail })
+          }
+          onToggleOptional={(optional) =>
+            updateTarget(current.id, { factCheckOptional: optional })
           }
           onDeleteTarget={() => deleteTarget(current.id)}
           onSave={async (answer, verdict, ansImg, parts) => {
@@ -676,29 +742,66 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 text-sm font-medium text-ink-900 hover:bg-accent-muted transition-colors"
           >
             <Save className="h-4 w-4" />
-            {progress.complete
-              ? "보고서 저장 목록으로"
+            {progress.gateComplete
+              ? "작성 대기로"
               : "임시 저장하고 목록으로"}
           </button>
+          {progress.canFinalizePartial ? (
+            <button
+              type="button"
+              disabled={completing}
+              onClick={() => void completeAndGenerate({ allowPartial: true })}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl border border-ink-300 bg-white px-5 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-50"
+            >
+              <FileText className="h-4 w-4" />
+              {completing
+                ? "만드는 중…"
+                : `미완료 ${progress.gateTotal - progress.gateDoneCount}건 무시하고 만들기`}
+            </button>
+          ) : null}
           <button
             type="button"
             id="complete-report"
-            disabled={!progress.complete || completing}
-            onClick={completeAndGenerate}
+            disabled={!progress.gateComplete || completing}
+            onClick={() => void completeAndGenerate()}
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 min-h-12 rounded-xl bg-accent px-5 text-white font-medium disabled:opacity-50 hover:bg-ink-900 transition-colors scroll-mt-24"
           >
             <FileText className="h-4 w-4" />
             {completing
-              ? "글쓰기 AI로 보고서 작성 중…"
-              : progress.complete
-                ? "보고서 저장 → PDF·인포그래픽"
-                : `미완료 ${progress.total - progress.doneCount}건`}
+              ? "만드는 중…"
+              : progress.gateComplete
+                ? progress.complete
+                  ? "보고서 만들기"
+                  : `보고서 만들기 (선택 ${progress.total - progress.doneCount}건 남음)`
+                : `필수 ${progress.gateTotal - progress.gateDoneCount}건 남음`}
           </button>
         </div>
+        {localVideo.report ? (
+          <div className="flex justify-center sm:justify-start">
+            <a
+              href="#report-draft"
+              className="inline-flex items-center justify-center min-h-10 rounded-xl border border-accent/40 bg-white px-4 text-sm font-medium text-accent hover:bg-accent-muted/30"
+            >
+              초안 보고서 보기
+            </a>
+          </div>
+        ) : null}
         <p className="text-xs text-ink-500 text-center sm:text-left">
-          {progress.complete
-            ? "팩트체크가 끝났습니다. 보고서 저장 시 글쓰기 AI로 작성하고, 실패하면 요약·FC 조립(내용 적응형)으로 대체합니다. (AI 작성 시 OpenAI 토큰 사용)"
-            : "「이 항목 저장하고 다음」을 누르면 바로 저장됩니다. 한 번이면 충분합니다."}
+          {progress.gateComplete
+            ? keepBodyOnComplete
+              ? "작성 대기입니다. 보고서 만들기를 누르면 기존 본문을 유지한 채 팩트체크만 반영합니다."
+              : rewriteOnComplete
+                ? "작성 대기입니다. 보고서 만들기를 누르면 본문을 새로 작성합니다."
+                : localVideo.reportSkeletonEdited
+                  ? "작성 대기입니다. 초안에서 수정한 본문을 유지한 채 완료합니다."
+                  : progress.complete
+                    ? "작성 대기입니다. 보고서 만들기를 누르면 글쓰기 AI로 본문을 다듬습니다."
+                    : "필수 팩트체크는 끝났습니다. 선택 항목은 나중에 보고서에서 이어서 채울 수 있습니다."
+            : progress.canFinalizePartial
+              ? "필수 항목을 「나중에 해도 됨」으로 표시하거나, 1건 이상 완료 후 미완료 무시하고 만들 수 있습니다."
+              : localVideo.report
+                ? "팩트체크를 하는 동안 아래 초안 보고서를 미리 볼 수 있습니다."
+                : "「이 항목 저장하고 다음」을 누르면 바로 저장됩니다. 한 번이면 충분합니다."}
         </p>
       </div>
     </section>
@@ -715,6 +818,7 @@ function StepEditor({
   saving,
   onVideoUpdate,
   onUpdateTarget,
+  onToggleOptional,
   onDeleteTarget,
   onSave,
 }: {
@@ -727,6 +831,7 @@ function StepEditor({
   saving: boolean;
   onVideoUpdate: (video: VideoRecord) => void;
   onUpdateTarget: (statement: string, detail: string) => Promise<boolean>;
+  onToggleOptional: (optional: boolean) => Promise<boolean>;
   onDeleteTarget: () => Promise<boolean>;
   onSave: (
     answer: string,
@@ -888,6 +993,11 @@ function StepEditor({
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-ink-500">
           항목 {index + 1} / {total} · 팩트체크 정리
+          {item.factCheckOptional ? (
+            <span className="ml-1.5 rounded-md bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold text-ink-500">
+              선택
+            </span>
+          ) : null}
         </p>
         <div className="flex gap-1.5">
           <button
@@ -914,6 +1024,23 @@ function StepEditor({
           </button>
         </div>
       </div>
+
+      <label className="flex items-start gap-2 rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-700 cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 rounded border-ink-300 text-accent focus:ring-accent/30"
+          checked={Boolean(item.factCheckOptional)}
+          disabled={saving}
+          onChange={(e) => void onToggleOptional(e.target.checked)}
+        />
+        <span>
+          <strong className="font-medium">나중에 해도 됨</strong>
+          <span className="block text-xs text-ink-500 mt-0.5">
+            선택 항목은 보고서 만들기 필수 조건에서 빠집니다. 완료 후 보고서
+            「팩트체크」 탭에서 이어서 채울 수 있습니다.
+          </span>
+        </span>
+      </label>
 
       <div className="overflow-hidden rounded-xl border border-ink-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}

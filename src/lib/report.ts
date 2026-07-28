@@ -8,6 +8,7 @@ import type {
 import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
+import { stabilizeReportFcAnchors } from "./fc-markers";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
@@ -467,7 +468,7 @@ export function buildTypedReport(
     ...parsed.sections.slice(0, 6).map((s, i) => `${i + 1}. ${s.title}`),
   ]).join("\n");
 
-  return {
+  return stabilizeReportFcAnchors({
     meta: {
       title: video.title,
       channel: video.channel,
@@ -491,7 +492,7 @@ export function buildTypedReport(
       answerImageUrls: f.answerImageUrls,
       answerParts: f.answerParts,
     })),
-  };
+  });
 }
 
 /** API·파이프라인 공용 */

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  CheckCircle2,
   Eye,
   FileDown,
   ImagePlus,
@@ -16,7 +17,7 @@ import { canExportArtifacts } from "@/lib/factcheck-client";
 import { compressImageFiles } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 
-/** 완료 보고서용: 표지 변경 / 보기 / 수정 / 공유 / PDF·인쇄 */
+/** 완료 보고서용: 표지 변경 / 보기 / 본문 수정 / 공유 / PDF·인쇄 */
 export function ReportActions({
   video,
   compact = false,
@@ -34,6 +35,7 @@ export function ReportActions({
 
   const viewHref = `/videos/${video.id}#report`;
   const editHref = `/videos/${video.id}#report-edit`;
+  const fcHref = `/videos/${video.id}#report-fc`;
   const coverHref = `/videos/${video.id}#cover`;
   const pdfHref = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
 
@@ -73,7 +75,9 @@ export function ReportActions({
       /* ignore */
     }
     window.dispatchEvent(
-      new CustomEvent("factcheck:edit-report", { detail: { id: video.id } })
+      new CustomEvent("factcheck:edit-report", {
+        detail: { id: video.id, mode: "body" },
+      })
     );
     if (window.location.pathname.includes(`/videos/${video.id}`)) {
       window.location.hash = "report-edit";
@@ -83,6 +87,29 @@ export function ReportActions({
       });
     } else {
       router.push(editHref);
+    }
+  }
+
+  function startFactcheck(e: React.MouseEvent) {
+    e.preventDefault();
+    try {
+      sessionStorage.setItem(`edit-fc:${video.id}`, "1");
+    } catch {
+      /* ignore */
+    }
+    window.dispatchEvent(
+      new CustomEvent("factcheck:edit-report", {
+        detail: { id: video.id, mode: "factcheck" },
+      })
+    );
+    if (window.location.pathname.includes(`/videos/${video.id}`)) {
+      window.location.hash = "report-fc";
+      document.getElementById("report")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    } else {
+      router.push(fcHref);
     }
   }
 
@@ -161,7 +188,7 @@ export function ReportActions({
         ) : (
           <ImagePlus className="h-3.5 w-3.5 shrink-0" />
         )}
-        초기 화면
+        표지
       </button>
       <a href={viewHref} className={`${btn} ${enabled}`}>
         <Eye className="h-3.5 w-3.5 shrink-0" />
@@ -169,7 +196,15 @@ export function ReportActions({
       </a>
       <button type="button" onClick={startEdit} className={`${btn} ${enabled}`}>
         <Pencil className="h-3.5 w-3.5 shrink-0" />
-        수정
+        본문
+      </button>
+      <button
+        type="button"
+        onClick={startFactcheck}
+        className={`${btn} ${enabled}`}
+      >
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        팩트체크
       </button>
       <button
         type="button"

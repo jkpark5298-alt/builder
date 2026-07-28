@@ -11,8 +11,13 @@ import {
   startReportFromDraft,
 } from "@/lib/process";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
-import { buildTypedReport, reportBodyPlain } from "@/lib/report";
+import { reportBodyPlain } from "@/lib/report";
 import { buildReportDocument } from "@/lib/report-write";
+import {
+  buildSkeletonReport,
+  ensureSkeletonReport,
+  SKELETON_REPORT_NOTICE,
+} from "@/lib/report-skeleton";
 import {
   deleteVideo,
   getVideo,
@@ -38,6 +43,7 @@ import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { reportThumbnailUrl } from "@/lib/input-mode";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
+import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
 
 function jsonVideo(next: VideoRecord, extra: Record<string, unknown> = {}) {
   return NextResponse.json({
@@ -53,7 +59,11 @@ function buildFactCheckGuide(statement: string, detail?: string): string {
 
 function applyItemEdit(
   item: SummaryItem,
-  patch: { statement?: string; detail?: string | null }
+  patch: {
+    statement?: string;
+    detail?: string | null;
+    factCheckOptional?: boolean;
+  }
 ): SummaryItem {
   const statement =
     typeof patch.statement === "string"
@@ -65,6 +75,10 @@ function applyItemEdit(
       : typeof patch.detail === "string"
         ? patch.detail.trim() || undefined
         : item.detail;
+  const factCheckOptional =
+    patch.factCheckOptional !== undefined
+      ? patch.factCheckOptional
+      : item.factCheckOptional;
 
   const guide = buildFactCheckGuide(statement, detail);
   const hasGuide = item.evidence.some((e) => e.sourceHint === "factcheck-guide");
@@ -78,6 +92,7 @@ function applyItemEdit(
     ...item,
     statement,
     detail,
+    factCheckOptional,
     evidence,
   };
 }
@@ -187,7 +202,14 @@ async function patchVideo(req: Request, ctx: Ctx) {
     startReportPipeline?: boolean;
     /** 완료(ready) → 임시 저장(awaiting_factcheck)으로 되돌림 */
     reopenAsDraft?: boolean;
+    /**
+     * reopenAsDraft 시 완료 후 본문 처리.
+     * true(기본): 본문 유지·FC만 반영 / false: 보고서 재작성
+     */
+    keepReportBody?: boolean;
     completeManual?: boolean;
+    /** true면 필수 미완료 항목이 있어도 완료 1건 이상이면 보고서 생성 */
+    allowPartialFactCheck?: boolean;
     /** 미완료 FC만 인앱 LLM 초안 재생성 */
     redraftFactChecks?: boolean;
     rebuild?: boolean;
@@ -195,13 +217,16 @@ async function patchVideo(req: Request, ctx: Ctx) {
     itemImages?: { itemId: string; imageUrls: string[] };
     /** 팩트체크 답변(DETAIL)만 비우기 — 주장 제목 유지 */
     clearFactCheckDetail?: { itemId: string };
-    /** 보고서 편집 중 FC 수정·삭제 시 ready 상태 유지 */
+    /**
+     * @deprecated ready면 서버가 항상 유지·미러 동기화. 클라이언트 호환용.
+     */
     preserveReadyStatus?: boolean;
     /** 팩트체크 대상(주장) 문구 수정 */
     updateItem?: {
       itemId: string;
       statement?: string;
       detail?: string | null;
+      factCheckOptional?: boolean;
     };
     /** 팩트체크 대상 삭제 */
     deleteItem?: { itemId: string };
@@ -220,6 +245,11 @@ async function patchVideo(req: Request, ctx: Ctx) {
       summaryBullets?: string[];
       /** 수동 요약 완료 → 팩트체크·보고서 자동 갱신 */
       complete?: boolean;
+      /**
+       * true면 요약 문구만 바꾸고 기존 팩트체크·보고서 본문을 유지.
+       * false/생략이면 팩트체크 항목을 요약 기준으로 다시 만듦.
+       */
+      preserveFactChecks?: boolean;
     };
     /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
     dismissFactCheckRevisionNotice?: boolean;
@@ -335,9 +365,12 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   if (body.reopenAsDraft) {
+    const keepBody =
+      body.keepReportBody !== false && Boolean(next.report);
     next = {
       ...next,
       status: "awaiting_factcheck",
+      pendingReportFinalize: keepBody ? "keep_body" : "rewrite",
       updatedAt: new Date().toISOString(),
     };
     const saved = await upsertVideo(next, expectedUpdatedAt);
@@ -376,9 +409,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
             : item
         ),
         updatedAt: new Date().toISOString(),
-        status:
-          next.status === "ready" ? "awaiting_factcheck" : next.status,
       };
+      next = afterIncrementalFactEdit(next);
     }
   }
 
@@ -422,28 +454,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
         return fc;
       }),
       updatedAt: new Date().toISOString(),
-      status: body.preserveReadyStatus && next.status === "ready"
-        ? "ready"
-        : next.status === "ready" || next.status === "awaiting_factcheck"
-          ? "awaiting_factcheck"
-          : next.status,
     };
-    if (body.preserveReadyStatus && next.report) {
-      next.report = {
-        ...next.report,
-        factChecks: (next.report.factChecks ?? []).map((rf) =>
-          rf.itemId === updated.id
-            ? { ...rf, statement: updated.statement }
-            : rf
-        ),
-        sections: next.report.sections.map((sec) => ({
-          ...sec,
-          entries: (sec.entries ?? []).map((e) =>
-            e.itemId === updated.id ? { ...e, text: updated.statement } : e
-          ),
-        })),
-      };
-    }
+    next = afterIncrementalFactEdit(next);
   }
 
   if (body.clearFactCheckDetail?.itemId) {
@@ -472,44 +484,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
           : fc
       ),
       updatedAt: now,
-      status:
-        body.preserveReadyStatus && next.status === "ready"
-          ? "ready"
-          : next.status === "ready" || next.status === "awaiting_factcheck"
-            ? "awaiting_factcheck"
-            : next.status,
     };
-    if (next.report) {
-      next.report = {
-        ...next.report,
-        factChecks: (next.report.factChecks ?? []).map((rf) =>
-          rf.itemId === itemId
-            ? {
-                ...rf,
-                checkGuide: "",
-                verdict: "pending" as const,
-                answerImageUrl: undefined,
-                answerImageUrls: undefined,
-                answerParts: undefined,
-              }
-            : rf
-        ),
-        sections: next.report.sections.map((sec) => ({
-          ...sec,
-          entries: (sec.entries ?? []).map((e) =>
-            e.itemId === itemId
-              ? {
-                  ...e,
-                  html: undefined,
-                  answerImageUrl: undefined,
-                  answerImageUrls: undefined,
-                  answerParts: undefined,
-                }
-              : e
-          ),
-        })),
-      };
-    }
+    next = afterIncrementalFactEdit(next);
   }
 
   if (body.deleteItem?.itemId) {
@@ -520,29 +496,13 @@ async function patchVideo(req: Request, ctx: Ctx) {
         { status: 404 }
       );
     }
-    const stripFromReport = (report: typeof next.report) => {
-      if (!report) return report;
-      return {
-        ...report,
-        sections: report.sections.map((sec) => ({
-          ...sec,
-          entries: (sec.entries ?? []).filter((e) => e.itemId !== itemId),
-        })),
-        factChecks: (report.factChecks ?? []).filter((f) => f.itemId !== itemId),
-      };
-    };
     next = {
       ...next,
       items: next.items.filter((i) => i.id !== itemId),
       factChecks: next.factChecks.filter((f) => f.itemId !== itemId),
-      report: stripFromReport(next.report),
       updatedAt: new Date().toISOString(),
-      status: body.preserveReadyStatus && next.status === "ready"
-        ? "ready"
-        : next.status === "ready" || next.status === "awaiting_factcheck"
-          ? "awaiting_factcheck"
-          : next.status,
     };
+    next = afterIncrementalFactEdit(next);
   }
 
   if (body.answerImages?.itemId || body.answerImage?.itemId) {
@@ -593,10 +553,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
           fc,
         ],
         updatedAt: new Date().toISOString(),
-        // 이미지 중간 저장은 보고서 재생성하지 않음 (타임아웃·용량 실패 방지)
-        status:
-          next.status === "ready" ? "awaiting_factcheck" : next.status,
       };
+      next = afterIncrementalFactEdit(next);
     }
   }
 
@@ -619,6 +577,9 @@ async function patchVideo(req: Request, ctx: Ctx) {
       },
       updatedAt: new Date().toISOString(),
     };
+    if (next.status === "awaiting_factcheck") {
+      next.reportSkeletonEdited = true;
+    }
     next.infographic = await buildInfographic(next);
   }
 
@@ -629,6 +590,37 @@ async function patchVideo(req: Request, ctx: Ctx) {
         { error: "요약을 조금 더 자세히 입력해 주세요. (40자 이상)" },
         { status: 400 }
       );
+    }
+
+    const preserve =
+      body.updateOverview.preserveFactChecks === true &&
+      next.items.some((i) => i.needsFactCheck);
+
+    if (preserve) {
+      next = {
+        ...next,
+        overview,
+        summaryBullets:
+          body.updateOverview.summaryBullets?.map((b) => b.trim()).filter(Boolean) ??
+          next.summaryBullets,
+        summarySource: "manual",
+        factCheckNotice:
+          "요약을 수정했습니다. 기존 팩트체크 항목·답변은 유지했습니다.",
+        factCheckRevisionNotice: null,
+        errorMessage: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      if (next.report) {
+        next.report = {
+          ...next.report,
+          summaryExcerpt:
+            overview.split(/\n+/).map((l) => l.trim()).filter(Boolean).slice(0, 8).join("\n") ||
+            next.report.summaryExcerpt,
+        };
+      }
+      // 상태 유지 (ready면 ready, awaiting이면 awaiting)
+      const saved = await upsertVideo(next, expectedUpdatedAt);
+      return jsonVideo(saved, { mode: "overview_preserve_fc" });
     }
 
     // 수동 요약 완료: 팩트체크·보고서를 새 요약에 맞춰 자동 갱신
@@ -667,10 +659,10 @@ async function patchVideo(req: Request, ctx: Ctx) {
     };
 
     // 변경된 요약 기준으로 조립 보고서·인포그래픽 골격 (답변 비어 있음)
-    next.report = buildTypedReport(next);
+    next.report = buildSkeletonReport(next);
     next.reportSource = "assembled";
-    next.reportWriteNotice =
-      "요약 수정 후 골격만 조립했습니다. 팩트체크를 마친 뒤 보고서 저장 시 글쓰기 AI를 다시 시도합니다.";
+    next.reportWriteNotice = SKELETON_REPORT_NOTICE;
+    next.reportSkeletonEdited = undefined;
     next.infographic = await buildInfographic(next);
     // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
     next.status = "awaiting_factcheck";
@@ -773,50 +765,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       factChecks: [...others, fc],
       updatedAt: new Date().toISOString(),
     };
-
-    // 보고서 편집 중이면 ready 유지 · report.factChecks 동기화
-    if (body.preserveReadyStatus && next.status === "ready") {
-      if (next.report) {
-        next.report = {
-          ...next.report,
-          factChecks: (next.report.factChecks ?? []).map((rf) =>
-            rf.itemId === fc.itemId
-              ? {
-                  ...rf,
-                  statement:
-                    next.items.find((i) => i.id === fc.itemId)?.statement ??
-                    rf.statement,
-                  checkGuide: fc.explanation,
-                  verdict: fc.verdict,
-                  answerImageUrl: fc.answerImageUrl,
-                  answerImageUrls: fc.answerImageUrls,
-                  answerParts: fc.answerParts,
-                }
-              : rf
-          ),
-          sections: next.report.sections.map((sec) => ({
-            ...sec,
-            entries: (sec.entries ?? []).map((e) =>
-              e.itemId === fc.itemId
-                ? {
-                    ...e,
-                    text:
-                      next.items.find((i) => i.id === fc.itemId)?.statement ??
-                      e.text,
-                    answerImageUrl: fc.answerImageUrl,
-                    answerImageUrls: fc.answerImageUrls,
-                    answerParts: fc.answerParts,
-                  }
-                : e
-            ),
-          })),
-        };
-      }
-    } else if (next.status === "ready") {
-      next.status = "awaiting_factcheck";
-    } else if (next.status !== "error") {
-      next.status = "awaiting_factcheck";
-    }
+    next = afterIncrementalFactEdit(next);
 
     const saved = await upsertVideo(next, expectedUpdatedAt);
     return jsonVideo(saved);
@@ -824,19 +773,30 @@ async function patchVideo(req: Request, ctx: Ctx) {
 
   if (body.completeManual) {
     const progress = factCheckProgress(next);
-    if (!progress.complete) {
-      return NextResponse.json(
-        {
-          error: `아직 미완료 항목이 ${progress.total - progress.doneCount}건 있습니다.`,
-          progress,
-        },
-        { status: 400 }
-      );
+    const allowPartial = body.allowPartialFactCheck === true;
+
+    if (!progress.gateComplete) {
+      if (!allowPartial || progress.doneCount < 1) {
+        const msg =
+          progress.doneCount < 1
+            ? "최소 1건 이상 팩트체크를 완료한 뒤 보고서를 만들 수 있습니다."
+            : `필수 항목 ${progress.gateTotal - progress.gateDoneCount}건이 남았습니다. 「나중에 해도 됨」으로 표시하거나, 미완료 무시하고 만들기를 선택하세요.`;
+        return NextResponse.json(
+          { error: msg, progress },
+          { status: 400 }
+        );
+      }
     }
+
+    const incompleteCount = progress.complete
+      ? 0
+      : progress.total - progress.doneCount;
+
     next = await finalizeReport(
       next,
       body.reportType ?? next.reportType,
-      expectedUpdatedAt
+      expectedUpdatedAt,
+      incompleteCount > 0 ? { incompleteFactCheckCount: incompleteCount } : undefined
     );
     return jsonVideo(next);
   }

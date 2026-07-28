@@ -1,6 +1,7 @@
 import { ReportCreateForm } from "@/components/ReportCreateForm";
 import { ThumbnailEditor } from "@/components/ThumbnailEditor";
-import { getVideo } from "@/lib/store";
+import { getVideo, upsertVideo } from "@/lib/store";
+import { ensureSkeletonReport } from "@/lib/report-skeleton";
 import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
 import { InfographicPanel } from "@/components/InfographicPanel";
@@ -27,9 +28,17 @@ export default async function VideoDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const video = await getVideo(id);
+  let video = await getVideo(id);
   if (!video) {
     return <VideoNotFoundRecovery id={id} />;
+  }
+
+  if (
+    video.status === "awaiting_factcheck" &&
+    !video.report &&
+    video.overview.trim().length >= 40
+  ) {
+    video = await upsertVideo(await ensureSkeletonReport(video));
   }
 
   if (video.status === "report_input_draft") {
@@ -156,7 +165,7 @@ export default async function VideoDetailPage({
               {stage === "factcheck_draft"
                 ? `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
                 : stage === "report_pending"
-                  ? "보고서 저장 대기"
+                  ? "작성 대기"
                   : stageLabel}
             </span>
           </div>
@@ -223,6 +232,25 @@ export default async function VideoDetailPage({
 
       {awaiting && <ManualFactCheckWizard video={video} />}
 
+      {awaiting && video.report && (
+        <section
+          id="report-draft"
+          className="space-y-3 scroll-mt-20 print:hidden"
+        >
+          <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800">
+            <strong>보고서 초안</strong> — 팩트체크를 하는 동안 골격 보고서를
+            미리 보거나 본문을 다듬을 수 있습니다. 본문을 수정하면 완료 시 그
+            내용이 유지됩니다.
+          </div>
+          {video.reportWriteNotice ? (
+            <div className="rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-700">
+              {video.reportWriteNotice}
+            </div>
+          ) : null}
+          <EditableReportPanel video={video} draftPhase />
+        </section>
+      )}
+
       {ready && (
         <>
           <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden">
@@ -233,75 +261,11 @@ export default async function VideoDetailPage({
             </div>
             <div className="p-4 sm:p-5 space-y-3">
               <p className="text-sm text-ink-600">
-                이 항목은 <strong>완료</strong> 상태입니다. 팩트체크를 고치려면{" "}
-                <strong>수정 (팩트체크 다시 열기)</strong>를 눌러 임시 저장으로
-                옮긴 뒤 다시 정리하세요. 보고서 본문은 아래{" "}
-                <strong>수정 (텍스트·이미지)</strong>로 바로 고칠 수 있습니다.
+                아래 보고서에서{" "}
+                <strong>보기 / 본문 / 팩트체크</strong> 탭으로 작업하세요. 여러
+                항목을 처음부터 다시 할 때만 「팩트체크 다시하기」를 씁니다.
               </p>
               <ReopenAsDraftButton videoId={video.id} />
-              {video.factChecks.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  {video.items
-                    .filter((i) => i.needsFactCheck)
-                    .map((item) => {
-                      const fc = video.factChecks.find(
-                        (f) => f.itemId === item.id
-                      );
-                      if (!fc) return null;
-                      const itemImgs = [
-                        ...(item.imageUrl ? [item.imageUrl] : []),
-                        ...(item.imageUrls ?? []),
-                      ].filter(Boolean);
-                      const answerImgs = [
-                        ...(fc.answerImageUrl ? [fc.answerImageUrl] : []),
-                        ...(fc.answerImageUrls ?? []),
-                        ...(fc.answerParts ?? []).flatMap(
-                          (p) => p.imageUrls ?? []
-                        ),
-                      ].filter(Boolean);
-                      const uniqAnswers = Array.from(new Set(answerImgs));
-                      return (
-                        <div
-                          key={item.id}
-                          className="rounded-xl border border-ink-100 p-3 text-sm space-y-2"
-                        >
-                          <p className="font-medium text-ink-900">
-                            {item.statement}
-                          </p>
-                          {itemImgs.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {itemImgs.map((src) => (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  key={src.slice(0, 64)}
-                                  src={src}
-                                  alt=""
-                                  className="h-20 w-auto rounded-lg border border-ink-100 object-cover"
-                                />
-                              ))}
-                            </div>
-                          )}
-                          <p className="text-ink-600 leading-relaxed whitespace-pre-wrap">
-                            {fc.explanation}
-                          </p>
-                          {uniqAnswers.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {uniqAnswers.map((src) => (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  key={src.slice(0, 64)}
-                                  src={src}
-                                  alt=""
-                                  className="h-24 w-auto rounded-lg border border-ink-100 object-cover"
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
             </div>
           </section>
 
@@ -320,7 +284,7 @@ export default async function VideoDetailPage({
               ) : null}
               <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
                 <h2 className="font-display text-lg sm:text-xl mb-3">
-                  보고서 보기 · 수정 · 공유 · 저장
+                  보고서
                 </h2>
                 <ReportActions video={video} />
               </div>

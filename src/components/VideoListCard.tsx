@@ -118,7 +118,7 @@ export function VideoListCard({
                 href={`/videos/${video.id}#complete-report`}
                 className={`${btn} border-ink-900 bg-ink-900 text-white hover:opacity-90`}
               >
-                보고서 저장
+                보고서 만들기
               </a>
             )}
             {listKind === "draft" && (

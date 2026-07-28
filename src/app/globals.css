@@ -143,6 +143,13 @@ h3,
   text-underline-offset: 2px;
 }
 
+/* 편집 중 저장된 itemId 앵커 — 문장 수정해도 F 연결 유지 */
+.report-body .fc-anchor {
+  text-decoration: underline;
+  text-decoration-color: rgba(196, 92, 38, 0.55);
+  text-underline-offset: 2px;
+}
+
 .fc-badge-print {
   display: inline-flex;
   align-items: center;

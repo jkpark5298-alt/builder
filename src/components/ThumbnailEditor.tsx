@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { compressImageFiles } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 
-/** 상세·목록 상단 표지(초기 화면) 이미지 교체 */
+/** 상세·목록 상단 표지 이미지 교체 */
 export function ThumbnailEditor({
   videoId,
   thumbnailUrl,
@@ -111,7 +111,7 @@ export function ThumbnailEditor({
       {emphasize && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium text-ink-800">
-            초기 화면(표지) 이미지
+            표지 이미지
           </p>
           {savedFlash && (
             <span className="text-xs text-emerald-700 font-medium">저장됨</span>
@@ -122,7 +122,7 @@ export function ThumbnailEditor({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={preview}
-          alt="초기 화면 표지"
+          alt="표지"
           className="w-full aspect-video object-cover opacity-95"
         />
         <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/75 to-transparent print:hidden">
@@ -145,7 +145,7 @@ export function ThumbnailEditor({
               ) : (
                 <ImagePlus className="h-4 w-4" />
               )}
-              초기 화면 바꾸기
+              표지 바꾸기
             </button>
             <button
               type="button"

@@ -60,8 +60,8 @@ export default async function HomePage({
           <div>
             <h2 className="font-display text-2xl text-ink-900">라이브러리</h2>
             <p className="text-sm text-ink-500 mt-1">
-              <strong>임시 저장</strong>(팩트체크 미완료) →{" "}
-              <strong>보고서 저장</strong>(팩트체크 완료 · PDF·공유)
+              임시 저장 → <strong>작성 대기</strong> →{" "}
+              <strong>보고서 만들기</strong> → <strong>보고서</strong>
             </p>
           </div>
           <div className="sm:w-96">
@@ -80,69 +80,65 @@ export default async function HomePage({
             임시 저장 {drafts.length}
           </a>
           <a
+            href="#pending"
+            className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
+          >
+            작성 대기 {reportPending.length}
+          </a>
+          <a
             href="#reports"
             className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
           >
-            보고서 저장 {reportPending.length + reportComplete.length}
+            보고서 {reportComplete.length}
           </a>
         </div>
       </section>
 
       <section id="drafts" className="space-y-4 scroll-mt-24">
         <div>
-          <h3 className="font-display text-xl text-ink-900">
-            1. 임시 저장 목록
-          </h3>
+          <h3 className="font-display text-xl text-ink-900">임시 저장</h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크·Report 입력 중인 항목입니다. 카드에서{" "}
-            <strong>이어서 작성</strong> 또는 <strong>이어서 하기</strong>로
-            이어갈 수 있습니다.
+            팩트체크·입력이 아직 끝나지 않은 항목입니다.
           </p>
         </div>
         <VideoGrid
           videos={drafts}
           listKind="draft"
-          emptyTitle="임시 저장된 항목이 없습니다"
-          emptyHint="유튜브·Report 생성 후 팩트체크 전, 또는 Report 제목·스크립트 입력 중인 항목이 여기에 남습니다."
+          emptyTitle="임시 저장 항목이 없습니다"
+          emptyHint="유튜브·Report 생성 후 팩트체크 전 항목이 여기에 남습니다."
         />
       </section>
 
-      <section id="reports" className="space-y-6 scroll-mt-24">
+      <section id="pending" className="space-y-4 scroll-mt-24">
         <div>
-          <h3 className="font-display text-xl text-ink-900">
-            2. 보고서 저장 목록
-          </h3>
+          <h3 className="font-display text-xl text-ink-900">작성 대기</h3>
           <p className="text-sm text-ink-500 mt-1">
-            팩트체크가 완료된 항목입니다. 저장 완료 카드에서{" "}
-            <strong>보기</strong>·<strong>수정</strong>·
-            <strong>공유</strong>·<strong>PDF 저장</strong>·
-            <strong>인쇄</strong>를 사용할 수 있습니다.
+            팩트체크가 끝났습니다. <strong>보고서 만들기</strong>를 누르면
+            보고서로 이동합니다.
           </p>
         </div>
+        <VideoGrid
+          videos={reportPending}
+          listKind="report-pending"
+          emptyTitle="작성 대기 항목이 없습니다"
+          emptyHint="팩트체크를 모두 마치면 여기로 옵니다."
+        />
+      </section>
 
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-ink-800">
-            작성 대기 ({reportPending.length})
-          </h4>
-          <VideoGrid
-            videos={reportPending}
-            listKind="report-pending"
-            emptyTitle="보고서 작성 대기 항목이 없습니다"
-            emptyHint="팩트체크를 모두 마치면 여기로 옮겨집니다."
-          />
+      <section id="reports" className="space-y-4 scroll-mt-24">
+        <div>
+          <h3 className="font-display text-xl text-ink-900">보고서</h3>
+          <p className="text-sm text-ink-500 mt-1">
+            만들어진 보고서입니다. 보기·본문·팩트체크·공유·PDF를 사용할 수
+            있습니다.
+          </p>
         </div>
-
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-ink-800">
-            저장 완료 · 보기·PDF·공유 ({reportComplete.length})
-          </h4>
-          <VideoGrid
-            videos={reportComplete}
-            listKind="report-complete"
-            emptyTitle="저장 완료된 보고서가 없습니다"
-            emptyHint="«보고서 저장 → PDF·인포그래픽»을 누르면 저장 완료로 오고, 바로 보고서 보기 화면으로 이동합니다."
-          />
-        </div>
+        <VideoGrid
+          videos={reportComplete}
+          listKind="report-complete"
+          emptyTitle="보고서가 없습니다"
+          emptyHint="작성 대기에서 «보고서 만들기»를 누르면 여기로 옵니다."
+        />
       </section>
     </div>
   );

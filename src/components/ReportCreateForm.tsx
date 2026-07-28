@@ -321,7 +321,7 @@ export function ReportCreateForm({
         </label>
 
         <div className="space-y-2">
-          <p className="text-sm text-ink-600">초기 화면(표지) 이미지</p>
+          <p className="text-sm text-ink-600">표지 이미지</p>
           <div className="overflow-hidden rounded-xl border border-ink-200 bg-ink-50">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img

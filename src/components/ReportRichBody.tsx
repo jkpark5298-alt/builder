@@ -1,0 +1,164 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { TextStyle, FontSize } from "@tiptap/extension-text-style";
+import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
+import { normalizeStoredFcAnchors } from "@/lib/fc-markers";
+import { FcAnchor } from "@/lib/report-tiptap-fc-anchor";
+import {
+  registerReportEditor,
+  setActiveReportEditorKey,
+  unregisterReportEditor,
+} from "@/lib/report-editor-registry";
+import {
+  sanitizePastedHtml,
+  wrapPlainPasteText,
+} from "@/lib/report-editor-format";
+
+function normalizeEditorHtml(html: string): string {
+  const trimmed = normalizeStoredFcAnchors(html || "").trim();
+  if (!trimmed || trimmed === "<p><br></p>" || trimmed === "<p></p>") {
+    return "<p></p>";
+  }
+  return trimmed;
+}
+
+export function RichBody({
+  id,
+  editorKey,
+  html,
+  onChange,
+  onFocus,
+  onSaveSelection,
+}: {
+  id?: string;
+  /** 섹션별 TipTap 인스턴스 키 */
+  editorKey: string;
+  html: string;
+  onChange: (html: string) => void;
+  onFocus?: () => void;
+  onSaveSelection?: () => void;
+}) {
+  const editorRef = useRef<Editor | null>(null);
+  const onChangeRef = useRef(onChange);
+  const onFocusRef = useRef(onFocus);
+  const onSaveSelectionRef = useRef(onSaveSelection);
+  const lastEmittedRef = useRef(normalizeEditorHtml(html || "<p></p>"));
+
+  onChangeRef.current = onChange;
+  onFocusRef.current = onFocus;
+  onSaveSelectionRef.current = onSaveSelection;
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit.configure({
+        heading: false,
+        codeBlock: false,
+        code: false,
+        blockquote: false,
+        horizontalRule: false,
+        // 문서 단위 히스토리(툴바·Ctrl+Z)와 충돌 방지
+        undoRedo: false,
+        // Underline은 StarterKit에 포함 (별도 등록 시 duplicate warn)
+      }),
+      TextStyle,
+      Color,
+      Highlight.configure({ multicolor: true }),
+      FontSize,
+      FcAnchor,
+    ],
+    content: normalizeEditorHtml(html || "<p></p>"),
+    editorProps: {
+      attributes: {
+        ...(id ? { id } : {}),
+        class:
+          "report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none",
+      },
+      handlePaste: (_view, event) => {
+        const ed = editorRef.current;
+        if (!ed) return false;
+
+        const clipboard = event.clipboardData;
+        if (!clipboard) return false;
+
+        const files = clipboard.files;
+        if (
+          files?.length &&
+          Array.from(files).some((f) => f.type.startsWith("image/"))
+        ) {
+          // TipTap 기본 삽입 막고, 섹션 onPaste로 버블링
+          return true;
+        }
+
+        const rawHtml = clipboard.getData("text/html");
+        const text = clipboard.getData("text/plain");
+
+        if (rawHtml?.trim()) {
+          event.preventDefault();
+          const clean = sanitizePastedHtml(rawHtml);
+          if (clean) {
+            ed.commands.insertContent(clean);
+          } else if (text) {
+            ed.commands.insertContent(wrapPlainPasteText(text));
+          }
+          return true;
+        }
+
+        if (text) {
+          event.preventDefault();
+          ed.commands.insertContent(wrapPlainPasteText(text));
+          return true;
+        }
+
+        return false;
+      },
+    },
+    onCreate: ({ editor: ed }) => {
+      editorRef.current = ed;
+      lastEmittedRef.current = ed.getHTML();
+    },
+    onUpdate: ({ editor: ed }) => {
+      const next = ed.getHTML();
+      lastEmittedRef.current = next;
+      onChangeRef.current(next);
+    },
+    onSelectionUpdate: () => {
+      onSaveSelectionRef.current?.();
+    },
+    onFocus: () => {
+      setActiveReportEditorKey(editorKey);
+      onFocusRef.current?.();
+      onSaveSelectionRef.current?.();
+    },
+  });
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+    registerReportEditor(editorKey, editor);
+    return () => unregisterReportEditor(editorKey, editor);
+  }, [editor, editorKey]);
+
+  useEffect(() => {
+    if (!editor) return;
+    if (editor.isFocused) return;
+    const next = normalizeEditorHtml(html || "<p></p>");
+    if (next === lastEmittedRef.current) return;
+    const current = editor.getHTML();
+    if (next === current) {
+      lastEmittedRef.current = next;
+      return;
+    }
+    editor.commands.setContent(next, { emitUpdate: false });
+    lastEmittedRef.current = editor.getHTML();
+  }, [html, editor]);
+
+  return <EditorContent editor={editor} />;
+}

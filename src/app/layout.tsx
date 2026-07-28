@@ -45,10 +45,16 @@ export default function RootLayout({
                   임시 저장
                 </a>
                 <a
+                  href="/#pending"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  작성 대기
+                </a>
+                <a
                   href="/#reports"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
-                  보고서 저장
+                  보고서
                 </a>
                 <a
                   href="/#paste"

@@ -5,6 +5,11 @@ export function requiredFactCheckItems(items: SummaryItem[]): SummaryItem[] {
   return items.filter((i) => i.needsFactCheck);
 }
 
+/** 보고서 만들기 필수 게이트에 포함되는 항목 */
+export function gatedFactCheckItems(items: SummaryItem[]): SummaryItem[] {
+  return items.filter((i) => i.needsFactCheck && !i.factCheckOptional);
+}
+
 export function isItemChecked(
   itemId: string,
   factChecks: FactCheckResult[]
@@ -22,13 +27,33 @@ export function isItemChecked(
 
 export function factCheckProgress(video: Pick<VideoRecord, "items" | "factChecks">) {
   const required = requiredFactCheckItems(video.items);
+  const gated = gatedFactCheckItems(video.items);
+  /** 전부 선택 항목이면 최소 1건 완료를 게이트로 */
+  const gateItems = gated.length > 0 ? gated : required;
   const done = required.filter((i) => isItemChecked(i.id, video.factChecks));
+  const gatedDone = gateItems.filter((i) =>
+    isItemChecked(i.id, video.factChecks)
+  );
+  const complete =
+    required.length > 0 ? done.length === required.length : true;
+  const gateComplete =
+    gateItems.length > 0 ? gatedDone.length === gateItems.length : complete;
   return {
     required,
+    gated,
+    gateItems,
     doneCount: done.length,
     total: required.length,
-    complete: required.length > 0 ? done.length === required.length : true,
+    gateDoneCount: gatedDone.length,
+    gateTotal: gateItems.length,
+    optionalCount: required.filter((i) => i.factCheckOptional).length,
+    complete,
+    gateComplete,
+    canFinalizePartial: done.length >= 1 && !gateComplete,
     remainingIds: required
+      .filter((i) => !isItemChecked(i.id, video.factChecks))
+      .map((i) => i.id),
+    remainingGatedIds: gateItems
       .filter((i) => !isItemChecked(i.id, video.factChecks))
       .map((i) => i.id),
   };

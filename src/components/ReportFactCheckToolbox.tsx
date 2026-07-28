@@ -9,51 +9,20 @@ import {
   ClipboardPaste,
   ImagePlus,
   Link2,
-  Loader2,
   Pencil,
-  Trash2,
 } from "lucide-react";
 import type {
   FactCheckResult,
-  FactCheckVerdict,
   SummaryItem,
   TypedReport,
   VideoRecord,
 } from "@/lib/types";
 import { collectEntryImages } from "@/lib/fc-markers";
-import { normalizeImageUrls } from "@/lib/image-urls";
 import { normalizeAiAnswer, verdictBadge } from "@/lib/text-format";
-import { resolveAnswerParts } from "@/lib/answer-parts";
+import { factCheckPasteHtml } from "@/lib/factcheck-detail";
+import { FactCheckDetailPanel } from "@/components/FactCheckDetailPanel";
 
-const VERDICT_OPTIONS: FactCheckVerdict[] = [
-  "true",
-  "mostly_true",
-  "mixed",
-  "mostly_false",
-  "false",
-  "unverifiable",
-];
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function textToHtmlParagraphs(text: string): string {
-  const clean = normalizeAiAnswer(text).trim();
-  if (!clean) return "";
-  return clean
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
-    .join("");
-}
-
-function fcAnswerText(fc?: FactCheckResult, item?: SummaryItem): string {
+function fcAnswerText(fc?: FactCheckResult): string {
   if (!fc) return "";
   const raw = fc.explanation?.trim() ?? "";
   if (!raw || (/^다음 주장을/.test(raw) && /팩트체크/.test(raw))) {
@@ -93,9 +62,8 @@ export function ReportFactCheckToolbox({
   onLinkToSection: (row: ReportFcRow) => void;
 }) {
   const [open, setOpen] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
-  const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const rows = useMemo(() => {
@@ -104,7 +72,7 @@ export function ReportFactCheckToolbox({
       .filter((i) => i.needsFactCheck)
       .map((item) => {
         const fc = fcMap.get(item.id);
-        const answerText = fcAnswerText(fc, item);
+        const answerText = fcAnswerText(fc);
         const entryLike = {
           itemId: item.id,
           text: item.statement,
@@ -150,155 +118,9 @@ export function ReportFactCheckToolbox({
     }
   }
 
-  async function clearDetail(itemId: string) {
-    if (
-      !window.confirm(
-        "팩트체크 제목은 남기고 DETAIL(답변·이미지)만 삭제할까요?"
-      )
-    ) {
-      return;
-    }
-    setSavingId(itemId);
-    setError(null);
-    try {
-      const res = await fetch(`/api/videos/${video.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clearFactCheckDetail: { itemId },
-          preserveReadyStatus: true,
-        }),
-      });
-      const data = (await res.json()) as {
-        error?: string;
-        video?: VideoRecord;
-      };
-      if (!res.ok) throw new Error(data.error || "DETAIL 삭제 실패");
-      if (data.video) {
-        onVideoUpdate(data.video);
-        if (data.video.report) onDraftUpdate(data.video.report);
-      }
-      notify("DETAIL 삭제됨 (제목 유지)");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "DETAIL 삭제 실패");
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function deleteFc(itemId: string) {
-    if (
-      !window.confirm(
-        "팩트체크 제목과 DETAIL을 모두 삭제할까요? 보고서 연결·답변도 함께 제거됩니다."
-      )
-    ) {
-      return;
-    }
-    setSavingId(itemId);
-    setError(null);
-    try {
-      const res = await fetch(`/api/videos/${video.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          deleteItem: { itemId },
-          preserveReadyStatus: true,
-        }),
-      });
-      const data = (await res.json()) as {
-        error?: string;
-        video?: VideoRecord;
-      };
-      if (!res.ok) throw new Error(data.error || "삭제 실패");
-      if (data.video) {
-        onVideoUpdate(data.video);
-        if (data.video.report) onDraftUpdate(data.video.report);
-      }
-      notify("팩트체크 삭제됨");
-      setEditingId(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "삭제 실패");
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  async function saveFcEdit(opts: {
-    itemId: string;
-    statement: string;
-    detail: string;
-    explanation: string;
-    verdict: FactCheckVerdict;
-  }) {
-    setSavingId(opts.itemId);
-    setError(null);
-    try {
-      const explanation = normalizeAiAnswer(opts.explanation.trim());
-      if (explanation.length < 20) {
-        throw new Error("팩트체크 답변을 20자 이상 입력해 주세요.");
-      }
-      if (!opts.statement.trim()) {
-        throw new Error("주장을 입력해 주세요.");
-      }
-
-      const itemRes = await fetch(`/api/videos/${video.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          updateItem: {
-            itemId: opts.itemId,
-            statement: opts.statement.trim(),
-            detail: opts.detail.trim() || null,
-          },
-          preserveReadyStatus: true,
-        }),
-      });
-      const itemData = (await itemRes.json()) as {
-        error?: string;
-        video?: VideoRecord;
-      };
-      if (!itemRes.ok) throw new Error(itemData.error || "주장 수정 실패");
-
-      const prev = (itemData.video ?? video).factChecks.find(
-        (f) => f.itemId === opts.itemId
-      );
-      const parts = resolveAnswerParts({
-        explanation,
-        answerImageUrl: prev?.answerImageUrl,
-        answerImageUrls: prev?.answerImageUrls,
-        answerParts: prev?.answerParts,
-      });
-
-      const fcRes = await fetch(`/api/videos/${video.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          factCheck: {
-            itemId: opts.itemId,
-            verdict: opts.verdict === "pending" ? "unverifiable" : opts.verdict,
-            explanation,
-            sources: prev?.sources ?? [],
-            answerParts: parts,
-          },
-          preserveReadyStatus: true,
-        }),
-      });
-      const fcData = (await fcRes.json()) as {
-        error?: string;
-        video?: VideoRecord;
-      };
-      if (!fcRes.ok) throw new Error(fcData.error || "답변 저장 실패");
-      if (fcData.video) {
-        onVideoUpdate(fcData.video);
-        if (fcData.video.report) onDraftUpdate(fcData.video.report);
-      }
-      notify("팩트체크 저장됨");
-      setEditingId(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "저장 실패");
-    } finally {
-      setSavingId(null);
-    }
+  function handleVideoUpdate(v: VideoRecord) {
+    onVideoUpdate(v);
+    if (v.report) onDraftUpdate(v.report);
   }
 
   if (!rows.length) {
@@ -329,11 +151,11 @@ export function ReportFactCheckToolbox({
       {open && (
         <div className="p-3 space-y-3 max-h-[min(70vh,36rem)] overflow-y-auto">
           <p className="text-xs text-ink-500 leading-relaxed">
-            내용·사진을 확인한 뒤 복사하거나, 편집 중이면 현재 섹션(
+            DETAIL을 열어 확인·수정합니다. 편집 중이면 현재 섹션(
             <span className="font-medium text-ink-700">
               {draft.sections[activeSectionIdx]?.heading || "섹션"}
             </span>
-            )에 붙여넣을 수 있습니다. FC 수정·삭제도 여기서 가능합니다.
+            )에 넣을 수 있습니다.
           </p>
 
           {flash && (
@@ -353,165 +175,173 @@ export function ReportFactCheckToolbox({
 
           {rows.map((row, i) => {
             const badge = verdictBadge(row.fc?.verdict ?? "pending");
-            const isEditing = editingId === row.item.id;
-            const saving = savingId === row.item.id;
+            const isOpen = detailId === row.item.id;
+            const label = `FC${i + 1}`;
 
             return (
               <div
                 key={row.item.id}
                 className="rounded-lg border border-ink-100 bg-ink-50/50 p-2.5 space-y-2"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-[11px] text-ink-400 font-medium">
-                      FC{i + 1} · {badge.mark} {badge.label}
-                    </p>
-                    <p className="text-sm font-medium text-ink-900 leading-snug mt-0.5">
-                      {row.item.statement}
-                    </p>
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-ink-400 font-medium">
+                    {label} · {badge.mark} {badge.label}
+                  </p>
+                  <p className="text-sm font-medium text-ink-900 leading-snug mt-0.5">
+                    {row.item.statement}
+                  </p>
                 </div>
 
-                {row.answerText ? (
-                  <p className="text-xs text-ink-700 whitespace-pre-wrap leading-relaxed line-clamp-6">
-                    {row.answerText}
-                  </p>
-                ) : (
-                  <p className="text-xs text-ink-400">답변 없음</p>
-                )}
+                {!isOpen && (
+                  <>
+                    {row.answerText ? (
+                      <p className="text-xs text-ink-700 whitespace-pre-wrap leading-relaxed line-clamp-4">
+                        {row.answerText}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-ink-400">답변 없음</p>
+                    )}
 
-                {row.images.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {row.images.map((src) => (
+                    {row.images.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {row.images.map((src) => (
+                          <button
+                            key={src.slice(0, 48)}
+                            type="button"
+                            title="이미지 URL 복사"
+                            onClick={() => void copyImageUrl(src)}
+                            className="relative group overflow-hidden rounded-md border border-ink-200 bg-white"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={src}
+                              alt=""
+                              className="h-14 w-14 object-cover"
+                            />
+                            <span className="absolute inset-0 hidden group-hover:flex items-center justify-center bg-ink-900/50 text-[10px] text-white font-medium">
+                              복사
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5">
                       <button
-                        key={src.slice(0, 48)}
                         type="button"
-                        title="이미지 URL 복사"
-                        onClick={() => void copyImageUrl(src)}
-                        className="relative group overflow-hidden rounded-md border border-ink-200 bg-white"
+                        onClick={() => setDetailId(row.item.id)}
+                        className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-[11px] font-medium"
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={src}
-                          alt=""
-                          className="h-14 w-14 object-cover"
-                        />
-                        <span className="absolute inset-0 hidden group-hover:flex items-center justify-center bg-ink-900/50 text-[10px] text-white font-medium">
-                          복사
-                        </span>
+                        <Pencil className="h-3 w-3" />
+                        DETAIL
                       </button>
-                    ))}
-                  </div>
-                )}
-
-                {isEditing ? (
-                  <FcInlineEditor
-                    row={row}
-                    saving={saving || Boolean(busy)}
-                    onCancel={() => setEditingId(null)}
-                    onSave={(vals) => void saveFcEdit({ itemId: row.item.id, ...vals })}
-                  />
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      disabled={!row.answerText}
-                      onClick={() =>
-                        void copyText(
-                          [
-                            row.item.statement,
-                            row.answerText,
-                          ]
-                            .filter(Boolean)
-                            .join("\n\n"),
-                          "FC 텍스트"
-                        )
-                      }
-                      className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] font-medium disabled:opacity-40"
-                    >
-                      <ClipboardCopy className="h-3 w-3" />
-                      텍스트 복사
-                    </button>
-                    {editing && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={!row.answerText}
-                          onClick={() => {
-                            const html = textToHtmlParagraphs(
-                              [
-                                `【FC】 ${row.item.statement}`,
-                                row.answerText,
-                              ]
-                                .filter(Boolean)
-                                .join("\n\n")
-                            );
-                            if (!html) return;
-                            onPasteTextToSection(html);
-                            notify("현재 섹션 본문에 붙여넣음");
-                          }}
-                          className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-[11px] font-medium disabled:opacity-40"
-                        >
-                          <ClipboardPaste className="h-3 w-3" />
-                          본문에 넣기
-                        </button>
-                        {row.images.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={!row.answerText}
+                        onClick={() =>
+                          void copyText(
+                            [row.item.statement, row.answerText]
+                              .filter(Boolean)
+                              .join("\n\n"),
+                            "FC 텍스트"
+                          )
+                        }
+                        className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] font-medium disabled:opacity-40"
+                      >
+                        <ClipboardCopy className="h-3 w-3" />
+                        복사
+                      </button>
+                      {editing && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={!row.answerText}
+                            onClick={() => {
+                              const html = factCheckPasteHtml({
+                                itemId: row.item.id,
+                                statement: row.item.statement,
+                                answerText: row.answerText,
+                              });
+                              if (!html) return;
+                              onPasteTextToSection(html);
+                              notify("현재 섹션 본문에 붙여넣음");
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-[11px] font-medium disabled:opacity-40"
+                          >
+                            <ClipboardPaste className="h-3 w-3" />
+                            본문에 넣기
+                          </button>
+                          {row.images.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onPasteImagesToSection(row.images);
+                                notify("이미지 넣음");
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-[11px] font-medium"
+                            >
+                              <ImagePlus className="h-3 w-3" />
+                              이미지
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
-                              onPasteImagesToSection(row.images);
-                              notify("이미지를 현재 섹션에 넣음");
+                              onLinkToSection(row);
+                              notify("섹션에 연결됨");
                             }}
-                            className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-[11px] font-medium"
+                            className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] font-medium"
                           >
-                            <ImagePlus className="h-3 w-3" />
-                            이미지 넣기
+                            <Link2 className="h-3 w-3" />
+                            연결
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onLinkToSection(row);
-                            notify("섹션에 FC 연결됨");
-                          }}
-                          className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] font-medium"
-                        >
-                          <Link2 className="h-3 w-3" />
-                          섹션 연결
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      disabled={Boolean(busy)}
-                      onClick={() => setEditingId(row.item.id)}
-                      className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] font-medium"
-                    >
-                      <Pencil className="h-3 w-3" />
-                      수정
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving || Boolean(busy) || !row.answerText}
-                      onClick={() => void clearDetail(row.item.id)}
-                      className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-900 disabled:opacity-40"
-                    >
-                      DETAIL 삭제
-                    </button>
-                    <button
-                      type="button"
-                      disabled={saving || Boolean(busy)}
-                      onClick={() => void deleteFc(row.item.id)}
-                      className="inline-flex items-center gap-1 rounded-md border border-verify-false/40 bg-verify-false/5 px-2 py-1 text-[11px] font-medium text-verify-false"
-                    >
-                      {saving ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3 w-3" />
+                        </>
                       )}
-                      전체 삭제
-                    </button>
-                  </div>
+                    </div>
+                  </>
+                )}
+
+                {isOpen && (
+                  <FactCheckDetailPanel
+                    presentation="embedded"
+                    label={label}
+                    statementFallback={row.item.statement}
+                    itemId={row.item.id}
+                    item={row.item}
+                    videoFc={row.fc}
+                    entry={{
+                      text: row.item.statement,
+                      answerImageUrl: row.fc?.answerImageUrl,
+                      answerImageUrls: row.fc?.answerImageUrls,
+                      answerParts: row.fc?.answerParts,
+                    }}
+                    videoId={video.id}
+                    busy={busy}
+                    capabilities={{
+                      edit: true,
+                      pasteToSection: editing,
+                      clearDetail: true,
+                      deleteAll: true,
+                    }}
+                    onClose={() => setDetailId(null)}
+                    onVideoUpdate={handleVideoUpdate}
+                    onPasteText={
+                      editing
+                        ? (html) => {
+                            onPasteTextToSection(html);
+                            notify("현재 섹션 본문에 붙여넣음");
+                          }
+                        : undefined
+                    }
+                    onPasteImages={
+                      editing
+                        ? (urls) => {
+                            onPasteImagesToSection(urls);
+                            notify("이미지 넣음");
+                          }
+                        : undefined
+                    }
+                  />
                 )}
               </div>
             );
@@ -519,98 +349,5 @@ export function ReportFactCheckToolbox({
         </div>
       )}
     </aside>
-  );
-}
-
-function FcInlineEditor({
-  row,
-  saving,
-  onCancel,
-  onSave,
-}: {
-  row: ReportFcRow;
-  saving: boolean;
-  onCancel: () => void;
-  onSave: (vals: {
-    statement: string;
-    detail: string;
-    explanation: string;
-    verdict: FactCheckVerdict;
-  }) => void;
-}) {
-  const [statement, setStatement] = useState(row.item.statement);
-  const [detail, setDetail] = useState(row.item.detail || "");
-  const [explanation, setExplanation] = useState(row.answerText);
-  const [verdict, setVerdict] = useState<FactCheckVerdict>(
-    row.fc?.verdict && row.fc.verdict !== "pending"
-      ? row.fc.verdict
-      : "unverifiable"
-  );
-
-  return (
-    <div className="space-y-2 rounded-md border border-accent/30 bg-white p-2">
-      <label className="block text-[11px] text-ink-500">
-        주장
-        <textarea
-          value={statement}
-          onChange={(e) => setStatement(e.target.value)}
-          rows={2}
-          className="mt-0.5 w-full rounded-md border border-ink-200 px-2 py-1.5 text-xs outline-none focus:border-accent"
-        />
-      </label>
-      <label className="block text-[11px] text-ink-500">
-        상세 (선택)
-        <textarea
-          value={detail}
-          onChange={(e) => setDetail(e.target.value)}
-          rows={2}
-          className="mt-0.5 w-full rounded-md border border-ink-200 px-2 py-1.5 text-xs outline-none focus:border-accent"
-        />
-      </label>
-      <label className="block text-[11px] text-ink-500">
-        팩트체크 답변
-        <textarea
-          value={explanation}
-          onChange={(e) => setExplanation(e.target.value)}
-          rows={5}
-          className="mt-0.5 w-full rounded-md border border-ink-200 px-2 py-1.5 text-xs outline-none focus:border-accent"
-        />
-      </label>
-      <label className="block text-[11px] text-ink-500">
-        판정
-        <select
-          value={verdict}
-          onChange={(e) => setVerdict(e.target.value as FactCheckVerdict)}
-          className="mt-0.5 w-full rounded-md border border-ink-200 px-2 py-1.5 text-xs outline-none focus:border-accent"
-        >
-          {VERDICT_OPTIONS.map((v) => (
-            <option key={v} value={v}>
-              {verdictBadge(v).label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="flex gap-1.5">
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() =>
-            onSave({ statement, detail, explanation, verdict })
-          }
-          className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-medium text-white disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-          저장
-        </button>
-        <button
-          type="button"
-          disabled={saving}
-          onClick={onCancel}
-          className="rounded-md border border-ink-200 px-2.5 py-1.5 text-[11px] font-medium"
-        >
-          취소
-        </button>
-      </div>
-    </div>
   );
 }

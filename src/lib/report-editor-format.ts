@@ -389,6 +389,16 @@ export function sanitizePastedHtml(html: string): string {
     el.removeAttribute("height");
     el.removeAttribute("dir");
 
+    // FC itemId 앵커는 붙여넣기 후에도 유지
+    const fcItem =
+      el.getAttribute("data-fc-item") || el.getAttribute("data-fc-key");
+    if (fcItem && el.tagName === "SPAN") {
+      el.setAttribute("data-fc-item", fcItem);
+      el.removeAttribute("data-fc-key");
+      el.removeAttribute("data-fc-n");
+      el.classList.add("fc-anchor");
+    }
+
     const style = el.style;
     if (style.fontSize) {
       const px = parseFontSizeToPx(style.fontSize);
@@ -442,7 +452,12 @@ export function containReportBodyLayout(editor: HTMLElement): boolean {
 
   editor.querySelectorAll<HTMLElement>("*").forEach((el) => {
     // FC 뱃지 등은 유지
-    if (el.classList.contains("fc-badge") || el.classList.contains("fc-target")) {
+    if (
+      el.classList.contains("fc-badge") ||
+      el.classList.contains("fc-target") ||
+      el.classList.contains("fc-anchor") ||
+      el.hasAttribute("data-fc-item")
+    ) {
       return;
     }
 

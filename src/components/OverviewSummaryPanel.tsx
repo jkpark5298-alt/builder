@@ -4,6 +4,7 @@ import { CheckCircle2, Loader2, Pencil, Sparkles, UserRound } from "lucide-react
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
+import { factCheckProgress } from "@/lib/factcheck-client";
 
 const SOURCE_UI: Record<
   NonNullable<VideoRecord["summarySource"]>,
@@ -17,7 +18,7 @@ const SOURCE_UI: Record<
   },
   manual: {
     label: "수동 입력 요약",
-    hint: "직접 작성한 요약입니다. 「완료」를 누르면 팩트체크·보고서에 반영됩니다.",
+    hint: "직접 작성한 요약입니다. 「완료」를 누르면 저장됩니다.",
     ai: false,
     className: "bg-sky-50 text-sky-900 border-sky-200",
   },
@@ -47,8 +48,11 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const hasExistingFc = video.items.some((i) => i.needsFactCheck);
+  const [preserveFactChecks, setPreserveFactChecks] = useState(hasExistingFc);
 
   const charCount = useMemo(() => draft.trim().length, [draft]);
+  const fcProgress = useMemo(() => factCheckProgress(video), [video]);
 
   async function completeManualOverview() {
     setError(null);
@@ -59,6 +63,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
     }
     setSaving(true);
     try {
+      const keepFc = hasExistingFc && preserveFactChecks;
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -66,18 +71,29 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
           updateOverview: {
             overview: draft.trim(),
             complete: true,
+            preserveFactChecks: keepFc,
           },
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "완료 처리 실패");
-      const n = data.progress?.total ?? data.video?.items?.length ?? 0;
-      setHint(
-        `요약 완료. 팩트체크 ${n}건·보고서를 새 요약에 맞춰 자동 갱신했습니다.`
-      );
+      if (keepFc) {
+        setHint("요약만 저장했습니다. 기존 팩트체크는 유지됩니다.");
+      } else {
+        const n = data.progress?.total ?? data.video?.items?.length ?? 0;
+        setHint(
+          `요약 완료. 팩트체크 ${n}건·보고서 초안을 만들었습니다.`
+        );
+      }
       setEditing(false);
       router.refresh();
       window.setTimeout(() => {
+        if (keepFc && video.status === "ready") {
+          document
+            .getElementById("report")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
         document
           .getElementById("manual-factcheck")
           ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -157,6 +173,47 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             <p className="text-sm text-emerald-700" role="status">
               {hint}
             </p>
+          )}
+          {hasExistingFc && (
+            <fieldset className="space-y-2 rounded-xl border border-ink-200 bg-ink-50/80 p-3">
+              <legend className="text-xs font-medium text-ink-700 px-1">
+                요약 저장 방식
+              </legend>
+              <label className="flex gap-2 items-start cursor-pointer text-sm">
+                <input
+                  type="radio"
+                  name="overview-fc-mode"
+                  className="mt-1"
+                  checked={preserveFactChecks}
+                  onChange={() => setPreserveFactChecks(true)}
+                />
+                <span>
+                  <span className="font-medium text-ink-900">요약만 수정 (FC 유지)</span>
+                  <span className="block text-xs text-ink-500 mt-0.5">
+                    기존 팩트체크 {fcProgress.doneCount}/{fcProgress.total}건·보고서
+                    본문을 유지합니다.
+                  </span>
+                </span>
+              </label>
+              <label className="flex gap-2 items-start cursor-pointer text-sm">
+                <input
+                  type="radio"
+                  name="overview-fc-mode"
+                  className="mt-1"
+                  checked={!preserveFactChecks}
+                  onChange={() => setPreserveFactChecks(false)}
+                />
+                <span>
+                  <span className="font-medium text-ink-900">
+                    팩트체크도 다시 만들기
+                  </span>
+                  <span className="block text-xs text-ink-500 mt-0.5">
+                    새 요약 기준으로 FC 항목을 다시 만들며, 기존 답변은
+                    사라집니다.
+                  </span>
+                </span>
+              </label>
+            </fieldset>
           )}
           <div className="flex flex-wrap gap-2">
             <button

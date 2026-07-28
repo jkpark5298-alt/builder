@@ -46,6 +46,8 @@ export interface SummaryItem {
   chapterTimestamp?: string;
   evidence: Evidence[];
   needsFactCheck: boolean;
+  /** true면 보고서 만들기 필수 게이트에서 제외 (나중에 이어서 가능) */
+  factCheckOptional?: boolean;
 }
 
 export interface AnswerPart {
@@ -220,6 +222,13 @@ export interface VideoRecord {
   reportSource?: "llm" | "assembled";
   /** 보고서 작성 방식 안내 (AI 비용·폴백) */
   reportWriteNotice?: string;
+  /**
+   * 팩트체크 다시하기 후 「보고서 만들기」 시 본문 처리.
+   * keep_body: 기존 본문 유지·FC만 반영 / rewrite: 글쓰기 AI·조립으로 재작성
+   */
+  pendingReportFinalize?: "keep_body" | "rewrite" | null;
+  /** FC 단계에서 골격 보고서 본문을 수정했으면 finalize 시 본문 유지 */
+  reportSkeletonEdited?: boolean;
   /** legacy */
   legacyReport?: ReportSection | null;
   infographic: InfographicData | null;

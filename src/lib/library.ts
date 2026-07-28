@@ -40,19 +40,20 @@ export function isFactCheckDraft(
     return true;
   }
   if (video.status === "awaiting_factcheck") {
-    return !factCheckProgress(video).complete;
+    const { gateComplete, complete } = factCheckProgress(video);
+    return !(gateComplete || complete);
   }
   return true;
 }
 
 /**
- * 2) 보고서 작성 — 팩트체크 완료 후, 보고서 생성 전
+ * 2) 작성 대기 — 팩트체크 완료 후, 보고서 생성 전
  */
 export function isReportPending(
   video: Pick<VideoRecord, "status" | "items" | "factChecks">
 ): boolean {
   if (video.status !== "awaiting_factcheck") return false;
-  return factCheckProgress(video).complete;
+  return factCheckProgress(video).gateComplete;
 }
 
 export function libraryStage(
@@ -77,10 +78,10 @@ export function libraryCardLabel(
   video: Pick<VideoRecord, "status" | "items" | "factChecks">
 ): string {
   switch (libraryStage(video)) {
-    case "complete":
-      return "완료";
+      case "complete":
+      return "보고서";
     case "report_pending":
-      return "보고서 저장";
+      return "작성 대기";
     case "report_input_draft":
       return "입력 중";
     case "factcheck_draft":
@@ -97,7 +98,7 @@ export function libraryCardLabel(
 export function libraryStatusLabel(status: PipelineStatus): string {
   switch (status) {
     case "ready":
-      return "완료";
+      return "보고서";
     case "report_input_draft":
       return "입력 중";
     case "awaiting_factcheck":

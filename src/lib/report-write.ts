@@ -3,6 +3,7 @@ import {
   buildTypedReport,
   highlightConclusion,
 } from "./report";
+import { stabilizeReportFcAnchors } from "./fc-markers";
 import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
 import { dedupeTexts, normalizeAiAnswer } from "./text-format";
@@ -243,7 +244,7 @@ JSON:
         .filter(Boolean)
         .join("\n");
 
-    return {
+    return stabilizeReportFcAnchors({
       meta: {
         title: video.title,
         channel: video.channel,
@@ -267,11 +268,133 @@ JSON:
         answerImageUrls: f.answerImageUrls,
         answerParts: f.answerParts,
       })),
-    };
+    });
   } catch (e) {
     console.error("[report-write] writeReportWithLlm failed", e);
     return null;
   }
+}
+
+/**
+ * 기존 보고서 섹션 본문·이미지는 그대로 두고, 팩트체크 entries·부록만 동기화.
+ * 「팩트체크 다시하기 → 본문 유지」완료 경로에서 사용.
+ */
+export function syncFactChecksIntoExistingReport(
+  report: TypedReport,
+  video: Pick<
+    VideoRecord,
+    | "items"
+    | "factChecks"
+    | "title"
+    | "channel"
+    | "youtubeUrl"
+    | "inputMode"
+  >
+): TypedReport {
+  const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
+  const requiredItems = video.items.filter((i) => i.needsFactCheck);
+  const requiredIds = new Set(requiredItems.map((i) => i.id));
+
+  let sections = report.sections.map((sec) => {
+    const entries = (sec.entries ?? [])
+      .filter((e) => !e.itemId || requiredIds.has(e.itemId))
+      .map((e) => {
+        if (!e.itemId) return e;
+        const item = requiredItems.find((i) => i.id === e.itemId);
+        if (!item) return e;
+        const fc = fcMap.get(e.itemId);
+        const synced = entryFromItem(item, fc);
+        const raw = fc?.explanation?.trim() ?? "";
+        const emptyAnswer =
+          !raw ||
+          (/^다음 주장을/.test(raw) && /팩트체크해 주세요/.test(raw));
+        return {
+          ...e,
+          itemId: synced.itemId,
+          text: synced.text,
+          html: emptyAnswer ? undefined : e.html,
+          answerImageUrl: synced.answerImageUrl,
+          answerImageUrls: synced.answerImageUrls,
+          answerParts: synced.answerParts,
+        };
+      });
+    return { ...sec, entries: entries.length ? entries : undefined };
+  });
+
+  const present = new Set<string>();
+  for (const sec of sections) {
+    for (const e of sec.entries ?? []) {
+      if (e.itemId) present.add(e.itemId);
+    }
+  }
+  const missing = requiredItems.filter((i) => !present.has(i.id));
+  if (missing.length) {
+    const newEntries = missing.map((item) =>
+      entryFromItem(item, fcMap.get(item.id))
+    );
+    if (sections.length === 0) {
+      sections = [
+        {
+          sectionId: "sec-extra-fc",
+          heading: "추가 팩트체크",
+          body: "<p>팩트체크 재검증으로 추가된 항목입니다.</p>",
+          rich: true,
+          entries: newEntries,
+        },
+      ];
+    } else {
+      let attachIdx = sections.length - 1;
+      for (let i = sections.length - 1; i >= 0; i--) {
+        if ((sections[i].entries?.length ?? 0) > 0) {
+          attachIdx = i;
+          break;
+        }
+      }
+      sections = sections.map((s, i) =>
+        i === attachIdx
+          ? { ...s, entries: [...(s.entries ?? []), ...newEntries] }
+          : s
+      );
+    }
+  }
+
+  const inlineFactChecks = requiredItems.map((item) => {
+    const fc = fcMap.get(item.id);
+    const raw = fc?.explanation?.trim() ?? "";
+    const isPrompt =
+      /^다음 주장을/.test(raw) && /팩트체크해 주세요/.test(raw);
+    const parts = resolveAnswerParts({
+      explanation: fc?.explanation,
+      answerImageUrl: fc?.answerImageUrl,
+      answerImageUrls: fc?.answerImageUrls,
+      answerParts: fc?.answerParts,
+    });
+    const flat = parts.flatMap((p) => p.imageUrls ?? []);
+    const split = splitPrimaryImage(flat);
+    return {
+      itemId: item.id,
+      statement: item.statement,
+      checkGuide: isPrompt ? "" : normalizeAiAnswer(raw),
+      verdict: fc?.verdict,
+      answerImageUrl: split.imageUrl,
+      answerImageUrls: split.imageUrls,
+      answerParts: parts.length ? parts : undefined,
+    };
+  });
+
+  return stabilizeReportFcAnchors({
+    ...report,
+    meta: {
+      ...report.meta,
+      title: video.title || report.meta.title,
+      channel: video.channel || report.meta.channel,
+      url:
+        video.inputMode === "report"
+          ? "Report 생성 (직접 입력)"
+          : video.youtubeUrl || report.meta.url,
+    },
+    factChecks: inlineFactChecks,
+  });
 }
 
 /**

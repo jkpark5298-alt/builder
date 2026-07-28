@@ -1,7 +1,14 @@
 import { v4 as uuid } from "uuid";
 import { buildInfographic } from "./infographic";
 import { autoFactCheck, hasLlm, summarizeContent } from "./pipeline";
-import { buildReportDocument } from "./report-write";
+import {
+  buildReportDocument,
+  syncFactChecksIntoExistingReport,
+} from "./report-write";
+import {
+  ensureSkeletonReport,
+  shouldKeepReportBodyOnFinalize,
+} from "./report-skeleton";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
 import type { ReportType, VideoRecord } from "./types";
@@ -437,6 +444,7 @@ export async function runVideoPipeline(
       infographic: null,
       reportSource: undefined,
       reportWriteNotice: undefined,
+      reportSkeletonEdited: undefined,
       status: "awaiting_factcheck",
       tags: Array.from(
         new Set([
@@ -451,6 +459,7 @@ export async function runVideoPipeline(
       ),
       updatedAt: new Date().toISOString(),
     };
+    record = await ensureSkeletonReport(record);
     await upsertVideo(record);
     return record;
   } catch (e) {
@@ -516,19 +525,42 @@ export async function createAndProcessReport(opts: {
 export async function finalizeReport(
   video: VideoRecord,
   reportType?: ReportType,
-  expectedUpdatedAt?: string
+  expectedUpdatedAt?: string,
+  opts?: { incompleteFactCheckCount?: number }
 ): Promise<VideoRecord> {
   const typed = {
     ...video,
     reportType: reportType ?? video.reportType,
     updatedAt: new Date().toISOString(),
   };
-  const built = await buildReportDocument(typed);
+
+  const keepBody = shouldKeepReportBodyOnFinalize(video);
+
+  const built = keepBody
+    ? {
+        report: syncFactChecksIntoExistingReport(video.report!, typed),
+        source: (video.reportSource === "llm" ? "llm" : "assembled") as
+          | "llm"
+          | "assembled",
+        notice:
+          video.reportSkeletonEdited && video.pendingReportFinalize !== "keep_body"
+            ? "초안에서 수정한 본문을 유지하고 팩트체크만 반영했습니다."
+            : "기존 보고서 본문을 유지하고 팩트체크만 반영했습니다. 본문은 에디터에서 계속 수정할 수 있습니다.",
+      }
+    : await buildReportDocument(typed);
+
+  const partialNote =
+    opts?.incompleteFactCheckCount && opts.incompleteFactCheckCount > 0
+      ? `미완료 팩트체크 ${opts.incompleteFactCheckCount}건이 있습니다. 완료 후 보고서 「팩트체크」 탭에서 이어서 채울 수 있습니다.`
+      : undefined;
+
   const withReport = {
     ...typed,
     report: built.report,
     reportSource: built.source,
-    reportWriteNotice: built.notice,
+    reportWriteNotice: [built.notice, partialNote].filter(Boolean).join(" "),
+    pendingReportFinalize: null,
+    reportSkeletonEdited: undefined,
   };
   const infographic = await buildInfographic(withReport);
   const next: VideoRecord = {
@@ -594,6 +626,8 @@ export async function prepareReprocess(
     factChecks: [],
     report: null,
     infographic: null,
+    pendingReportFinalize: null,
+    reportSkeletonEdited: undefined,
     status: "queued",
     errorMessage: undefined,
     ...(script
