@@ -1057,8 +1057,14 @@ export function EditableReportPanel({
 
   function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
     if (!editing) return;
+    const target = e.target as HTMLElement | null;
+    const isPlainTextField =
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target?.closest("input, textarea");
+    if (isPlainTextField) return;
     // 섹션 래퍼가 아니라 본문 상자에만 붙여넣기
-    const inBody = findReportBodyEditor(e.target as Node);
+    const inBody = findReportBodyEditor(target as Node);
     if (!inBody) {
       e.preventDefault();
       setActiveSectionIdx(idx);
