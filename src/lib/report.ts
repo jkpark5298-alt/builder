@@ -120,6 +120,7 @@ function normalizeHeadingKey(s: string): string {
     .replace(/\s+/g, " ")
     .replace(/[()[\]{}:：'"“”‘’.,!?·\-–—/\\]/g, " ")
     .replace(/^[^\p{L}\p{N}]+/gu, "")
+    .replace(/^제\s*\d+\s*장\s*/g, "")
     .replace(/^\d+\)\s*/g, "")
     .replace(/^\d+\.\s*/g, "")
     .replace(/\s+/g, " ")
@@ -127,17 +128,50 @@ function normalizeHeadingKey(s: string): string {
     .toLowerCase();
 }
 
+function isSkippableImportHeading(heading: string): boolean {
+  const key = normalizeHeadingKey(heading);
+  return (
+    /인터랙티브\s*대시보드/.test(key) ||
+    /박종규\s*드림/.test(key) ||
+    /^종합\s*보고서/.test(key)
+  );
+}
+
+function parseImportHeadingLine(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  if (/^\[종합\s*보고서\]/i.test(trimmed)) return null;
+  if (/^불편을\s*드려/.test(trimmed)) return null;
+
+  const md = trimmed.match(/^##\s+(.+)$/);
+  if (md) return md[1].trim();
+
+  const bullet = trimmed.match(/^■\s*(.+)$/);
+  if (bullet) return bullet[1].trim();
+
+  const chapter = trimmed.match(/^제\s*\d+\s*장\.?\s*.+$/);
+  if (chapter) return trimmed;
+
+  return null;
+}
+
+function preprocessImportRaw(raw: string): string {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .replace(/^\s*---+\s*$/gm, "")
+    .replace(/^#\s+.+$/m, "")
+    .replace(/^##\s*보고서\s*/m, "")
+    .replace(/\n##\s*팩트체크[\s\S]*$/m, "")
+    .replace(/^[^\n]*불편을\s*드려[^\n]*\n+/m, "")
+    .replace(/^[^\n]*특수기호[^\n]*\n+/m, "")
+    .trim();
+}
+
 function parseImportedSections(raw: string): Array<{
   heading: string;
   content: string;
 }> {
-  const text = raw
-    .replace(/\r\n/g, "\n")
-    .replace(/^\s*---+\s*$/gm, "")
-    .replace(/^# .+\n+/, "")
-    .replace(/^##\s*보고서\s*/m, "")
-    .replace(/\n##\s*팩트체크[\s\S]*$/m, "")
-    .trim();
+  const text = preprocessImportRaw(raw);
   if (!text) return [];
 
   const lines = text.split("\n");
@@ -146,22 +180,22 @@ function parseImportedSections(raw: string): Array<{
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
-    const topHeading = line.match(/^##\s+(.+)$/);
-    if (topHeading) {
+    const heading = parseImportHeadingLine(line);
+    if (heading && !isSkippableImportHeading(heading)) {
       if (current) {
         sections.push({
           heading: current.heading.trim(),
           content: current.lines.join("\n").trim(),
         });
       }
-      current = { heading: topHeading[1].trim(), lines: [] };
+      current = { heading, lines: [] };
       continue;
     }
     if (!current) continue;
     current.lines.push(line);
   }
 
-  if (current) {
+  if (current && !isSkippableImportHeading(current.heading)) {
     sections.push({
       heading: current.heading.trim(),
       content: current.lines.join("\n").trim(),
@@ -174,6 +208,116 @@ function parseImportedSections(raw: string): Array<{
       content: sec.content.replace(/\n{3,}/g, "\n\n").trim(),
     }))
     .filter((sec) => sec.heading && sec.content);
+}
+
+function importChapterNumber(heading: string): number | null {
+  const m = heading.match(/제\s*(\d+)\s*장/);
+  if (m) return Number(m[1]);
+  const numbered = heading.match(/^(\d+)\./);
+  if (numbered) return Number(numbered[1]);
+  return null;
+}
+
+function isSummaryImportHeading(heading: string): boolean {
+  const key = normalizeHeadingKey(heading);
+  return (
+    /executive\s*summary/.test(key) ||
+    /총괄\s*요약/.test(key) ||
+    /핵심\s*요약/.test(key) ||
+    (/요약/.test(key) && /총괄|executive|핵심/.test(key))
+  );
+}
+
+function isConclusionImportHeading(heading: string): boolean {
+  const key = normalizeHeadingKey(heading);
+  return (
+    /제\s*5\s*장/.test(heading) ||
+    /결론\s*및\s*종합/.test(key) ||
+    (key === "결론" || /종합\s*제언/.test(key))
+  );
+}
+
+function findReportSectionIndex(
+  report: TypedReport,
+  predicate: (heading: string, idx: number) => boolean
+): number {
+  return report.sections.findIndex((sec, idx) => predicate(sec.heading, idx));
+}
+
+function numberedBodySectionIndices(report: TypedReport): number[] {
+  return report.sections
+    .map((sec, idx) => ({ idx, key: normalizeHeadingKey(sec.heading) }))
+    .filter(
+      ({ key }) =>
+        /^\d/.test(key) ||
+        /고지혈|콜레스테롤/.test(key) ||
+        /혈관|검진/.test(key) ||
+        /식습관|과식|쾌락/.test(key)
+    )
+    .map(({ idx }) => idx);
+}
+
+function resolveImportSectionIndex(
+  report: TypedReport,
+  heading: string
+): number | undefined {
+  if (isSkippableImportHeading(heading)) return undefined;
+
+  const conclusionIdx = findReportSectionIndex(
+    report,
+    (h) => normalizeHeadingKey(h) === "결론"
+  );
+
+  if (isSummaryImportHeading(heading) || isConclusionImportHeading(heading)) {
+    return conclusionIdx >= 0 ? conclusionIdx : 0;
+  }
+
+  const chapter = importChapterNumber(heading);
+  if (chapter === 1) {
+    return conclusionIdx >= 0 ? conclusionIdx : 0;
+  }
+
+  const sectionMap = new Map(
+    report.sections.map((sec, idx) => [normalizeHeadingKey(sec.heading), idx])
+  );
+  const exact = sectionMap.get(normalizeHeadingKey(heading));
+  if (exact !== undefined) return exact;
+
+  const key = normalizeHeadingKey(heading);
+  const keywordRules: Array<{ test: RegExp; match: RegExp }> = [
+    { test: /고지혈|콜레스테롤|스타틴/, match: /고지혈|콜레스테롤/ },
+    { test: /뇌혈관|검진|경동맥|mra/, match: /혈관|검진/ },
+    { test: /식습관|과식|쾌락/, match: /식습관|과식|쾌락/ },
+  ];
+  for (const rule of keywordRules) {
+    if (!rule.test.test(key)) continue;
+    const idx = findReportSectionIndex(report, (h) =>
+      rule.match.test(normalizeHeadingKey(h))
+    );
+    if (idx >= 0) return idx;
+  }
+
+  let bestIdx = -1;
+  let bestScore = 0;
+  for (let i = 0; i < report.sections.length; i++) {
+    const score = overlapScore(
+      normalizeHeadingKey(report.sections[i]?.heading || ""),
+      key
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx >= 0 && bestScore >= 0.35) return bestIdx;
+
+  const bodyIdx = numberedBodySectionIndices(report);
+  if (chapter !== null && chapter >= 2) {
+    const target = bodyIdx[chapter - 2];
+    if (target !== undefined) return target;
+  }
+
+  return undefined;
 }
 
 export function inspectImportedReportText(raw: string): {
@@ -194,77 +338,26 @@ export function importReportText(
   const matches = parseImportedSections(raw);
   if (!matches.length) return report;
 
-  const sectionMap = new Map(
-    report.sections.map((sec, idx) => [normalizeHeadingKey(sec.heading), idx])
-  );
+  const contentByIdx = new Map<number, string[]>();
+  for (const match of matches) {
+    const idx = resolveImportSectionIndex(report, match.heading.trim());
+    if (idx === undefined) continue;
+    const parts = contentByIdx.get(idx) ?? [];
+    parts.push(match.content.trim());
+    contentByIdx.set(idx, parts);
+  }
+  if (!contentByIdx.size) return report;
 
   const nextSections = [...report.sections];
   let changed = false;
-  const used = new Set<number>();
-
-  for (const match of matches) {
-    const heading = match.heading.trim();
-    const content = match.content.trim();
-    if (!heading) continue;
-    let idx = sectionMap.get(normalizeHeadingKey(heading));
-    if (idx === undefined) {
-      let bestIdx = -1;
-      let bestScore = 0;
-      for (let i = 0; i < nextSections.length; i++) {
-        if (used.has(i)) continue;
-        const score = overlapScore(
-          normalizeHeadingKey(nextSections[i]?.heading || ""),
-          normalizeHeadingKey(heading)
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          bestIdx = i;
-        }
-      }
-      if (bestIdx >= 0 && bestScore >= 0.45) idx = bestIdx;
-    }
-    if (idx === undefined) continue;
-    used.add(idx);
+  for (const [idx, parts] of contentByIdx) {
     const prev = nextSections[idx];
-    const body = plainTextToHtml(content);
-    if (prev && prev.body !== body) {
+    if (!prev) continue;
+    const body = plainTextToHtml(parts.join("\n\n"));
+    if (prev.body !== body) {
       nextSections[idx] = { ...prev, body, rich: true };
       changed = true;
     }
-  }
-
-  if (!changed) {
-    let reportIdx = 0;
-    matches.forEach((match, importIdx) => {
-      while (used.has(reportIdx) && reportIdx < nextSections.length) reportIdx += 1;
-      if (reportIdx >= nextSections.length) return;
-
-      const currentHeading = normalizeHeadingKey(nextSections[reportIdx]?.heading || "");
-      const importedHeading = normalizeHeadingKey(match.heading);
-      const shouldMapToConclusion =
-        importIdx === 0 &&
-        currentHeading === "결론" &&
-        /(핵심\s*요약|요약)/.test(importedHeading);
-
-      if (!shouldMapToConclusion && used.size > 0) {
-        const score = overlapScore(currentHeading, importedHeading);
-        if (score < 0.2 && currentHeading === "도입") {
-          reportIdx += 1;
-          while (used.has(reportIdx) && reportIdx < nextSections.length) reportIdx += 1;
-        }
-      }
-
-      if (reportIdx >= nextSections.length) return;
-      const prev = nextSections[reportIdx];
-      const content = match.content.trim();
-      const body = plainTextToHtml(content);
-      if (prev && prev.body !== body) {
-        nextSections[reportIdx] = { ...prev, body, rich: true };
-        changed = true;
-      }
-      used.add(reportIdx);
-      reportIdx += 1;
-    });
   }
 
   if (!changed) return report;

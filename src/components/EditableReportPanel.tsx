@@ -520,7 +520,7 @@ export function EditableReportPanel({
       const parsed =
         info.count > 0
           ? `읽은 섹션 ${info.count}개: ${info.headings.join(" / ")}`
-          : "읽은 섹션이 없습니다. `## 섹션 제목` 형식을 확인해 주세요.";
+          : "읽은 섹션이 없습니다. `##`, `■`, `제 N 장.` 형식을 확인해 주세요.";
       alert(`붙여넣은 텍스트를 반영하지 못했습니다.\n\n${parsed}`);
       return;
     }
@@ -1432,15 +1432,20 @@ export function EditableReportPanel({
             {importOpen && (
               <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
                 <p className="text-xs text-ink-700">
-                  AI가 정리한 텍스트를 붙여넣으면 <strong>`## 섹션 제목`</strong>{" "}
-                  기준으로 본문만 교체합니다. 이미지, 이미지 룸, 팩트체크는
+                  AI 정리본을 붙여넣으면 본문만 교체합니다.{" "}
+                  <strong>`## 섹션 제목`</strong>,{" "}
+                  <strong>`■ 총괄 요약`</strong>,{" "}
+                  <strong>`제 N 장.`</strong> 형식을 인식합니다. 총괄 요약·1장·5장은
+                  결론, 2~4장은 본문 섹션에 맞춰 반영됩니다. 이미지·팩트체크는
                   유지됩니다.
                 </p>
                 <textarea
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
                   rows={10}
-                  placeholder={"## 결론\n정리된 본문...\n\n## 핵심 설명\n정리된 본문..."}
+                  placeholder={
+                    "## Executive Summary (총괄 요약)\n정리된 본문...\n\n## 제 2 장. 고지혈증과 콜레스테롤의 오해\n정리된 본문..."
+                  }
                   className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent"
                 />
                 <div className="flex flex-wrap gap-2">
