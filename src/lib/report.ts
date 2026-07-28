@@ -116,7 +116,12 @@ function plainTextToHtml(text: string): string {
 }
 
 function normalizeHeadingKey(s: string): string {
-  return s.replace(/\s+/g, " ").trim().toLowerCase();
+  return s
+    .replace(/\s+/g, " ")
+    .replace(/[()[\]{}:：'"“”‘’.,!?·\-–—/\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 export function importReportText(
@@ -128,12 +133,12 @@ export function importReportText(
 
   const bodyOnly = text
     .replace(/^# .+\n+/, "")
-    .replace(/^## 보고서\s*/m, "")
-    .replace(/\n## 팩트체크[\s\S]*$/m, "")
+    .replace(/^#{1,3}\s*보고서\s*/m, "")
+    .replace(/\n#{1,3}\s*팩트체크[\s\S]*$/m, "")
     .trim();
 
   const matches = Array.from(
-    bodyOnly.matchAll(/^##\s+(.+)\n([\s\S]*?)(?=^##\s+.+\n|$)/gm)
+    bodyOnly.matchAll(/^#{1,3}\s+(.+)\n([\s\S]*?)(?=^#{1,3}\s+.+\n|$)/gm)
   );
   if (!matches.length) return report;
 
@@ -143,6 +148,7 @@ export function importReportText(
 
   const nextSections = [...report.sections];
   let changed = false;
+  let matchedByHeading = 0;
 
   for (const match of matches) {
     const heading = match[1]?.trim();
@@ -150,12 +156,26 @@ export function importReportText(
     if (!heading) continue;
     const idx = sectionMap.get(normalizeHeadingKey(heading));
     if (idx === undefined) continue;
+    matchedByHeading += 1;
     const prev = nextSections[idx];
     const body = plainTextToHtml(content);
     if (prev && prev.body !== body) {
       nextSections[idx] = { ...prev, body, rich: true };
       changed = true;
     }
+  }
+
+  if (!changed && matchedByHeading === 0) {
+    const sequential = matches.slice(0, report.sections.length);
+    sequential.forEach((match, idx) => {
+      const content = match[2]?.trim() ?? "";
+      const prev = nextSections[idx];
+      const body = plainTextToHtml(content);
+      if (prev && prev.body !== body) {
+        nextSections[idx] = { ...prev, body, rich: true };
+        changed = true;
+      }
+    });
   }
 
   if (!changed) return report;
