@@ -17,6 +17,7 @@ import {
   sanitizePastedHtml,
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
+import { extractImageFilesFromDataTransfer } from "@/lib/image-client";
 
 function normalizeEditorHtml(html: string): string {
   const trimmed = normalizeStoredFcAnchors(html || "").trim();
@@ -33,6 +34,7 @@ export function RichBody({
   onChange,
   onFocus,
   onSaveSelection,
+  onPasteImages,
 }: {
   id?: string;
   /** 섹션별 TipTap 인스턴스 키 */
@@ -41,12 +43,16 @@ export function RichBody({
   onChange: (html: string) => void;
   onFocus?: () => void;
   onSaveSelection?: () => void;
+  /** 본문에 이미지 Ctrl+V 시 섹션 첨부로 넘김 */
+  onPasteImages?: (files: File[]) => void;
 }) {
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onChange);
   const onFocusRef = useRef(onFocus);
   const onSaveSelectionRef = useRef(onSaveSelection);
+  const onPasteImagesRef = useRef(onPasteImages);
   const lastEmittedRef = useRef(normalizeEditorHtml(html || "<p></p>"));
+  onPasteImagesRef.current = onPasteImages;
 
   onChangeRef.current = onChange;
   onFocusRef.current = onFocus;
@@ -85,12 +91,10 @@ export function RichBody({
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
 
-        const files = clipboard.files;
-        if (
-          files?.length &&
-          Array.from(files).some((f) => f.type.startsWith("image/"))
-        ) {
-          // TipTap 기본 삽입 막고, 섹션 onPaste로 버블링
+        const files = extractImageFilesFromDataTransfer(clipboard);
+        if (files.length) {
+          event.preventDefault();
+          onPasteImagesRef.current?.(files);
           return true;
         }
 

@@ -12,7 +12,7 @@ export function HomeInputTabs() {
 
   const items: Array<{ id: Tab; label: string; hint: string }> = [
     { id: "youtube", label: "유튜브", hint: "URL · 자막 자동 가져오기" },
-    { id: "report", label: "Report 생성", hint: "스크립트 직접 입력" },
+    { id: "report", label: "Report 생성", hint: "제목 · 스크립트 선택" },
     { id: "topic", label: "주제", hint: "태그 모아 통합 보고서" },
   ];
 

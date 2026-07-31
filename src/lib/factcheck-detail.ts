@@ -14,11 +14,11 @@ import type {
 export const FC_VERDICT_OPTIONS: FactCheckVerdict[] = [
   "true",
   "mostly_true",
-  "mixed",
-  "mostly_false",
   "false",
   "unverifiable",
 ];
+
+export { normalizeSimpleVerdict } from "./labels";
 
 export function isPromptOnlyExplanation(text: string | undefined): boolean {
   const t = (text ?? "").trim();

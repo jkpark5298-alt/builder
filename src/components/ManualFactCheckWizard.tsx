@@ -4,8 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   FileText,
   Loader2,
@@ -35,6 +33,12 @@ import { normalizeAiAnswer } from "@/lib/text-format";
 import { ReportTypePicker } from "@/components/ReportTypePicker";
 import { FactCheckRevisedBanner } from "@/components/FactCheckRevisedBanner";
 import { ImageAttachArea } from "@/components/ImageAttachArea";
+import { BulkFactCheckPastePanel } from "@/components/BulkFactCheckPastePanel";
+import { NumberedFactCheckImages } from "@/components/NumberedFactCheckImages";
+import { FactCheckRestoreActions } from "@/components/FactCheckRestoreActions";
+import { FC_VERDICT_OPTIONS } from "@/lib/factcheck-detail";
+import { normalizeSimpleVerdict, verdictLabel } from "@/lib/labels";
+import { isHistoryFactCheckFlow } from "@/lib/history-flow";
 
 function promptOf(item: SummaryItem, fc?: FactCheckResult): string {
   const fromEvidence = item.evidence.find(
@@ -84,6 +88,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
     [localVideo.items]
   );
   const progress = factCheckProgress(localVideo);
+  const historyFlow = isHistoryFactCheckFlow(localVideo);
   const keepBodyOnComplete =
     localVideo.pendingReportFinalize === "keep_body";
   const rewriteOnComplete =
@@ -123,8 +128,9 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       if (explanation.trim().length < 20) {
         throw new Error("AI 답변을 조금 더 자세히 입력해 주세요. (20자 이상)");
       }
-      const safeVerdict =
-        verdict === "pending" ? "unverifiable" : verdict;
+      const safeVerdict = normalizeSimpleVerdict(
+        verdict === "pending" ? "unverifiable" : verdict
+      );
 
       // 1) 텍스트·판정만 먼저 저장 (기존 이미지는 서버에서 유지)
       const controller = new AbortController();
@@ -467,11 +473,30 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
 
   if (required.length === 0) {
     return (
-      <div className="rounded-2xl border border-ink-200 bg-white p-5 text-center space-y-4">
-        <p className="text-ink-700">
-          검증이 필요한 주장이 없습니다. 바로 보고서를 만들 수 있습니다.
+      <div className="rounded-2xl border border-ink-200 bg-white p-5 space-y-4">
+        <p className="text-ink-700 text-center">
+          검증이 필요한 주장이 없습니다.
+          {(localVideo.factCheckTrash?.length ?? 0) > 0
+            ? " 삭제한 항목을 원복하거나, 요약에서 다시 만들 수 있습니다."
+            : " 요약에서 다시 만들거나, 대상을 직접 추가할 수 있습니다."}
         </p>
-        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+        <FactCheckRestoreActions
+          video={localVideo}
+          onVideoUpdate={setLocalVideo}
+        />
+        {!historyFlow && (
+          <NumberedFactCheckImages
+            video={localVideo}
+            onVideoUpdate={setLocalVideo}
+          />
+        )}
+        {historyFlow && (
+          <p className="text-sm text-ink-600 text-center rounded-xl border border-accent/25 bg-accent-muted/30 px-3 py-2">
+            역사 팩트체크 — 이미지는 <strong>확정 보고서 이후</strong>에
+            번호별로 붙입니다.
+          </p>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
           <button
             type="button"
             onClick={saveDraftAndLeave}
@@ -486,7 +511,11 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             disabled={completing}
             className="w-full sm:w-auto min-h-12 rounded-xl bg-ink-900 px-5 py-3 text-white font-medium hover:bg-accent disabled:opacity-60 scroll-mt-24"
           >
-            {completing ? "만드는 중…" : "보고서 만들기"}
+            {completing
+              ? "만드는 중…"
+              : historyFlow
+                ? "확정 보고서 만들기"
+                : "보고서 만들기"}
           </button>
         </div>
       </div>
@@ -504,6 +533,22 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         </h2>
       </div>
       <div className="bg-accent-muted/40 px-4 sm:px-5 py-4 border-b border-accent/20 space-y-3">
+        {historyFlow && (
+          <div className="rounded-xl border border-accent/30 bg-white/90 px-3 py-2.5 text-xs sm:text-sm text-ink-800 leading-relaxed">
+            <strong>역사 팩트체크 순서</strong>
+            <ol className="mt-1.5 list-decimal pl-4 space-y-0.5 text-ink-700">
+              <li>내용 요약</li>
+              <li>FC 답변 붙여넣기 · 반영</li>
+              <li>FC 반영 초안 확인 · 재수정</li>
+              <li>확정 보고서 만들기</li>
+              <li>번호별 이미지 추가</li>
+            </ol>
+            <p className="mt-1.5 text-ink-500">
+              지금은 <strong>2단계</strong>입니다. 이미지는 확정 후(5단계)에
+              붙입니다.
+            </p>
+          </div>
+        )}
         <FactCheckRevisedBanner
           video={localVideo}
           onDismissed={setLocalVideo}
@@ -524,157 +569,161 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             만듭니다. 기존 수정 내용은 사라집니다.
           </p>
         ) : null}
-        <p className="text-sm text-ink-600">
-          {localVideo.factCheckSource === "llm_draft" ? (
-            <>
-              인앱 AI가 초안 답변·판정을 채운 항목은 확인·수정만 하면 됩니다.
-              비어 있는 항목은 <strong>AI 질문</strong>을 복사해 제미나이 등에
-              물어본 뒤 붙여넣거나, 아래 「인앱 AI 초안 생성」을 다시 누르세요.
-            </>
-          ) : (
-            <>
-              인앱 초안을 쓰지 못한 경우(키 없음·API 실패)에는{" "}
-              <strong>기존 방식</strong>입니다: 아래 <strong>AI 질문</strong>을
-              복사해 제미나이·ChatGPT에 물어본 뒤,{" "}
-              <strong>AI 답변·팩트체크 결과</strong>를 이 화면에 붙여넣으세요.
-            </>
-          )}
-        </p>
 
-        <div className="flex flex-col sm:flex-row gap-2">
-          <button
-            type="button"
-            disabled={drafting || saving || completing}
-            onClick={() => void redraftDrafts()}
-            className="inline-flex items-center justify-center gap-2 min-h-11 rounded-xl border border-accent/40 bg-white px-4 text-sm font-medium text-ink-900 hover:bg-accent-muted/50 disabled:opacity-50"
-          >
-            {drafting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                초안 생성 중…
-              </>
-            ) : (
-              "인앱 AI 초안 생성 (미완료만)"
-            )}
-          </button>
-          <p className="text-xs text-ink-500 self-center">
-            OpenAI 키 사용 · 실패 시 질문 복사 방식 유지
-          </p>
-        </div>
-
-        <div className="mt-4">
-          <ReportTypePicker
-            video={localVideo}
-            compact
-            onVideoUpdate={setLocalVideo}
-          />
-        </div>
-
-        <div className="mt-4">
-          <div className="flex justify-between text-xs text-ink-600 mb-1.5">
-            <span>
-              {progress.optionalCount > 0 ? (
-                <>
-                  필수 {progress.gateDoneCount} / {progress.gateTotal}
-                  <span className="text-ink-400">
-                    {" "}
-                    · 전체 {progress.doneCount} / {progress.total}
-                  </span>
-                </>
-              ) : (
-                <>진행 {progress.doneCount} / {progress.total}</>
-              )}
-            </span>
-            <span>
-              {Math.round(
-                ((progress.optionalCount > 0
-                  ? progress.gateDoneCount
-                  : progress.doneCount) /
-                  Math.max(
-                    progress.optionalCount > 0
-                      ? progress.gateTotal
-                      : progress.total,
-                    1
-                  )) *
-                  100
-              )}
-              %
-            </span>
-          </div>
-          <div className="h-2 rounded-full bg-white overflow-hidden">
-            <div
-              className="h-full bg-accent transition-all duration-300"
-              style={{
-                width: `${((progress.optionalCount > 0 ? progress.gateDoneCount : progress.doneCount) / Math.max(progress.optionalCount > 0 ? progress.gateTotal : progress.total, 1)) * 100}%`,
-              }}
-            />
-          </div>
-          <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
-            {required.map((item, i) => {
-              const done = isItemChecked(item.id, localVideo.factChecks);
-              const optional = Boolean(item.factCheckOptional);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setStep(i)}
-                  className={`shrink-0 min-w-9 min-h-9 rounded-lg text-sm font-medium border transition-colors relative ${
-                    i === step
-                      ? "bg-ink-900 text-white border-ink-900"
-                      : done
-                        ? "bg-verify-true/15 text-verify-true border-verify-true/30"
-                        : optional
-                          ? "bg-ink-50 text-ink-400 border-ink-200 border-dashed"
-                          : "bg-white text-ink-500 border-ink-200"
-                  }`}
-                  aria-label={`${i + 1}번 항목${optional ? " (선택)" : ""}`}
-                  title={optional ? "나중에 해도 됨" : undefined}
-                >
-                  {done ? (
-                    <span className="inline-flex items-center justify-center gap-0.5">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span className="sr-only">완료</span>
-                    </span>
-                  ) : (
-                    i + 1
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {current && (
-        <StepEditor
-          key={current.id}
-          videoId={localVideo.id}
-          item={current}
-          index={step}
-          total={required.length}
-          imageFallback={localVideo.thumbnailUrl}
-          fc={fcMap.get(current.id)}
-          saving={saving}
+        <ReportTypePicker
+          video={localVideo}
+          compact
           onVideoUpdate={setLocalVideo}
-          onUpdateTarget={(statement, detail) =>
-            updateTarget(current.id, { statement, detail })
-          }
-          onToggleOptional={(optional) =>
-            updateTarget(current.id, { factCheckOptional: optional })
-          }
-          onDeleteTarget={() => deleteTarget(current.id)}
-          onSave={async (answer, verdict, ansImg, parts) => {
-            const ok = await saveItem(
-              current.id,
-              answer,
-              verdict,
-              ansImg,
-              parts
+        />
+
+        <div className="flex justify-between text-xs text-ink-600">
+          <span>
+            진행 {progress.doneCount} / {progress.total}
+            {progress.optionalCount > 0
+              ? ` · 필수 ${progress.gateDoneCount}/${progress.gateTotal}`
+              : ""}
+          </span>
+          <span>
+            {Math.round(
+              (progress.doneCount / Math.max(progress.total, 1)) * 100
+            )}
+            %
+          </span>
+        </div>
+
+        <BulkFactCheckPastePanel
+          video={localVideo}
+          items={localVideo.items}
+          onApplied={(v) => {
+            setLocalVideo(v);
+            const nextOpen = Math.max(
+              0,
+              v.items
+                .filter((i) => i.needsFactCheck)
+                .findIndex((i) => !isItemChecked(i.id, v.factChecks))
             );
-            if (ok && step < required.length - 1) setStep(step + 1);
+            setStep(nextOpen === -1 ? 0 : nextOpen);
+            router.refresh();
           }}
         />
-      )}
+
+        {!historyFlow && (
+          <NumberedFactCheckImages
+            video={localVideo}
+            onVideoUpdate={setLocalVideo}
+          />
+        )}
+        {historyFlow && progress.gateComplete && (
+          <div className="rounded-xl border border-verify-true/30 bg-verify-true/10 px-3 py-2.5 text-sm text-ink-800">
+            필수 FC가 끝났습니다. 아래{" "}
+            <a href="#report-draft" className="font-medium text-accent underline">
+              초안 보고서
+            </a>
+            를 다듬은 뒤 <strong>확정 보고서 만들기</strong>를 누르세요. 이미지는
+            확정 후에 붙입니다.
+          </div>
+        )}
+
+        <details className="rounded-xl border border-ink-200 bg-white/70 px-3 py-2">
+          <summary className="cursor-pointer select-none text-sm font-medium text-ink-800 py-1.5">
+            추가 · 항목별 수정 · 인앱 AI
+          </summary>
+          <div className="pt-2 pb-1 space-y-3 border-t border-ink-100 mt-1">
+            <p className="text-xs text-ink-500 leading-relaxed">
+              필요할 때만 엽니다. 기본은 위{" "}
+              {historyFlow ? "전체 답변 붙여넣기" : "붙여넣기 + 번호 이미지"}
+              입니다.
+              <br />
+              · <strong>인앱 AI 초안</strong> — OpenAI 키로 미완료 항목 답변·판정
+              자동 작성 (실패 시 붙여넣기 사용)
+              <br />
+              · <strong>번호 버튼·항목별 수정</strong> — 주장 고치기, 나중에 해도
+              됨, 개별 답변 입력, 항목 삭제
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                disabled={drafting || saving || completing}
+                onClick={() => void redraftDrafts()}
+                className="inline-flex items-center justify-center gap-2 min-h-11 rounded-xl border border-accent/40 bg-white px-4 text-sm font-medium text-ink-900 hover:bg-accent-muted/50 disabled:opacity-50"
+              >
+                {drafting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    초안 생성 중…
+                  </>
+                ) : (
+                  "인앱 AI 초안 생성 (미완료만)"
+                )}
+              </button>
+              <p className="text-xs text-ink-500 self-center">
+                OpenAI 키 사용 · 실패 시 붙여넣기 사용
+              </p>
+            </div>
+
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {required.map((item, i) => {
+                const done = isItemChecked(item.id, localVideo.factChecks);
+                const optional = Boolean(item.factCheckOptional);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setStep(i)}
+                    className={`shrink-0 min-w-9 min-h-9 rounded-lg text-sm font-medium border transition-colors ${
+                      i === step
+                        ? "bg-ink-900 text-white border-ink-900"
+                        : done
+                          ? "bg-verify-true/15 text-verify-true border-verify-true/30"
+                          : optional
+                            ? "bg-ink-50 text-ink-400 border-ink-200 border-dashed"
+                            : "bg-white text-ink-500 border-ink-200"
+                    }`}
+                    aria-label={`${i + 1}번 항목${optional ? " (선택)" : ""}`}
+                  >
+                    {done ? (
+                      <CheckCircle2 className="h-4 w-4 mx-auto" />
+                    ) : (
+                      i + 1
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {current && (
+              <StepEditor
+                key={current.id}
+                videoId={localVideo.id}
+                item={current}
+                index={step}
+                total={required.length}
+                imageFallback={localVideo.thumbnailUrl}
+                fc={fcMap.get(current.id)}
+                saving={saving}
+                onVideoUpdate={setLocalVideo}
+                onUpdateTarget={(statement, detail) =>
+                  updateTarget(current.id, { statement, detail })
+                }
+                onToggleOptional={(optional) =>
+                  updateTarget(current.id, { factCheckOptional: optional })
+                }
+                onDeleteTarget={() => deleteTarget(current.id)}
+                onSave={async (answer, verdict, ansImg, parts) => {
+                  const ok = await saveItem(
+                    current.id,
+                    answer,
+                    verdict,
+                    ansImg,
+                    parts
+                  );
+                  if (ok && step < required.length - 1) setStep(step + 1);
+                }}
+              />
+            )}
+          </div>
+        </details>
+      </div>
 
       {savedFlash && (
         <div
@@ -710,28 +759,6 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="flex gap-2 flex-1">
-            <button
-              type="button"
-              disabled={step === 0}
-              onClick={() => setStep((s) => Math.max(0, s - 1))}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              이전
-            </button>
-            <button
-              type="button"
-              disabled={step >= required.length - 1}
-              onClick={() =>
-                setStep((s) => Math.min(required.length - 1, s + 1))
-              }
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1 min-h-12 rounded-xl border border-ink-200 px-4 text-sm font-medium disabled:opacity-40"
-            >
-              다음
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
           <button
             type="button"
             onClick={saveDraftAndLeave}
@@ -766,13 +793,17 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
             {completing
               ? "만드는 중…"
               : progress.gateComplete
-                ? progress.complete
-                  ? "보고서 만들기"
-                  : `보고서 만들기 (선택 ${progress.total - progress.doneCount}건 남음)`
+                ? historyFlow
+                  ? progress.complete
+                    ? "확정 보고서 만들기"
+                    : `확정 보고서 만들기 (선택 ${progress.total - progress.doneCount}건 남음)`
+                  : progress.complete
+                    ? "보고서 만들기"
+                    : `보고서 만들기 (선택 ${progress.total - progress.doneCount}건 남음)`
                 : `필수 ${progress.gateTotal - progress.gateDoneCount}건 남음`}
           </button>
         </div>
-        {localVideo.report ? (
+        {localVideo.report && (!historyFlow || progress.gateComplete) ? (
           <div className="flex justify-center sm:justify-start">
             <a
               href="#report-draft"
@@ -785,19 +816,23 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         <p className="text-xs text-ink-500 text-center sm:text-left">
           {progress.gateComplete
             ? keepBodyOnComplete
-              ? "작성 대기입니다. 보고서 만들기를 누르면 기존 본문을 유지한 채 팩트체크만 반영합니다."
+              ? "작성 대기입니다. 확정하면 기존 본문을 유지한 채 팩트체크만 반영합니다."
               : rewriteOnComplete
-                ? "작성 대기입니다. 보고서 만들기를 누르면 본문을 새로 작성합니다."
+                ? "작성 대기입니다. 확정하면 본문을 새로 작성합니다."
                 : localVideo.reportSkeletonEdited
-                  ? "작성 대기입니다. 초안에서 수정한 본문을 유지한 채 완료합니다."
+                  ? "작성 대기입니다. 초안에서 수정한 본문을 유지한 채 확정합니다."
                   : progress.complete
-                    ? "작성 대기입니다. 보고서 만들기를 누르면 글쓰기 AI로 본문을 다듬습니다."
+                    ? historyFlow
+                      ? "초안을 확인·수정한 뒤 「확정 보고서 만들기」를 누르세요. 이미지는 확정 후입니다."
+                      : "작성 대기입니다. 보고서 만들기를 누르면 글쓰기 AI로 본문을 다듬습니다."
                     : "필수 팩트체크는 끝났습니다. 선택 항목은 나중에 보고서에서 이어서 채울 수 있습니다."
             : progress.canFinalizePartial
               ? "필수 항목을 「나중에 해도 됨」으로 표시하거나, 1건 이상 완료 후 미완료 무시하고 만들 수 있습니다."
-              : localVideo.report
-                ? "팩트체크를 하는 동안 아래 초안 보고서를 미리 볼 수 있습니다."
-                : "「이 항목 저장하고 다음」을 누르면 바로 저장됩니다. 한 번이면 충분합니다."}
+              : historyFlow
+                ? "답변을 붙여넣어 반영하면, 초안 보고서가 열립니다."
+                : localVideo.report
+                  ? "팩트체크를 하는 동안 아래 초안 보고서를 미리 볼 수 있습니다."
+                  : "답변 붙여넣기 적용 후, 필요하면 번호 이미지를 붙이세요."}
         </p>
       </div>
     </section>
@@ -844,7 +879,9 @@ function StepEditor({
       : "";
   const [answer, setAnswer] = useState(existingAnswer);
   const [verdict, setVerdict] = useState<FactCheckVerdict>(
-    fc?.verdict && fc.verdict !== "pending" ? fc.verdict : "unverifiable"
+    normalizeSimpleVerdict(
+      fc?.verdict && fc.verdict !== "pending" ? fc.verdict : "unverifiable"
+    )
   );
   const [copied, setCopied] = useState(false);
   const [itemImages, setItemImages] = useState<string[]>(() =>
@@ -1212,16 +1249,7 @@ function StepEditor({
       <div>
         <p className="text-sm text-ink-700 mb-2">판정 (선택)</p>
         <div className="flex flex-wrap gap-2">
-          {(
-            [
-              ["true", "사실"],
-              ["mostly_true", "대체로 사실"],
-              ["mixed", "일부 사실"],
-              ["mostly_false", "대체로 거짓"],
-              ["false", "거짓"],
-              ["unverifiable", "검증 불가"],
-            ] as Array<[FactCheckVerdict, string]>
-          ).map(([v, label]) => (
+          {FC_VERDICT_OPTIONS.map((v) => (
             <button
               key={v}
               type="button"
@@ -1232,7 +1260,7 @@ function StepEditor({
                   : "border-ink-200 bg-white text-ink-600"
               }`}
             >
-              {label}
+              {verdictLabel(v)}
             </button>
           ))}
         </div>

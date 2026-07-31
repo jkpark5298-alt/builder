@@ -1,6 +1,7 @@
 import type {
   AnswerPart,
   FactCheckResult,
+  ReportSectionBlock,
   SummaryItem,
   TypedReport,
   VideoRecord,
@@ -224,6 +225,7 @@ function isSummaryImportHeading(heading: string): boolean {
     /executive\s*summary/.test(key) ||
     /총괄\s*요약/.test(key) ||
     /핵심\s*요약/.test(key) ||
+    /핵심\s*결론/.test(key) ||
     (/요약/.test(key) && /총괄|executive|핵심/.test(key))
   );
 }
@@ -233,7 +235,9 @@ function isConclusionImportHeading(heading: string): boolean {
   return (
     /제\s*5\s*장/.test(heading) ||
     /결론\s*및\s*종합/.test(key) ||
-    (key === "결론" || /종합\s*제언/.test(key))
+    key === "결론" ||
+    /핵심\s*결론/.test(key) ||
+    /종합\s*제언/.test(key)
   );
 }
 
@@ -272,6 +276,16 @@ function resolveImportSectionIndex(
     return conclusionIdx >= 0 ? conclusionIdx : 0;
   }
 
+  const key = normalizeHeadingKey(heading);
+  if (/항목별\s*팩트|팩트\s*체크\s*결과|검증\s*결과/.test(key)) {
+    const body = report.sections.findIndex(
+      (sec, idx) =>
+        idx !== conclusionIdx && normalizeHeadingKey(sec.heading) !== "결론"
+    );
+    if (body >= 0) return body;
+    if (report.sections.length > 1) return 1;
+  }
+
   const chapter = importChapterNumber(heading);
   if (chapter === 1) {
     return conclusionIdx >= 0 ? conclusionIdx : 0;
@@ -280,10 +294,9 @@ function resolveImportSectionIndex(
   const sectionMap = new Map(
     report.sections.map((sec, idx) => [normalizeHeadingKey(sec.heading), idx])
   );
-  const exact = sectionMap.get(normalizeHeadingKey(heading));
+  const exact = sectionMap.get(key);
   if (exact !== undefined) return exact;
 
-  const key = normalizeHeadingKey(heading);
   const keywordRules: Array<{ test: RegExp; match: RegExp }> = [
     { test: /고지혈|콜레스테롤|스타틴/, match: /고지혈|콜레스테롤/ },
     { test: /뇌혈관|검진|경동맥|mra/, match: /혈관|검진/ },
@@ -331,6 +344,391 @@ export function inspectImportedReportText(raw: string): {
   };
 }
 
+/**
+ * 외부 AI가 준 마크다운·F1/판정·출처 형식 보고서를
+ * 「정리본 붙여넣기」가 읽는 `## 섹션` 형식으로 정리.
+ * 번호 주장(1·2·3 / F1·F2)은 **각각 별도 ## 섹션**으로 나눠
+ * 섹션마다 이미지를 붙일 수 있게 한다.
+ */
+export function normalizeAiReportPaste(raw: string): string {
+  let t = raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim();
+  if (!t) return "";
+
+  const lines = t.split("\n");
+  const out: string[] = [];
+  let pendingClaim: {
+    n: number;
+    statement: string;
+    verdict: string;
+    evidence: string;
+    fromS?: boolean;
+  } | null = null;
+
+  const flushClaim = () => {
+    if (!pendingClaim) return;
+    const { n, statement, verdict, evidence, fromS } = pendingClaim;
+    const label = fromS ? `S${n}` : `${n}`;
+    const titleBase = statement
+      ? statement.length > 42
+        ? `${statement.slice(0, 40).trim()}…`
+        : statement
+      : `섹션 ${n}`;
+    out.push(`## ${label}. ${titleBase}`);
+    out.push("");
+    if (statement) out.push(statement);
+    if (verdict) out.push(`판정: ${verdict}`);
+    if (evidence) out.push(`근거(출처): ${evidence}`);
+    out.push("");
+    pendingClaim = null;
+  };
+
+  const stripMd = (s: string) =>
+    s
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/^[-*•]\s+/, "")
+      .trim();
+
+  for (const rawLine of lines) {
+    let s = rawLine.trim();
+    if (!s) {
+      flushClaim();
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      continue;
+    }
+
+    const original = s;
+    s = stripMd(s);
+    if (!s) continue;
+
+    // 문서 제목 (…보고서) 단독 줄 → 생략
+    if (
+      /보고서/.test(s) &&
+      s.length <= 80 &&
+      !/^\d+\./.test(s) &&
+      !/^F\d/i.test(s) &&
+      !/판정|출처|근거/.test(s)
+    ) {
+      continue;
+    }
+
+    // 이미 ## / ■ / 제 N 장 형이면 유지
+    if (/^##\s+/.test(s) || /^■\s*/.test(s) || /^제\s*\d+\s*장/.test(s)) {
+      flushClaim();
+      // ## 항목별 팩트체크 같은 묶음 제목은 건너뛰고 주장별 ## 만 씀
+      const mdHead = s.match(/^##\s+(.+)$/);
+      if (mdHead && /항목별\s*팩트|팩트\s*체크\s*결과/.test(mdHead[1])) {
+        continue;
+      }
+      out.push(s);
+      continue;
+    }
+
+    // 짧은 번호 섹션 제목: 1. 핵심 결론 (항목별 팩트체크는 건너뜀)
+    const sectionHead = s.match(/^(\d+)\.\s+(.+)$/);
+    if (
+      sectionHead &&
+      sectionHead[2].length <= 48 &&
+      !/^F\d/i.test(s) &&
+      !/판정|출처|근거/.test(s) &&
+      !/[.。]$/.test(sectionHead[2])
+    ) {
+      flushClaim();
+      const title = sectionHead[2].trim();
+      if (/항목별\s*팩트|팩트\s*체크/.test(title)) {
+        continue;
+      }
+      out.push(`## ${title}`);
+      out.push("");
+      continue;
+    }
+
+    // F1. / S1. / 긴 1. 주장 → 각각 ## 섹션 (S = 섹션·이미지 단위 표시)
+    const claimHead = s.match(/^(?:S|F)?(\d+)[.):]\s+(.+)$/i);
+    if (
+      claimHead &&
+      (claimHead[2].length > 20 ||
+        /^(?:S|F)\d/i.test(original) ||
+        /판정/.test(claimHead[2]))
+    ) {
+      flushClaim();
+      let statement = claimHead[2].trim();
+      let verdict = "";
+      const inlineVerd = statement.match(
+        /[（(]?\s*판정\s*[:：]\s*([^）)]+)[）)]?\s*$/i
+      );
+      if (inlineVerd) {
+        verdict = inlineVerd[1]
+          .replace(/\s*\(\s*(True|False|Unverifiable)\s*\)\s*/i, "")
+          .trim();
+        statement = statement.slice(0, inlineVerd.index).trim();
+      }
+      // "(판정: 사실)" 형태가 주장 끝에 붙은 경우
+      const trailVerd = statement.match(/\(\s*판정\s*:\s*([^)]+)\)\s*$/i);
+      if (trailVerd) {
+        verdict = trailVerd[1].trim();
+        statement = statement.slice(0, trailVerd.index).trim();
+      }
+      pendingClaim = {
+        n: parseInt(claimHead[1], 10) || 1,
+        statement,
+        verdict: verdict.replace(/\s*\(\s*(True|False)\s*\)\s*/i, "").trim(),
+        evidence: "",
+        fromS: /^S\d/i.test(original.replace(/^[-*•]\s+/, "")),
+      };
+      continue;
+    }
+
+    // 단독 줄 "S" / "S." → 다음 블록을 새 섹션으로 (이미지 단위 표시)
+    if (/^S\.?$/i.test(s)) {
+      flushClaim();
+      continue;
+    }
+
+    const verd = s.match(/^판정\s*[:：]\s*(.+)$/i);
+    if (verd) {
+      const v = verd[1]
+        .replace(
+          /\s*\(\s*(True|False|Unverifiable|Mostly\s*True)\s*\)\s*/gi,
+          ""
+        )
+        .trim();
+      if (pendingClaim) pendingClaim.verdict = v;
+      else out.push(`판정: ${v}`);
+      continue;
+    }
+
+    const src = s.match(
+      /^(?:출처|근거(?:\s*\(\s*출처\s*\))?)\s*[:：]\s*(.+)$/i
+    );
+    if (src) {
+      if (pendingClaim) {
+        pendingClaim.evidence = pendingClaim.evidence
+          ? `${pendingClaim.evidence} ${src[1].trim()}`
+          : src[1].trim();
+      } else {
+        out.push(`근거(출처): ${src[1].trim()}`);
+      }
+      continue;
+    }
+
+    if (pendingClaim && !pendingClaim.statement) {
+      pendingClaim.statement = s;
+      continue;
+    }
+    if (
+      pendingClaim &&
+      pendingClaim.statement &&
+      !pendingClaim.evidence &&
+      !/판정/.test(s)
+    ) {
+      pendingClaim.evidence = s;
+      continue;
+    }
+
+    flushClaim();
+    out.push(s);
+  }
+
+  flushClaim();
+
+  return out
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** HTML 본문 → 단순 텍스트 */
+function htmlBodyToPlain(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+type ExtractedClaim = {
+  n: number;
+  statement: string;
+  verdict: string;
+  evidence: string;
+  /** S 표시로 나눈 섹션이면 true */
+  fromS?: boolean;
+};
+
+/**
+ * 본문에서 S1. / F1. / 1. 주장 블록 추출.
+ * S1·S2·S3 = 섹션(이미지) 단위 표시.
+ */
+export function extractNumberedClaimsFromPlain(plain: string): ExtractedClaim[] {
+  const text = plain.replace(/\r\n/g, "\n").trim();
+  if (!text) return [];
+
+  // S1. / S2. 우선
+  const sNumbered = extractByMarker(text, /(?=^S\d+[.):]\s+)/im, /^S(\d+)[.):]\s+([\s\S]+)$/i);
+  if (sNumbered.length >= 2) {
+    return sNumbered.map((c) => ({ ...c, fromS: true }));
+  }
+
+  // 단독 줄 S 로 구분
+  const byLoneS = extractByLoneSBreaks(text);
+  if (byLoneS.length >= 2) return byLoneS;
+
+  // F1. / 1.
+  return extractByMarker(
+    text,
+    /(?=^(?:F?\d+)\.\s+)/m,
+    /^F?(\d+)\.\s+([\s\S]+)$/i
+  );
+}
+
+function extractByMarker(
+  text: string,
+  splitRe: RegExp,
+  headRe: RegExp
+): ExtractedClaim[] {
+  const parts = text.split(splitRe).map((p) => p.trim()).filter(Boolean);
+  const claims: ExtractedClaim[] = [];
+
+  for (const part of parts) {
+    const m = part.match(headRe);
+    if (!m) continue;
+    const n = parseInt(m[1], 10);
+    let rest = m[2].trim();
+    let verdict = "";
+    let evidence = "";
+
+    const verdLine = rest.match(/(?:^|\n)\s*판정\s*[:：]\s*(.+)$/im);
+    const evLine = rest.match(
+      /(?:^|\n)\s*(?:-\s*)?(?:근거(?:\s*\(\s*출처\s*\))?|출처)\s*[:：]\s*([\s\S]+)$/im
+    );
+
+    if (evLine) {
+      evidence = evLine[1].replace(/\s+/g, " ").trim();
+      rest = rest.slice(0, evLine.index).trim();
+    }
+    if (verdLine) {
+      verdict = verdLine[1].replace(/\s+/g, " ").trim();
+      rest = rest.slice(0, verdLine.index).trim();
+    }
+
+    const trail = rest.match(/\(\s*판정\s*:\s*([^)]+)\)\s*$/);
+    if (trail) {
+      verdict = trail[1].trim();
+      rest = rest.slice(0, trail.index).trim();
+    }
+
+    if (rest.length < 4 && !verdict) continue;
+    claims.push({
+      n: Number.isFinite(n) ? n : claims.length + 1,
+      statement: rest || `항목 ${n}`,
+      verdict,
+      evidence,
+    });
+  }
+
+  return claims;
+}
+
+/** 본문에 단독 줄 `S` 로 나눈 블록 */
+function extractByLoneSBreaks(plain: string): ExtractedClaim[] {
+  const parts = plain
+    .split(/^\s*S\.?\s*$/im)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return [];
+
+  return parts.map((block, i) => {
+    let rest = block;
+    let verdict = "";
+    let evidence = "";
+    const verdLine = rest.match(/(?:^|\n)\s*판정\s*[:：]\s*(.+)$/im);
+    const evLine = rest.match(
+      /(?:^|\n)\s*(?:-\s*)?(?:근거(?:\s*\(\s*출처\s*\))?|출처)\s*[:：]\s*([\s\S]+)$/im
+    );
+    if (evLine) {
+      evidence = evLine[1].replace(/\s+/g, " ").trim();
+      rest = rest.slice(0, evLine.index).trim();
+    }
+    if (verdLine) {
+      verdict = verdLine[1].replace(/\s+/g, " ").trim();
+      rest = rest.slice(0, verdLine.index).trim();
+    }
+    const trail = rest.match(/\(\s*판정\s*:\s*([^)]+)\)\s*$/);
+    if (trail) {
+      verdict = trail[1].trim();
+      rest = rest.slice(0, trail.index).trim();
+    }
+    // 앞에 남은 1. / F1. 번호 제거
+    rest = rest.replace(/^(?:S|F)?\d+[.):]\s+/i, "").trim();
+    return {
+      n: i + 1,
+      statement: rest || `섹션 ${i + 1}`,
+      verdict,
+      evidence,
+      fromS: true,
+    };
+  });
+}
+
+/**
+ * 본문의 S1·S2 / 단독 S / 1·2·3 표시를 섹션 여러 개로 나눔 (섹션별 이미지용).
+ */
+export function splitNumberedClaimsInReport(report: TypedReport): TypedReport {
+  const nextSections: ReportSectionBlock[] = [];
+  let changed = false;
+
+  for (const sec of report.sections) {
+    const plain = htmlBodyToPlain(sec.body || "");
+    // 제목에 S1 이 있고 본문에 여러 S 가 있는 경우도 처리
+    const headingPlain = `${sec.heading || ""}\n${plain}`;
+    const claims = extractNumberedClaimsFromPlain(plain);
+    const fromHeading = claims.length < 2
+      ? extractNumberedClaimsFromPlain(headingPlain)
+      : claims;
+    const blocks = fromHeading.length >= 2 ? fromHeading : claims;
+
+    if (blocks.length < 2) {
+      nextSections.push(sec);
+      continue;
+    }
+
+    changed = true;
+    blocks.forEach((c, i) => {
+      const label = c.fromS ? `S${c.n}` : `${c.n}`;
+      const title =
+        c.statement.length > 42
+          ? `${label}. ${c.statement.slice(0, 40).trim()}…`
+          : `${label}. ${c.statement}`;
+      const bodyParts = [
+        c.statement,
+        c.verdict ? `판정: ${c.verdict}` : "",
+        c.evidence ? `근거(출처): ${c.evidence}` : "",
+      ].filter(Boolean);
+      nextSections.push({
+        sectionId: i === 0 ? sec.sectionId : undefined,
+        heading: title,
+        body: plainTextToHtml(bodyParts.join("\n\n")),
+        rich: true,
+        imageUrl: i === 0 ? sec.imageUrl : undefined,
+        images: i === 0 ? sec.images : undefined,
+        imageRefs: i === 0 ? sec.imageRefs : undefined,
+      });
+    });
+  }
+
+  if (!changed) return report;
+  return { ...report, sections: nextSections };
+}
+
 export function importReportText(
   report: TypedReport,
   raw: string
@@ -362,6 +760,39 @@ export function importReportText(
 
   if (!changed) return report;
   return { ...report, sections: nextSections };
+}
+
+/**
+ * 붙여넣기 `##` 섹션으로 보고서 본문 전체를 다시 구성.
+ * 기존 섹션 제목·순서·본문은 버리고, 팩트체크·이미지룸은 유지.
+ */
+export function replaceAllReportBodies(
+  report: TypedReport,
+  raw: string
+): TypedReport {
+  const matches = parseImportedSections(raw);
+  if (!matches.length) return report;
+
+  const sections: ReportSectionBlock[] = matches.map((m, i) => {
+    const prev = report.sections[i];
+    return {
+      sectionId: prev?.sectionId,
+      heading: m.heading.trim(),
+      body: plainTextToHtml(m.content.trim()),
+      rich: true,
+      // 같은 순번의 이미지만 이어 받음 (본문 글은 전부 새 것)
+      imageUrl: prev?.imageUrl,
+      images: prev?.images,
+      imageRefs: prev?.imageRefs,
+    };
+  });
+
+  const firstPlain = matches[0]?.content.replace(/\s+/g, " ").trim() ?? "";
+  return {
+    ...report,
+    sections,
+    summaryExcerpt: firstPlain.slice(0, 280) || report.summaryExcerpt,
+  };
 }
 
 function isYoutubeThumb(url?: string | null): boolean {

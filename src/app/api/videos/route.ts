@@ -72,24 +72,13 @@ export async function POST(req: Request) {
 
     if (body.mode === "report") {
       const title = body.title?.trim();
-      const pastedScript = hasUsablePastedScript(body.pastedScript)
-        ? normalizePastedText(body.pastedScript!)
-        : undefined;
-      if (!title) {
+      if (!title || title.length < 2) {
         return NextResponse.json(
-          { error: "제목을 입력해 주세요." },
+          { error: "제목을 2자 이상 입력해 주세요." },
           { status: 400 }
         );
       }
-      if (!pastedScript) {
-        return NextResponse.json(
-          {
-            error:
-              "스크립트(본문)를 80자 이상 붙여넣어 주세요.",
-          },
-          { status: 400 }
-        );
-      }
+      const pastedScript = normalizePastedText(body.pastedScript ?? "");
       const video = await createAndProcessReport({
         title,
         channel: body.channel?.trim(),
@@ -97,11 +86,14 @@ export async function POST(req: Request) {
         creatorNotes: body.creatorNotes?.trim(),
         thumbnailUrl: body.thumbnailUrl?.trim(),
       });
+      const hasScript = hasUsablePastedScript(pastedScript);
       return NextResponse.json({
         video,
         processing: false,
         storage: storageMode(),
-        scriptNotice: "붙여넣은 스크립트를 기준으로 요약합니다.",
+        scriptNotice: hasScript
+          ? "붙여넣은 스크립트를 기준으로 요약합니다."
+          : "스크립트 없이 시작합니다. 내용 요약에 수동으로 입력해 주세요.",
       });
     }
 

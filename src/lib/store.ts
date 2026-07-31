@@ -93,6 +93,9 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
       ? source
       : "none") as VideoRecord["transcriptSource"],
     userTags: normalizeTagList(raw.userTags),
+    factCheckTrash: Array.isArray(raw.factCheckTrash)
+      ? raw.factCheckTrash.slice(0, 30)
+      : [],
   };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClipboardPaste, Loader2, Type, X } from "lucide-react";
 import {
   compressDataUrls,
@@ -38,6 +38,8 @@ export function ImageAttachArea({
   const inputRef = useRef<HTMLInputElement>(null);
   const pasteRef = useRef<HTMLTextAreaElement>(null);
   const [textModal, setTextModal] = useState(false);
+  const [pasteArmed, setPasteArmed] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
 
   const addDataUrls = useCallback(
     async (dataUrls: string[]) => {
@@ -53,6 +55,8 @@ export function ImageAttachArea({
         );
         if (!compressed.length) return;
         await onChange([...images, ...compressed]);
+        setPasteArmed(false);
+        setStatus(null);
       } catch {
         alert("이미지 추가에 실패했습니다.");
       }
@@ -63,20 +67,24 @@ export function ImageAttachArea({
   const addFiles = useCallback(
     async (files: File[]) => {
       const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-      if (!imageFiles.length) return;
+      if (!imageFiles.length) return false;
       const remaining = maxImages - images.length;
       if (remaining <= 0) {
         alert(`이미지는 최대 ${maxImages}장까지 추가할 수 있습니다.`);
-        return;
+        return false;
       }
       try {
         const compressed = await compressImageFiles(
           imageFiles.slice(0, remaining)
         );
-        if (!compressed.length) return;
+        if (!compressed.length) return false;
         await onChange([...images, ...compressed]);
+        setPasteArmed(false);
+        setStatus(null);
+        return true;
       } catch {
         alert("이미지 추가에 실패했습니다.");
+        return false;
       }
     },
     [images, maxImages, onChange]
@@ -102,21 +110,39 @@ export function ImageAttachArea({
     [addFiles, busy, pasteEnabled]
   );
 
+  // 「붙여넣기」 누른 뒤 어디서든 Ctrl+V 하면 이미지 수신
+  useEffect(() => {
+    if (!pasteArmed || !pasteEnabled) return;
+    const onWindowPaste = (e: ClipboardEvent) => {
+      if (busy) return;
+      const files = e.clipboardData
+        ? extractImageFilesFromDataTransfer(e.clipboardData)
+        : [];
+      if (!files.length) return;
+      e.preventDefault();
+      void addFiles(files);
+    };
+    window.addEventListener("paste", onWindowPaste, true);
+    return () => window.removeEventListener("paste", onWindowPaste, true);
+  }, [pasteArmed, pasteEnabled, busy, addFiles]);
+
   async function pasteFromClipboard() {
     if (!pasteEnabled || busy) return;
+
+    // await 전에 포커스·대기 모드 (권한 다이얼로그에 포커스 뺏기지 않게)
+    setPasteArmed(true);
+    setStatus("이미지를 복사한 뒤 지금 Ctrl+V 하세요.");
+    pasteRef.current?.focus();
+
     try {
       const files = await readImagesFromClipboard();
       if (files.length) {
-        await addFiles(files);
-        return;
+        const ok = await addFiles(files);
+        if (ok) return;
       }
     } catch {
-      /* iOS 구형·권한 거부 등 → textarea 폴백 */
+      /* 권한 거부·미지원 → Ctrl+V 대기 */
     }
-    pasteRef.current?.focus();
-    alert(
-      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 아래 입력칸을 길게 눌러 붙여넣기하세요."
-    );
   }
 
   return (
@@ -160,10 +186,14 @@ export function ImageAttachArea({
             type="button"
             disabled={busy}
             onClick={() => void pasteFromClipboard()}
-            className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            className={`inline-flex items-center gap-1.5 min-h-10 rounded-lg border px-3 text-xs font-medium disabled:opacity-50 ${
+              pasteArmed
+                ? "border-accent bg-accent-muted text-ink-900"
+                : "border-ink-200 bg-white hover:border-accent"
+            }`}
           >
             <ClipboardPaste className="h-3.5 w-3.5" />
-            붙여넣기
+            {pasteArmed ? "Ctrl+V 대기 중…" : "붙여넣기"}
           </button>
         )}
         {textImageEnabled && (
@@ -177,19 +207,36 @@ export function ImageAttachArea({
             텍스트→이미지
           </button>
         )}
-        {(pasteEnabled || textImageEnabled) && (
+        {(pasteEnabled || textImageEnabled) && hint.trim() ? (
           <span className="text-xs text-ink-500">{hint}</span>
-        )}
+        ) : null}
       </div>
 
       {pasteEnabled && (
         <textarea
           ref={pasteRef}
-          readOnly
           aria-label="이미지 붙여넣기"
-          className="sr-only"
+          rows={2}
+          readOnly={false}
+          placeholder="또는 여기 클릭 후 Ctrl+V / 이미지 드래그"
+          className={`w-full rounded-lg border border-dashed px-2 py-1.5 text-xs outline-none focus:border-accent ${
+            pasteArmed
+              ? "border-accent bg-accent-muted/40 text-ink-800"
+              : "border-ink-200 bg-white text-ink-500"
+          }`}
           onPaste={onPaste}
+          onFocus={() => {
+            if (pasteEnabled && !busy) {
+              setPasteArmed(true);
+              setStatus("지금 Ctrl+V로 이미지를 붙여넣으세요.");
+            }
+          }}
         />
+      )}
+      {status && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+          {status}
+        </p>
       )}
 
       {images.length > 0 && (

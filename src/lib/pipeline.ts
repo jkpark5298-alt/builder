@@ -10,6 +10,7 @@ import { detectReportType } from "./report";
 import type { ReportType } from "./types";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "./text-format";
 import { chatJson, chatText, hasLlm } from "./llm";
+import { normalizeSimpleVerdict } from "./labels";
 
 export { hasLlm } from "./llm";
 
@@ -34,17 +35,17 @@ export type FactCheckPipelineResult = {
 const VERDICTS: FactCheckVerdict[] = [
   "true",
   "mostly_true",
-  "mixed",
-  "mostly_false",
   "false",
   "unverifiable",
 ];
 
 function parseVerdict(raw: unknown): FactCheckVerdict {
   const v = String(raw ?? "").trim();
-  return VERDICTS.includes(v as FactCheckVerdict)
-    ? (v as FactCheckVerdict)
-    : "unverifiable";
+  if (VERDICTS.includes(v as FactCheckVerdict)) {
+    return v as FactCheckVerdict;
+  }
+  // LLM/구데이터가 mixed·mostly_false를내도 4종으로
+  return normalizeSimpleVerdict(v as FactCheckVerdict);
 }
 
 function ensureFactCheckGuide(item: SummaryItem, prompt: string) {
@@ -1449,9 +1450,9 @@ async function draftFactCheckAnswersLlm(
 
   const system = `당신은 한국어 팩트체커입니다. 각 주장에 대해 검증 초안을 작성하세요.
 규칙:
-- 확실하지 않으면 unverifiable 또는 mixed를 쓰고, 모르는 사실을 단정하지 마세요.
+- 확실하지 않으면 unverifiable을 쓰고, 모르는 사실을 단정하지 마세요.
 - 설명은 1. 2. 번호 목록(한국어), 근거·반론·한계를 포함. ** 표시 금지.
-- verdict는 다음 중 하나: true, mostly_true, mixed, mostly_false, false, unverifiable
+- verdict는 다음 중 하나: true, mostly_true, false, unverifiable
 JSON: { "results": [{ "itemId": string, "verdict": string, "explanation": string, "sources": string[] }] }`;
 
   try {
@@ -1724,8 +1725,8 @@ export function verdictLabel(v: FactCheckResult["verdict"]) {
   const map: Record<FactCheckResult["verdict"], string> = {
     true: "사실",
     mostly_true: "대체로 사실",
-    mixed: "일부 사실",
-    mostly_false: "대체로 거짓",
+    mixed: "대체로 사실",
+    mostly_false: "거짓",
     false: "거짓",
     unverifiable: "검증 불가",
     pending: "대기",

@@ -52,8 +52,8 @@ export function ReopenAsDraftButton({ videoId }: { videoId: string }) {
         팩트체크 다시하기
       </button>
       <p className="text-xs text-ink-500">
-        팩트체크·답변만 다시 정리합니다. 보고서 문장만 고치려면{" "}
-        <strong>본문 수정</strong>을 쓰세요.
+        이미 팩트체크는 완료된 상태입니다. 답변·판정만 다시 손볼 때 쓰세요.
+        문장만 고치려면 <strong>본문 수정</strong>이면 됩니다.
       </p>
 
       {open && (

@@ -212,6 +212,16 @@ export interface VideoRecord {
   items: SummaryItem[];
   factChecks: FactCheckResult[];
   /**
+   * 삭제한 팩트체크 항목 휴지통 (원복용). 최근 삭제분 최대 30건.
+   */
+  factCheckTrash?: Array<{
+    item: SummaryItem;
+    factCheck?: FactCheckResult | null;
+    deletedAt: string;
+  }>;
+  /** 간편 붙여넣기란에 남긴 마지막 외부 AI 답변 (재진입·대조용) */
+  factCheckPasteDraft?: string;
+  /**
    * 팩트체크 초안 출처.
    * llm_draft: 인앱 OpenAI 초안 / prompt·heuristic: 질문만 두고 외부 AI 붙여넣기
    */

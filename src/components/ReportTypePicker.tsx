@@ -56,10 +56,22 @@ export function ReportTypePicker({
       >
         보고서 유형
       </h3>
-      <p className="text-xs sm:text-sm text-ink-500">
-        영상 분류 태그입니다. 보고서는 유형과 무관하게 «결론 → 요약 →
-        팩트체크+이미지» 일반 형식으로 작성됩니다.
-      </p>
+      <details>
+        <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800">
+          설명 보기
+        </summary>
+        <p className="text-xs sm:text-sm text-ink-500 mt-1.5 leading-relaxed">
+          영상 분류 태그입니다. 보고서는 유형과 무관하게 «결론 → 요약 →
+          팩트체크+이미지» 일반 형식으로 작성됩니다.
+        </p>
+        {!compact && (
+          <ul className="text-xs text-ink-500 space-y-1 pt-2">
+            {REPORT_TYPE_STRUCTURE[type].map((h) => (
+              <li key={h}>· {h}</li>
+            ))}
+          </ul>
+        )}
+      </details>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {(["H", "S", "C", "P"] as ReportType[]).map((t) => (
           <button
@@ -77,13 +89,6 @@ export function ReportTypePicker({
           </button>
         ))}
       </div>
-      {!compact && (
-        <ul className="text-xs text-ink-500 space-y-1 pt-1">
-          {REPORT_TYPE_STRUCTURE[type].map((h) => (
-            <li key={h}>· {h}</li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

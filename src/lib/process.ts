@@ -100,18 +100,15 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   return record;
 }
 
-/** Report 생성 — URL·자막 자동 수집 없이 스크립트·메타만으로 시작 */
+/** Report 생성 — URL·자막 자동 수집 없이 제목(·스크립트)·메타로 시작 */
 export async function createReportJob(opts: {
   title: string;
   channel?: string;
-  pastedScript: string;
+  pastedScript?: string;
   creatorNotes?: string;
   thumbnailUrl?: string;
 }): Promise<VideoRecord> {
-  const script = normalizePastedText(opts.pastedScript);
-  if (!hasUsablePastedScript(script)) {
-    throw new Error("스크립트(본문)를 80자 이상 붙여넣어 주세요.");
-  }
+  const script = normalizePastedText(opts.pastedScript ?? "");
   const title = opts.title.trim();
   if (title.length < 2) {
     throw new Error("제목을 2자 이상 입력해 주세요.");
@@ -124,6 +121,7 @@ export async function createReportJob(opts: {
   const chapters = description
     ? parseChaptersFromDescription(description)
     : [];
+  const hasScript = hasUsablePastedScript(script);
 
   const record: VideoRecord = {
     id,
@@ -136,8 +134,10 @@ export async function createReportJob(opts: {
     description,
     chapters,
     transcript: script,
-    transcriptSource: "pasted",
-    scriptNotice: `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`,
+    transcriptSource: script ? "pasted" : "none",
+    scriptNotice: hasScript
+      ? `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
+      : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
     summarySource: "none",
     summaryBullets: [],
@@ -147,12 +147,50 @@ export async function createReportJob(opts: {
     report: null,
     infographic: null,
     status: "queued",
-    tags: ["report", channel, "has-script"],
+    tags: [
+      "report",
+      channel,
+      ...(hasScript ? ["has-script"] : ["no-script"]),
+      ...(!hasScript ? ["manual-overview"] : []),
+    ],
     createdAt: now,
     updatedAt: now,
   };
   await upsertVideo(record);
   return record;
+}
+
+/** 스크립트 없이(또는 부족) Report → 수동 요약 화면으로 */
+async function openReportManualOverview(
+  record: VideoRecord,
+  script: string
+): Promise<VideoRecord> {
+  const next: VideoRecord = {
+    ...record,
+    transcript: script,
+    transcriptSource: script ? "pasted" : "none",
+    scriptNotice: script
+      ? `스크립트가 짧아(${script.length.toLocaleString()}자) 자동 요약 대신 수동 요약으로 시작합니다. 「1. 내용 요약」에 입력한 뒤 완료를 누르세요.`
+      : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
+    overview: "",
+    summarySource: "none",
+    summaryBullets: [],
+    items: [],
+    factChecks: [],
+    status: "awaiting_factcheck",
+    errorMessage: undefined,
+    tags: Array.from(
+      new Set([
+        ...record.tags.filter((t) => t !== "has-script" && t !== "no-script"),
+        "report",
+        "no-script",
+        "manual-overview",
+      ])
+    ),
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertVideo(next);
+  return next;
 }
 
 /** Report 입력 임시 저장 — 제목·스크립트 일부만 있어도 서버에 보관 */
@@ -177,8 +215,8 @@ export async function saveReportInputDraft(opts: {
     : [];
   const now = new Date().toISOString();
   const scriptNotice = script
-    ? `입력 중 · 스크립트 ${script.length.toLocaleString()}자 (80자 이상이면 요약·검증을 시작할 수 있습니다)`
-  : "입력 중 · 제목만 저장됨. 스크립트를 이어서 붙여넣어 주세요.";
+    ? `입력 중 · 스크립트 ${script.length.toLocaleString()}자 (없어도 요약·검증을 시작할 수 있습니다)`
+    : "입력 중 · 제목만 저장됨. 스크립트 없이도 요약·검증을 시작할 수 있습니다.";
 
   if (opts.id) {
     const existing = await getVideo(opts.id);
@@ -261,7 +299,7 @@ export async function startReportFromDraft(
 
   const script = normalizePastedText(existing.transcript ?? "");
   if (!hasUsablePastedScript(script)) {
-    throw new Error("스크립트(본문)를 80자 이상 붙여넣어 주세요.");
+    return openReportManualOverview(existing, script);
   }
 
   const now = new Date().toISOString();
@@ -335,11 +373,9 @@ export async function runVideoPipeline(
       meta = buildReportMeta(record, creatorNotes);
       const body =
         script ||
-        (hasUsablePastedScript(record.transcript)
-          ? normalizePastedText(record.transcript)
-          : "");
+        (record.transcript ? normalizePastedText(record.transcript) : "");
       if (!hasUsablePastedScript(body)) {
-        throw new Error("Report 생성에는 스크립트(본문)가 필요합니다.");
+        return openReportManualOverview(record, body);
       }
       text = body;
       source = "pasted";
@@ -513,12 +549,16 @@ export async function createAndProcessVideo(
 export async function createAndProcessReport(opts: {
   title: string;
   channel?: string;
-  pastedScript: string;
+  pastedScript?: string;
   creatorNotes?: string;
   thumbnailUrl?: string;
 }): Promise<VideoRecord> {
   const job = await createReportJob(opts);
-  return runVideoPipeline(job.id, opts.creatorNotes, opts.pastedScript);
+  const script = normalizePastedText(opts.pastedScript ?? "");
+  if (!hasUsablePastedScript(script)) {
+    return openReportManualOverview(job, script);
+  }
+  return runVideoPipeline(job.id, opts.creatorNotes, script);
 }
 
 /** 3) 요약+팩트체크 → 글쓰기 AI 보고서(실패 시 조립) + 인포그래픽 */

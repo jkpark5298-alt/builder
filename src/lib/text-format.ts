@@ -74,13 +74,13 @@ export function verdictBadge(v: string): { label: string; mark: string; ok: bool
   const map: Record<string, string> = {
     true: "사실",
     mostly_true: "대체로 사실",
-    mixed: "일부 사실",
-    mostly_false: "대체로 거짓",
+    mixed: "대체로 사실",
+    mostly_false: "거짓",
     false: "거짓",
     unverifiable: "검증 불가",
     pending: "대기",
   };
-  const ok = v === "true" || v === "mostly_true" || v === "mixed";
+  const ok = v === "true" || v === "mostly_true";
   const fail = isFailedVerdict(v);
   return {
     label: map[v] ?? v,

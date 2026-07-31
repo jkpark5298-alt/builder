@@ -60,12 +60,17 @@ export function TopicCreateForm() {
         <div className="rounded-xl bg-ink-900 text-white p-2.5 shrink-0">
           <FolderPlus className="h-5 w-5" />
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <h2 className="font-display text-xl text-ink-900">주제 만들기</h2>
-          <p className="text-sm text-ink-500 mt-1">
-            예: <strong>역사 팩트 체크</strong> — 항목을 수시로 추가·태그 저장한 뒤,
-            <strong> #태그</strong>로 골라 통합 보고서를 만듭니다.
-          </p>
+          <details className="mt-1.5">
+            <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800">
+              사용 방법 보기
+            </summary>
+            <p className="text-sm text-ink-500 mt-1.5 leading-relaxed">
+              예: <strong>역사 팩트 체크</strong> — 항목을 수시로 추가·태그
+              저장한 뒤, <strong>#태그</strong>로 골라 통합 보고서를 만듭니다.
+            </p>
+          </details>
         </div>
       </div>
 
@@ -95,16 +100,18 @@ export function TopicCreateForm() {
         </span>
       </label>
 
-      <label className="block space-y-1.5">
-        <span className="text-xs font-medium text-ink-600">설명 (선택)</span>
+      <details className="rounded-xl border border-ink-200 bg-white px-3 py-2">
+        <summary className="cursor-pointer select-none text-xs font-medium text-ink-600 py-1">
+          설명 추가 (선택)
+        </summary>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={2}
           placeholder="이 주제에 모을 내용 안내"
-          className="w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm"
+          className="mt-2 w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm"
         />
-      </label>
+      </details>
 
       <label className="block space-y-1.5">
         <span className="text-xs font-medium text-ink-600">기본 유형</span>

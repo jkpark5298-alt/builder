@@ -14,6 +14,7 @@ import {
   Loader2,
   Plus,
   Save,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -74,6 +75,9 @@ import {
   formatSectionText,
   importReportText,
   inspectImportedReportText,
+  normalizeAiReportPaste,
+  replaceAllReportBodies,
+  splitNumberedClaimsInReport,
 } from "@/lib/report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
@@ -106,6 +110,11 @@ export function EditableReportPanel({
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  /** 툴바 「붙여넣기」 후 Ctrl+V 대기 섹션 인덱스 */
+  const [imagePasteArmedIdx, setImagePasteArmedIdx] = useState<number | null>(
+    null
+  );
+  const [imagePasteHint, setImagePasteHint] = useState<string | null>(null);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
   const [sectionSavedFlash, setSectionSavedFlash] = useState<
@@ -506,16 +515,32 @@ export function EditableReportPanel({
     alert(`${label} 텍스트를 복사했습니다.`);
   }
 
-  function applyImportedReportText() {
+  function applyImportedReportText(mode: "merge" | "replaceAll" = "merge") {
     const current = draftRef.current;
     if (!current) return;
-    const next = importReportText(current, importText);
+    let text = importText;
+    let cleanedTried = false;
+    const run = (src: string) =>
+      mode === "replaceAll"
+        ? replaceAllReportBodies(current, src)
+        : importReportText(current, src);
+
+    let next = run(text);
     if (next === current) {
-      const info = inspectImportedReportText(importText);
+      const cleaned = normalizeAiReportPaste(text);
+      if (cleaned && cleaned !== text.trim()) {
+        cleanedTried = true;
+        text = cleaned;
+        setImportText(cleaned);
+        next = run(cleaned);
+      }
+    }
+    if (next === current) {
+      const info = inspectImportedReportText(text);
       const parsed =
         info.count > 0
           ? `읽은 섹션 ${info.count}개: ${info.headings.join(" / ")}`
-          : "읽은 섹션이 없습니다. `##`, `■`, `제 N 장.` 형식을 확인해 주세요.";
+          : "읽은 섹션이 없습니다. 「AI 답변 정리」 후 `##` 형식을 확인해 주세요.";
       alert(`붙여넣은 텍스트를 반영하지 못했습니다.\n\n${parsed}`);
       return;
     }
@@ -523,7 +548,53 @@ export function EditableReportPanel({
     setImportOpen(false);
     setImportText("");
     setMode("body");
-    alert("정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다.");
+    alert(
+      mode === "replaceAll"
+        ? "본문 전체를 새 섹션으로 교체했습니다. 팩트체크·이미지룸은 유지됩니다."
+        : cleanedTried
+          ? "AI 정리 후 정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다."
+          : "정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다."
+    );
+  }
+
+  function normalizeImportPaste() {
+    const cleaned = normalizeAiReportPaste(importText);
+    if (!cleaned.trim()) {
+      alert("정리할 내용이 없습니다.");
+      return;
+    }
+    setImportText(cleaned);
+    const info = inspectImportedReportText(cleaned);
+    alert(
+      info.count > 0
+        ? `AI 답변 정리 완료 · 섹션 ${info.count}개 인식: ${info.headings.join(" / ")}`
+        : "정리했습니다. `## 섹션 제목`이 보이는지 확인한 뒤 반영하세요."
+    );
+  }
+
+  function splitClaimsToSections() {
+    const current = draftRef.current;
+    if (!current) return;
+    const next = splitNumberedClaimsInReport(current);
+    if (next === current) {
+      alert(
+        "나눌 표시가 없습니다.\n\n본문에 아래처럼 표시하세요:\n· S1. 주장…\n· S2. 주장…\n또는 블록 사이에 단독 줄로 S\n\n표시 후 다시 이 버튼을 누르세요."
+      );
+      return;
+    }
+    if (
+      !confirm(
+        `S/번호 표시를 섹션 ${next.sections.length}개로 나눌까요?\n나눈 뒤 각 섹션을 클릭해 이미지를 붙일 수 있습니다.`
+      )
+    ) {
+      return;
+    }
+    setDraft(next);
+    setMode("body");
+    setActiveSectionIdx(0);
+    alert(
+      "섹션으로 나눴습니다. 각 섹션을 선택해 툴바 이미지/붙여넣기로 넣으세요."
+    );
   }
 
   const resolveActiveTipTap = useCallback(() => {
@@ -665,7 +736,16 @@ export function EditableReportPanel({
       setSaving(true);
     }
     try {
-      const toSave = stabilizeReportFcAnchors(draft);
+      let working = draft;
+      // 편집 끝내기 시 S1/S2 또는 단독 S 표시가 있으면 섹션으로 자동 분할
+      if (opts?.exit) {
+        const split = splitNumberedClaimsInReport(working);
+        if (split !== working) {
+          working = split;
+          setDraft(split);
+        }
+      }
+      const toSave = stabilizeReportFcAnchors(working);
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1031,46 +1111,89 @@ export function EditableReportPanel({
   }
 
   async function pasteImagesToSection(idx: number) {
-    if (!editing) return;
+    if (!editing) {
+      setMode("body");
+    }
     setActiveSectionIdx(idx);
-    focusActiveBodyEditor();
+    // alert 금지 — 포커스를 뺏어 Ctrl+V가 막힘
+    setImagePasteArmedIdx(idx);
+    setImagePasteHint(
+      "이미지를 복사한 뒤 지금 Ctrl+V 하세요. 또는 「이미지」버튼으로 파일을 선택하세요."
+    );
+
+    const el = document.getElementById(
+      `sec-paste-${idx}`
+    ) as HTMLTextAreaElement | null;
+    if (el) {
+      el.value = "";
+      el.focus();
+      el.select();
+    }
+
     try {
       const files = await readImagesFromClipboard();
       if (files.length) {
         await addImagesToSection(idx, files);
+        setImagePasteArmedIdx(null);
+        setImagePasteHint(null);
         return;
       }
     } catch {
-      /* fall through */
+      /* Ctrl+V 대기 */
     }
-    const el = document.getElementById(`sec-paste-${idx}`) as HTMLTextAreaElement | null;
-    el?.focus();
-    alert(
-      "먼저 사진 앱에서 이미지를 복사한 뒤, 다시 「붙여넣기」를 누르거나 본문 상자를 탭한 뒤 붙여넣기하세요."
-    );
   }
 
   function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
-    if (!editing) return;
+    if (!editing && mode !== "body") return;
+    const files = extractImageFilesFromDataTransfer(e.clipboardData);
+    // 이미지면 입력란/본문 어디서든 즉시 섹션에 추가 (textarea early-return 버그 수정)
+    if (files.length) {
+      e.preventDefault();
+      e.stopPropagation();
+      void addImagesToSection(idx, files).then(() => {
+        setImagePasteArmedIdx(null);
+        setImagePasteHint(null);
+      });
+      return;
+    }
+
     const target = e.target as HTMLElement | null;
+    const isPasteCapture =
+      target instanceof HTMLTextAreaElement &&
+      target.id === `sec-paste-${idx}`;
+    if (isPasteCapture) return;
+
     const isPlainTextField =
       target instanceof HTMLInputElement ||
       target instanceof HTMLTextAreaElement ||
       target?.closest("input, textarea");
     if (isPlainTextField) return;
-    // 섹션 래퍼가 아니라 본문 상자에만 붙여넣기
+
     const inBody = findReportBodyEditor(target as Node);
     if (!inBody) {
       e.preventDefault();
       setActiveSectionIdx(idx);
       focusActiveBodyEditor();
-      return;
     }
-    const files = extractImageFilesFromDataTransfer(e.clipboardData);
-    if (!files.length) return;
-    e.preventDefault();
-    void addImagesToSection(idx, files);
   }
+
+  useEffect(() => {
+    if (imagePasteArmedIdx === null) return;
+    const idx = imagePasteArmedIdx;
+    const onWin = (e: ClipboardEvent) => {
+      if (!e.clipboardData) return;
+      const files = extractImageFilesFromDataTransfer(e.clipboardData);
+      if (!files.length) return;
+      e.preventDefault();
+      void addImagesToSection(idx, files).then(() => {
+        setImagePasteArmedIdx(null);
+        setImagePasteHint(null);
+      });
+    };
+    window.addEventListener("paste", onWin, true);
+    return () => window.removeEventListener("paste", onWin, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm only when idx changes
+  }, [imagePasteArmedIdx]);
 
   async function insertHandwriting(idx: number, dataUrl: string) {
     try {
@@ -1416,7 +1539,6 @@ export function EditableReportPanel({
                   input?.click();
                 }}
                 onPasteImage={() => {
-                  focusActiveBodyEditor();
                   void pasteImagesToSection(activeSectionIdx);
                 }}
                 onTextImage={() => {
@@ -1432,34 +1554,65 @@ export function EditableReportPanel({
                   saveEditorSelection();
                 }}
               />
+              {imagePasteHint && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  {imagePasteHint}
+                </p>
+              )}
             </div>
 
             {importOpen && (
               <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
                 <p className="text-xs text-ink-700">
-                  AI 정리본을 붙여넣으면 본문만 교체합니다.{" "}
-                  <strong>`## 섹션 제목`</strong>,{" "}
-                  <strong>`■ 총괄 요약`</strong>,{" "}
-                  <strong>`제 N 장.`</strong> 형식을 인식합니다. 총괄 요약·1장·5장은
-                  결론, 2~4장은 본문 섹션에 맞춰 반영됩니다. 이미지·팩트체크는
-                  유지됩니다.
+                  이미지 단위로 나누려면 본문에{" "}
+                  <strong>S1. / S2. / S3.</strong> 또는 블록 사이 단독 줄{" "}
+                  <strong>S</strong> 를 넣으세요. 「AI 답변 정리」·「전체 본문
+                  교체」또는 아래 <strong>S 표시 → 섹션 나누기</strong>로
+                  적용합니다.
                 </p>
                 <textarea
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
                   rows={10}
                   placeholder={
-                    "## Executive Summary (총괄 요약)\n정리된 본문...\n\n## 제 2 장. 고지혈증과 콜레스테롤의 오해\n정리된 본문..."
+                    "## 핵심 결론\n정리된 본문...\n\n## 항목별 팩트체크\n1. 주장 (판정: 사실)\n- 근거(출처): …"
                   }
                   className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent"
                 />
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={applyImportedReportText}
-                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white"
+                    disabled={!importText.trim()}
+                    onClick={normalizeImportPaste}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-3 py-1.5 text-sm font-medium text-ink-900 hover:bg-accent-muted disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    AI 답변 정리
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importText.trim()}
+                    onClick={() => applyImportedReportText("merge")}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 disabled:opacity-50"
                   >
                     보고서에 반영
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importText.trim()}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          "기존 섹션 제목·본문을 지우고, 붙여넣은 ## 섹션으로 전체를 바꿀까요?\n(팩트체크·이미지룸은 유지)"
+                        )
+                      ) {
+                        return;
+                      }
+                      applyImportedReportText("replaceAll");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    전체 본문 교체
                   </button>
                   <button
                     type="button"
@@ -1655,17 +1808,39 @@ export function EditableReportPanel({
                           Array.from(e.target.files ?? [])
                         );
                         e.target.value = "";
+                        setImagePasteArmedIdx(null);
+                        setImagePasteHint(null);
                       }}
                     />
 
                     <textarea
                       id={`sec-paste-${idx}`}
-                      readOnly
                       aria-label="이미지 붙여넣기"
-                      className="sr-only"
+                      rows={2}
+                      placeholder="여기 클릭 후 Ctrl+V로 이미지 붙여넣기"
+                      className={`w-full rounded-lg border border-dashed px-2 py-1.5 text-xs outline-none focus:border-accent ${
+                        imagePasteArmedIdx === idx
+                          ? "border-accent bg-accent-muted/40 text-ink-800"
+                          : "border-ink-200 bg-white text-ink-500"
+                      }`}
+                      onFocus={() => {
+                        setActiveSectionIdx(idx);
+                        setImagePasteArmedIdx(idx);
+                        setImagePasteHint(
+                          "지금 Ctrl+V로 이미지를 붙여넣으세요."
+                        );
+                      }}
                       onPaste={(e) => handleSectionPaste(idx, e)}
+                      onInput={(e) => {
+                        (e.target as HTMLTextAreaElement).value = "";
+                      }}
                     />
 
+                    {imagePasteArmedIdx === idx && (
+                      <p className="text-[11px] text-amber-800">
+                        Ctrl+V 대기 중 · 또는 위 툴바 「이미지」로 파일 선택
+                      </p>
+                    )}
                     <RichBody
                       id={sec.sectionId ? `sec-body-${sec.sectionId}` : undefined}
                       editorKey={sectionEditKey(sec, idx)}
@@ -1769,6 +1944,13 @@ export function EditableReportPanel({
             </div>
 
             <div className="border-t border-ink-100 p-3 space-y-2">
+              <button
+                type="button"
+                onClick={splitClaimsToSections}
+                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-accent/40 bg-white text-sm font-medium text-ink-900 hover:bg-accent-muted/40"
+              >
+                S 표시 → 섹션·이미지용으로 나누기
+              </button>
               <button
                 type="button"
                 onClick={addFlowSection}

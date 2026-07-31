@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { v4 as uuid } from "uuid";
 import { factCheckProgress } from "@/lib/factcheck";
 import { buildInfographic } from "@/lib/infographic";
 import {
@@ -10,7 +11,7 @@ import {
   saveReportInputDraft,
   startReportFromDraft,
 } from "@/lib/process";
-import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
+import { normalizePastedText } from "@/lib/paste";
 import { reportBodyPlain } from "@/lib/report";
 import { buildReportDocument } from "@/lib/report-write";
 import {
@@ -26,6 +27,7 @@ import {
 } from "@/lib/store";
 import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
+import { normalizeSimpleVerdict } from "@/lib/labels";
 import type {
   AnswerPart,
   FactCheckResult,
@@ -190,6 +192,18 @@ async function patchVideo(req: Request, ctx: Ctx) {
       answerImageUrls?: string[];
       answerParts?: AnswerPart[];
     };
+    /** 외부 AI 답변 일괄 적용 */
+    bulkFactChecks?: Array<{
+      itemId: string;
+      verdict?: FactCheckResult["verdict"];
+      explanation: string;
+      sources?: string[];
+      /** 붙여넣기 주장으로 항목 문장 갱신/생성 */
+      statement?: string;
+      isNew?: boolean;
+    }>;
+    /** 간편 붙여넣기란 원문 보관 */
+    factCheckPasteDraft?: string;
     reportType?: ReportType;
     /** Report 입력 임시 저장 필드 수정 */
     updateReportInput?: {
@@ -229,8 +243,18 @@ async function patchVideo(req: Request, ctx: Ctx) {
       detail?: string | null;
       factCheckOptional?: boolean;
     };
+    /** 팩트체크 대상 항목 추가 */
+    addFactCheckItem?: {
+      statement?: string;
+    };
     /** 팩트체크 대상 삭제 */
     deleteItem?: { itemId: string };
+    /** 휴지통 전체 원복 */
+    restoreFactCheckTrash?: boolean;
+    /** 휴지통 한 건 원복 */
+    restoreFactCheckItem?: { itemId: string };
+    /** 요약 본문으로 FC 항목 다시 만들기 (삭제 복구 대안) */
+    rebuildFactChecksFromOverview?: boolean;
     /** AI 답변 참고 이미지 */
     answerImage?: { itemId: string; imageUrl?: string | null; imageUrls?: string[] };
     answerImages?: {
@@ -337,12 +361,6 @@ async function patchVideo(req: Request, ctx: Ctx) {
     const script = normalizePastedText(
       body.updateReportInput?.pastedScript ?? video.transcript ?? ""
     );
-    if (!hasUsablePastedScript(script)) {
-      return NextResponse.json(
-        { error: "스크립트(본문)를 80자 이상 붙여넣어 주세요." },
-        { status: 400 }
-      );
-    }
     if (body.updateReportInput) {
       await saveReportInputDraft({
         id: video.id,
@@ -496,27 +514,210 @@ async function patchVideo(req: Request, ctx: Ctx) {
     next = afterIncrementalFactEdit(next);
   }
 
+  if (body.addFactCheckItem) {
+    const statement =
+      body.addFactCheckItem.statement?.trim() || "새 팩트체크 대상";
+    const newId = uuid();
+    const item: SummaryItem = {
+      id: newId,
+      type: "claim",
+      statement,
+      detail: "직접 추가한 검증 항목",
+      evidence: [
+        {
+          text: buildFactCheckPrompt(statement),
+          sourceHint: "factcheck-guide",
+        },
+      ],
+      needsFactCheck: true,
+      imageUrl: next.thumbnailUrl,
+    };
+    const fc: FactCheckResult = {
+      itemId: newId,
+      mode: "manual",
+      verdict: "pending",
+      explanation: buildFactCheckPrompt(statement),
+      sources: [],
+      checkedAt: new Date().toISOString(),
+    };
+    next = {
+      ...next,
+      items: [...next.items, item],
+      factChecks: [...next.factChecks, fc],
+      status:
+        next.status === "ready" ? next.status : "awaiting_factcheck",
+      updatedAt: new Date().toISOString(),
+    };
+    next = afterIncrementalFactEdit(next);
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "add_factcheck_item" });
+  }
+
   if (body.deleteItem?.itemId) {
     const itemId = body.deleteItem.itemId;
-    if (!next.items.some((i) => i.id === itemId)) {
+    const removed = next.items.find((i) => i.id === itemId);
+    if (!removed) {
       return NextResponse.json(
         { error: "삭제할 팩트체크 대상이 없습니다." },
         { status: 404 }
       );
     }
+    const removedFc =
+      next.factChecks.find((f) => f.itemId === itemId) ?? null;
+    const trashEntry = {
+      item: removed,
+      factCheck: removedFc,
+      deletedAt: new Date().toISOString(),
+    };
+    const prevTrash = next.factCheckTrash ?? [];
     next = {
       ...next,
       items: next.items.filter((i) => i.id !== itemId),
       factChecks: next.factChecks.filter((f) => f.itemId !== itemId),
+      factCheckTrash: [trashEntry, ...prevTrash]
+        .filter(
+          (t, i, arr) => arr.findIndex((x) => x.item.id === t.item.id) === i
+        )
+        .slice(0, 30),
+      factCheckNotice: `「${removed.statement.slice(0, 40)}${removed.statement.length > 40 ? "…" : ""}」을 삭제했습니다. 아래에서 원복할 수 있습니다.`,
       updatedAt: new Date().toISOString(),
     };
     next = afterIncrementalFactEdit(next);
   }
 
+  if (body.restoreFactCheckItem?.itemId || body.restoreFactCheckTrash) {
+    const trash = next.factCheckTrash ?? [];
+    if (!trash.length) {
+      return NextResponse.json(
+        {
+          error:
+            "원복할 삭제 항목이 없습니다. 요약에서 팩트체크 항목을 다시 만들어 보세요.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const toRestore = body.restoreFactCheckTrash
+      ? trash
+      : trash.filter((t) => t.item.id === body.restoreFactCheckItem!.itemId);
+
+    if (!toRestore.length) {
+      return NextResponse.json(
+        { error: "해당 삭제 항목을 찾을 수 없습니다." },
+        { status: 404 }
+      );
+    }
+
+    const existingIds = new Set(next.items.map((i) => i.id));
+    const restoredItems = toRestore
+      .filter((t) => !existingIds.has(t.item.id))
+      .map((t) => ({ ...t.item, needsFactCheck: true }));
+    const restoredFcs = toRestore
+      .filter((t) => !existingIds.has(t.item.id) && t.factCheck)
+      .map((t) => t.factCheck!);
+
+    const restoredIds = new Set(restoredItems.map((i) => i.id));
+    next = {
+      ...next,
+      items: [...next.items, ...restoredItems],
+      factChecks: [
+        ...next.factChecks.filter((f) => !restoredIds.has(f.itemId)),
+        ...restoredFcs,
+      ],
+      factCheckTrash: trash.filter((t) => !restoredIds.has(t.item.id)),
+      factCheckNotice: `${restoredItems.length}건 팩트체크 항목을 원복했습니다.`,
+      status:
+        next.status === "ready" ? next.status : "awaiting_factcheck",
+      updatedAt: new Date().toISOString(),
+    };
+    next = afterIncrementalFactEdit(next);
+    if (next.status === "awaiting_factcheck") {
+      next.report = buildSkeletonReport(next);
+      next.reportSource = "assembled";
+      next.reportWriteNotice = SKELETON_REPORT_NOTICE;
+    }
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, {
+      mode: "restore_factcheck_trash",
+      restored: restoredItems.length,
+    });
+  }
+
+  if (body.rebuildFactChecksFromOverview) {
+    const overview = next.overview?.trim() ?? "";
+    if (overview.length < 40) {
+      return NextResponse.json(
+        {
+          error:
+            "요약이 없어 항목을 다시 만들 수 없습니다. 위에서 요약을 입력·완료한 뒤 다시 시도해 주세요.",
+        },
+        { status: 400 }
+      );
+    }
+    const rebuilt = rebuildFactChecksFromOverview(
+      overview,
+      next.videoId,
+      next.summaryBullets
+    );
+    if (!rebuilt.items.length) {
+      return NextResponse.json(
+        {
+          error:
+            "요약에서 검증할 주장을 찾지 못했습니다. 요약을 더 구체적으로 작성해 주세요.",
+        },
+        { status: 400 }
+      );
+    }
+    const stamp = new Date().toISOString();
+    const oldFcItems = next.items.filter((i) => i.needsFactCheck);
+    const oldFcIds = new Set(oldFcItems.map((i) => i.id));
+    const moving = oldFcItems.map((item) => ({
+      item,
+      factCheck: next.factChecks.find((f) => f.itemId === item.id) ?? null,
+      deletedAt: stamp,
+    }));
+    next = {
+      ...next,
+      items: [
+        ...next.items.filter((i) => !i.needsFactCheck),
+        ...rebuilt.items,
+      ],
+      factChecks: [
+        ...next.factChecks.filter((f) => !oldFcIds.has(f.itemId)),
+        ...rebuilt.factChecks,
+      ],
+      factCheckTrash: [...moving, ...(next.factCheckTrash ?? [])]
+        .filter(
+          (t, i, arr) => arr.findIndex((x) => x.item.id === t.item.id) === i
+        )
+        .slice(0, 30),
+      summaryBullets: rebuilt.summaryBullets,
+      factCheckSource: "heuristic",
+      factCheckNotice: `요약에서 팩트체크 ${rebuilt.items.filter((i) => i.needsFactCheck).length}건을 다시 만들었습니다. 이전 항목은 휴지통에서 원복할 수 있습니다.`,
+      status: "awaiting_factcheck",
+      updatedAt: stamp,
+    };
+    next.report = buildSkeletonReport(next);
+    next.reportSource = "assembled";
+    next.reportWriteNotice = SKELETON_REPORT_NOTICE;
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "rebuild_fc_from_overview" });
+  }
+
   if (body.answerImages?.itemId || body.answerImage?.itemId) {
     const itemId = (body.answerImages ?? body.answerImage)!.itemId;
+    const answerImagesBody = body.answerImages as
+      | {
+          itemId: string;
+          imageUrls?: string[];
+          /** 예전 클라이언트 키 — imageUrls 와 동일 */
+          answerImageUrls?: string[];
+          answerParts?: AnswerPart[];
+        }
+      | undefined;
     const urls =
-      body.answerImages?.imageUrls ??
+      answerImagesBody?.imageUrls ??
+      answerImagesBody?.answerImageUrls ??
       (body.answerImage?.imageUrls ??
         (body.answerImage?.imageUrl === null
           ? []
@@ -656,7 +857,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       factChecks: rebuilt.factChecks,
       factCheckSource: "heuristic",
       factCheckNotice:
-        "요약을 수정해 팩트체크 항목을 다시 만들었습니다. 「인앱 AI 초안 생성」으로 답을 채우거나, AI 질문을 복사해 외부 AI에 물어본 뒤 붙여넣으세요.",
+        "요약을 수정해 팩트체크 항목을 다시 만들었습니다. 위 「전체 질문 복사 → 답변 한 번에 붙여넣기」로 채우거나, 「인앱 AI 초안 생성」을 쓰세요.",
       factCheckRevisionNotice: {
         at: new Date().toISOString(),
         itemCount: rebuilt.items.filter((i) => i.needsFactCheck).length,
@@ -718,6 +919,137 @@ async function patchVideo(req: Request, ctx: Ctx) {
     });
   }
 
+  if (body.bulkFactChecks) {
+    const rows = body.bulkFactChecks;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return NextResponse.json(
+        { error: "적용할 팩트체크가 없습니다." },
+        { status: 400 }
+      );
+    }
+
+    let items = [...next.items];
+    let fcList = [...next.factChecks];
+    let applied = 0;
+
+    for (const row of rows) {
+      let itemId = row.itemId?.trim() ?? "";
+      const explanationRaw = row.explanation?.trim() ?? "";
+      const statement = row.statement?.trim() ?? "";
+      if (explanationRaw.length < 8) continue;
+
+      let item = items.find((i) => i.id === itemId);
+      if (!item && (row.isNew || itemId.startsWith("new-")) && statement) {
+        const newId = uuid();
+        item = {
+          id: newId,
+          type: "claim",
+          statement,
+          detail: "붙여넣기에서 추가된 검증 항목",
+          evidence: [
+            {
+              text: buildFactCheckPrompt(statement),
+              sourceHint: "factcheck-guide",
+            },
+          ],
+          needsFactCheck: true,
+          imageUrl: next.thumbnailUrl,
+        };
+        items = [...items, item];
+        itemId = newId;
+      } else if (item && statement && statement !== item.statement) {
+        items = items.map((i) =>
+          i.id === item.id
+            ? {
+                ...i,
+                statement,
+                evidence: [
+                  ...i.evidence.filter((e) => e.sourceHint !== "factcheck-guide"),
+                  {
+                    text: buildFactCheckPrompt(statement, i.detail),
+                    sourceHint: "factcheck-guide",
+                  },
+                ],
+              }
+            : i
+        );
+        item = items.find((i) => i.id === itemId);
+      }
+
+      if (!item) continue;
+
+      const prev = fcList.find((f) => f.itemId === itemId);
+      const prevImages = normalizeImageUrls(
+        prev?.answerImageUrl,
+        prev?.answerImageUrls
+      );
+      // 간편 답변은 항목=번호 1칸. 내부 1.2.3 재분할하지 않음
+      const explanation = normalizeAiAnswer(explanationRaw);
+      const parts: AnswerPart[] = [
+        {
+          number: 1,
+          text: explanation,
+          imageUrls: prevImages,
+        },
+      ];
+      const split = splitPrimaryImage(prevImages);
+      const verdict = normalizeSimpleVerdict(
+        row.verdict && row.verdict !== "pending" ? row.verdict : "unverifiable"
+      );
+
+      const fc: FactCheckResult = {
+        itemId,
+        mode: "manual",
+        verdict,
+        explanation,
+        sources: row.sources ?? [],
+        checkedAt: new Date().toISOString(),
+        answerImageUrl: split.imageUrl,
+        answerImageUrls: split.imageUrls,
+        answerParts: parts,
+      };
+      fcList = [...fcList.filter((f) => f.itemId !== itemId), fc];
+      applied += 1;
+    }
+
+    if (applied === 0) {
+      return NextResponse.json(
+        { error: "유효한 팩트체크 항목이 없습니다. (답변 8자 이상)" },
+        { status: 400 }
+      );
+    }
+
+    next = {
+      ...next,
+      items,
+      factChecks: fcList,
+      factCheckPasteDraft:
+        typeof body.factCheckPasteDraft === "string"
+          ? body.factCheckPasteDraft
+          : next.factCheckPasteDraft,
+      factCheckNotice: `간편 답변 ${applied}건을 반영했습니다. 아래 항목 번호에 이미지를 붙일 수 있습니다.`,
+      updatedAt: new Date().toISOString(),
+    };
+    next = afterIncrementalFactEdit(next);
+    if (next.status === "awaiting_factcheck") {
+      next.report = buildSkeletonReport(next);
+      next.reportSource = "assembled";
+      next.reportWriteNotice = SKELETON_REPORT_NOTICE;
+    }
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "bulk_factchecks", applied });
+  }
+
+  if (typeof body.factCheckPasteDraft === "string" && !body.bulkFactChecks) {
+    next = {
+      ...next,
+      factCheckPasteDraft: body.factCheckPasteDraft,
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "paste_draft" });
+  }
+
   if (body.factCheck) {
     if (!body.factCheck.explanation?.trim()) {
       return NextResponse.json(
@@ -759,7 +1091,9 @@ async function patchVideo(req: Request, ctx: Ctx) {
     const fc: FactCheckResult = {
       itemId: body.factCheck.itemId,
       mode: "manual",
-      verdict: body.factCheck.verdict ?? "unverifiable",
+      verdict: body.factCheck.verdict
+        ? normalizeSimpleVerdict(body.factCheck.verdict)
+        : "unverifiable",
       explanation,
       sources: body.factCheck.sources ?? [],
       checkedAt: new Date().toISOString(),

@@ -98,7 +98,6 @@ export function ReportCreateForm({
   const scriptLen = normalizePastedText(pastedScript).length;
   const hasScript = hasUsablePastedScript(pastedScript);
   const step1Done = title.trim().length >= 2;
-  const step2Done = hasScript;
   const isContinuing = Boolean(activeDraftId);
   const previewThumb = thumbnailUrl.trim() || reportThumbnailUrl();
 
@@ -196,14 +195,6 @@ export function ReportCreateForm({
       setError("제목을 2자 이상 입력해 주세요.");
       return;
     }
-    if (!hasScript) {
-      setError(
-        scriptLen > 0
-          ? `스크립트가 ${scriptLen}자입니다. 80자 이상 붙여넣어 주세요.`
-          : "스크립트(본문)를 붙여넣어 주세요."
-      );
-      return;
-    }
 
     setLoading(true);
     setStatus("요약·검증 중… (1~3분 걸릴 수 있어요)");
@@ -290,24 +281,29 @@ export function ReportCreateForm({
         </div>
         <div>
           <h2 className="font-display text-2xl sm:text-3xl text-ink-900 mb-2">
-            {isContinuing ? "입력 이어서 작성" : "스크립트로 보고서 만들기"}
+            {isContinuing ? "입력 이어서 작성" : "제목으로 보고서 만들기"}
           </h2>
-          <p className="text-sm text-ink-600 leading-relaxed">
-            {isContinuing ? (
-              <>
-                제목·스크립트를 채운 뒤 <strong>임시 저장</strong>하거나, 스크립트가
-                80자 이상이면 <strong>요약 · 검증 시작</strong>으로 다음 단계로
-                넘어갑니다.
-              </>
-            ) : (
-              <>
-                유튜브 URL·자막 자동 가져오기 없이,{" "}
-                <strong>제목·스크립트만</strong> 넣으면 요약·팩트체크·보고서·인포그래픽
-                흐름은 유튜브와 동일합니다. 일부만 입력해도{" "}
-                <strong>임시 저장</strong>할 수 있습니다.
-              </>
-            )}
-          </p>
+          <details>
+            <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800">
+              사용 방법 보기
+            </summary>
+            <p className="text-sm text-ink-600 leading-relaxed mt-1.5">
+              {isContinuing ? (
+                <>
+                  제목·스크립트를 채운 뒤 <strong>임시 저장</strong>하거나,{" "}
+                  <strong>요약 · 검증 시작</strong>으로 다음 단계로 넘어갑니다.
+                  스크립트는 선택입니다.
+                </>
+              ) : (
+                <>
+                  유튜브 URL 없이 <strong>제목만</strong> 있어도 다음 단계로 갈
+                  수 있습니다. 스크립트가 있으면 자동 요약에 쓰고, 없으면{" "}
+                  <strong>수동 요약</strong>부터 진행합니다. 일부만 입력해도{" "}
+                  <strong>임시 저장</strong>할 수 있습니다.
+                </>
+              )}
+            </p>
+          </details>
         </div>
 
         <label className="block text-sm text-ink-600">
@@ -392,15 +388,12 @@ export function ReportCreateForm({
 
         <label className="block text-sm text-ink-600">
           ② 스크립트(본문)
-          {!isContinuing && <span className="text-verify-false"> *</span>}
-          {isContinuing && (
-            <span className="text-ink-400"> (80자 이상이면 다음 단계 가능)</span>
-          )}
+          <span className="text-ink-400"> (선택)</span>
           <textarea
             value={pastedScript}
             onChange={(e) => setPastedScript(e.target.value)}
             rows={8}
-            placeholder="강연 원고, 기사 본문, 회의록 등 — 일부만 넣어도 임시 저장 가능"
+            placeholder="있으면 붙여넣기 — 없어도 요약·검증 시작 가능"
             className={`mt-1.5 w-full rounded-xl border bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 ${
               hasScript
                 ? "border-emerald-300 ring-1 ring-emerald-200"
@@ -415,8 +408,14 @@ export function ReportCreateForm({
             }`}
           >
             {hasScript
-              ? `✓ 스크립트 준비됨 · ${scriptLen.toLocaleString()}자`
-              : `${scriptLen}자 · 80자 이상이면 요약·검증 시작 가능`}
+              ? `✓ 스크립트 준비됨 · ${scriptLen.toLocaleString()}자 (자동 요약)`
+              : `${scriptLen}자 · 짧으면 수동 요약으로 시작합니다`}
+          </p>
+        )}
+        {scriptLen === 0 && (
+          <p className="text-xs text-ink-500">
+            스크립트 없이 시작하면 「내용 요약」을 직접 입력한 뒤 팩트체크로
+            이어집니다.
           </p>
         )}
 
@@ -472,8 +471,6 @@ export function ReportCreateForm({
               </>
             ) : !step1Done ? (
               "먼저 ① 제목 입력"
-            ) : !step2Done ? (
-              "80자 이상 스크립트 필요"
             ) : (
               <>
                 <ClipboardPaste className="h-4 w-4" />
@@ -482,16 +479,12 @@ export function ReportCreateForm({
             )}
           </button>
         </div>
-        {step1Done && step2Done && !loading && (
+        {step1Done && !loading && (
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
-            유튜브와 동일한 팩트체크·보고서·PDF·인포그래픽
-          </p>
-        )}
-        {step1Done && !step2Done && !loading && (
-          <p className="text-center text-xs text-ink-500">
-            스크립트가 부족해도 <strong>임시 저장</strong>으로 나중에 이어쓸 수
-            있습니다.
+            {hasScript
+              ? "스크립트로 자동 요약 후 팩트체크·보고서"
+              : "제목만으로 시작 · 요약은 직접 입력"}
           </p>
         )}
       </div>

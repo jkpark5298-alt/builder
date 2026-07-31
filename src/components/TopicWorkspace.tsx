@@ -145,9 +145,16 @@ export function TopicWorkspace({
             {topic.status === "ready" ? "통합 보고서 있음" : "작성 중"}
           </span>
         </div>
-        {topic.description && (
-          <p className="text-sm text-ink-600">{topic.description}</p>
-        )}
+        {topic.description ? (
+          <details className="rounded-xl border border-ink-200 bg-white px-3 py-2">
+            <summary className="cursor-pointer select-none text-xs font-medium text-ink-600">
+              설명 보기
+            </summary>
+            <p className="text-sm text-ink-600 mt-2 whitespace-pre-wrap">
+              {topic.description}
+            </p>
+          </details>
+        ) : null}
         <button
           type="button"
           onClick={removeTopic}
