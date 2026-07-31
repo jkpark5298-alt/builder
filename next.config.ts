@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
     ],
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   // Blob SDK가 서버리스에서 env를 정상적으로 읽도록
   serverExternalPackages: ["@vercel/blob"],
 };

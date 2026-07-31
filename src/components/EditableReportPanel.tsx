@@ -1144,7 +1144,7 @@ export function EditableReportPanel({
   }
 
   function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
-    if (!editing && mode !== "body") return;
+    if (!editing) return;
     const files = extractImageFilesFromDataTransfer(e.clipboardData);
     // 이미지면 입력란/본문 어디서든 즉시 섹션에 추가 (textarea early-return 버그 수정)
     if (files.length) {

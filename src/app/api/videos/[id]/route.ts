@@ -958,8 +958,9 @@ async function patchVideo(req: Request, ctx: Ctx) {
         items = [...items, item];
         itemId = newId;
       } else if (item && statement && statement !== item.statement) {
+        const targetId = item.id;
         items = items.map((i) =>
-          i.id === item.id
+          i.id === targetId
             ? {
                 ...i,
                 statement,
