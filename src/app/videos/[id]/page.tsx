@@ -12,12 +12,14 @@ import { PrintOnLoad } from "@/components/PrintOnLoad";
 import { ReprocessButton } from "@/components/ReprocessButton";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { ReportActions } from "@/components/ReportActions";
+import { UserTagsEditor } from "@/components/UserTagsEditor";
 import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
 import { isYoutubeInput } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
+import { formatTagList } from "@/lib/tags";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -137,6 +139,11 @@ export default async function VideoDetailPage({
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {REPORT_TYPE_LABELS[video.reportType]}
             </span>
+            {!!video.userTags?.length && (
+              <span className="rounded-md bg-accent-muted/60 border border-accent/30 px-2 py-1 text-accent">
+                {formatTagList(video.userTags)}
+              </span>
+            )}
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               스크립트:{" "}
               {video.transcriptSource === "pasted"
@@ -169,6 +176,10 @@ export default async function VideoDetailPage({
                   : stageLabel}
             </span>
           </div>
+          <UserTagsEditor
+            videoId={video.id}
+            initialTags={video.userTags}
+          />
           {video.scriptNotice && (
             <div className="rounded-xl border border-accent/30 bg-accent-muted/50 px-3 py-2.5 text-sm text-ink-800">
               {video.scriptNotice}

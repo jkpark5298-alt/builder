@@ -7,6 +7,7 @@ import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
 import { isReportInput } from "@/lib/input-mode";
 import { isReportInputDraft, libraryCardLabel, libraryStage } from "@/lib/library";
+import { formatTagList } from "@/lib/tags";
 import { ReportActions } from "@/components/ReportActions";
 import { formatDistanceToNow } from "date-fns";
 import { ko } from "date-fns/locale";
@@ -95,6 +96,11 @@ export function VideoListCard({
             {video.title}
           </h3>
           <p className="text-sm text-ink-500 mt-1">{video.channel}</p>
+          {!!video.userTags?.length && (
+            <p className="text-xs text-accent mt-1 line-clamp-1">
+              {formatTagList(video.userTags)}
+            </p>
+          )}
           <p className="text-xs text-ink-400 mt-2">
             {inputDraft
               ? `스크립트 ${(video.transcript?.length ?? 0).toLocaleString()}자 · 입력 중`

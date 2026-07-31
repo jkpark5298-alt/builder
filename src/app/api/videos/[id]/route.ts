@@ -44,6 +44,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { reportThumbnailUrl } from "@/lib/input-mode";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
+import { normalizeTagList } from "@/lib/tags";
 
 function jsonVideo(next: VideoRecord, extra: Record<string, unknown> = {}) {
   return NextResponse.json({
@@ -255,6 +256,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     dismissFactCheckRevisionNotice?: boolean;
     /** 상세·목록 상단 표지(썸네일) 이미지 */
     updateThumbnail?: { thumbnailUrl: string | null };
+    /** 사용자 분류 태그 (#조선 → 조선). 시스템 tags 와 별개 */
+    updateUserTags?: { tags: string[] };
   };
 
   try {
@@ -267,6 +270,11 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   let next = { ...video };
+
+  if (body.updateUserTags) {
+    next.userTags = normalizeTagList(body.updateUserTags.tags);
+    next.updatedAt = new Date().toISOString();
+  }
 
   if (body.updateThumbnail) {
     const raw = body.updateThumbnail.thumbnailUrl;

@@ -61,6 +61,14 @@ export async function ensureSchema(): Promise<void> {
           expires_at TIMESTAMPTZ NOT NULL
         )
       `;
+      await db`
+        CREATE TABLE IF NOT EXISTS topics (
+          id TEXT PRIMARY KEY,
+          data JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `;
     })().catch((e) => {
       schemaReady = null;
       throw e;

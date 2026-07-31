@@ -39,6 +39,12 @@ export default function RootLayout({
               </a>
               <nav className="flex items-center gap-1.5 sm:gap-2 text-sm text-ink-600 shrink-0">
                 <a
+                  href="/#topics"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  주제
+                </a>
+                <a
                   href="/#drafts"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >

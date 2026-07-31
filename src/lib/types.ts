@@ -251,10 +251,36 @@ export interface VideoRecord {
   infographicBridgeImages?: string[] | null;
   status: PipelineStatus;
   errorMessage?: string;
+  /** 시스템 태그 (파이프라인·검색용). 사용자 #분류는 userTags */
   tags: string[];
+  /**
+   * 사용자 분류 태그 (#조선 → "조선").
+   * 주제 통합 보고서 선별·자동 분류에 사용. 시스템 tags 와 분리.
+   */
+  userTags?: string[];
   createdAt: string;
   updatedAt: string;
   sharedAt?: string;
+}
+
+/** 주제 폴더 — 여러 Entry(VideoRecord)를 모아 태그 기준 통합 보고서 작성 */
+export type TopicStatus = "draft" | "ready";
+
+export interface Topic {
+  id: string;
+  title: string;
+  description?: string;
+  /** 주제 기본 태그 (예: 역사팩트체크). # 없이 저장 */
+  themeTag: string;
+  /** 연결된 Entry(VideoRecord) id */
+  entryIds: string[];
+  /** 마지막 통합 시 선택한 분류 태그 */
+  selectedComposeTags: string[];
+  reportType: ReportType;
+  report: TypedReport | null;
+  status: TopicStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CreateVideoInput {

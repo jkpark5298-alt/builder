@@ -1,12 +1,13 @@
 import { HomeInputTabs } from "@/components/HomeInputTabs";
 import { SearchBar } from "@/components/SearchBar";
+import { TopicListCard } from "@/components/TopicListCard";
 import { VideoListCard } from "@/components/VideoListCard";
 import {
   isComplete,
   isFactCheckDraft,
   isReportPending,
 } from "@/lib/library";
-import { searchVideos } from "@/lib/store";
+import { searchTopics, searchVideos } from "@/lib/store";
 import type { VideoRecord } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,7 @@ export default async function HomePage({
 }) {
   const { q } = await searchParams;
   const videos = await searchVideos(q ?? "");
+  const topics = await searchTopics(q ?? "");
   const drafts = videos.filter(isFactCheckDraft);
   const reportPending = videos.filter(isReportPending);
   const reportComplete = videos.filter(isComplete);
@@ -60,19 +62,25 @@ export default async function HomePage({
           <div>
             <h2 className="font-display text-2xl text-ink-900">라이브러리</h2>
             <p className="text-sm text-ink-500 mt-1">
-              임시 저장 → <strong>작성 대기</strong> →{" "}
-              <strong>보고서 만들기</strong> → <strong>보고서</strong>
+              주제(#태그) → 임시 저장 → <strong>작성 대기</strong> →{" "}
+              <strong>보고서</strong>
             </p>
           </div>
           <div className="sm:w-96">
             <SearchBar
               initialQuery={q ?? ""}
-              placeholder="보고서·제목·채널·주장·팩트체크 검색…"
+              placeholder="주제·태그·제목·팩트체크 검색…"
             />
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2 text-sm">
+          <a
+            href="#topics"
+            className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
+          >
+            주제 {topics.length}
+          </a>
           <a
             href="#drafts"
             className="rounded-lg border border-accent/40 bg-accent-muted/50 px-3 py-1.5 text-accent hover:bg-accent-muted"
@@ -92,6 +100,30 @@ export default async function HomePage({
             보고서 {reportComplete.length}
           </a>
         </div>
+      </section>
+
+      <section id="topics" className="space-y-4 scroll-mt-24">
+        <div>
+          <h3 className="font-display text-xl text-ink-900">주제</h3>
+          <p className="text-sm text-ink-500 mt-1">
+            항목을 모아 두고 <strong>#태그</strong>로 골라 통합 보고서를
+            만듭니다.
+          </p>
+        </div>
+        {topics.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-ink-300 bg-white/50 px-6 py-12 text-center">
+            <p className="font-display text-lg text-ink-700">주제가 없습니다</p>
+            <p className="text-ink-500 mt-2 text-sm">
+              위 「주제」 탭에서 「역사 팩트 체크」처럼 만들어 보세요.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {topics.map((t) => (
+              <TopicListCard key={t.id} topic={t} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section id="drafts" className="space-y-4 scroll-mt-24">

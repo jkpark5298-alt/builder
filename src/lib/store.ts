@@ -1,9 +1,10 @@
 import fs from "fs";
 import path from "path";
-import type { ReportType, VideoRecord } from "./types";
+import type { ReportType, Topic, VideoRecord } from "./types";
 import { databaseUrl, ensureSchema, hasDatabase, sql } from "./db";
 import { compactVideoForStorage } from "./media-budget";
 import { externalizeVideoMedia } from "./media-store";
+import { normalizeTagList, themeTagFromTitle } from "./tags";
 
 export class StorageConflictError extends Error {
   constructor() {
@@ -36,6 +37,7 @@ function resolveDataDir(): string {
 
 const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, "videos.json");
+const TOPICS_FILE = path.join(DATA_DIR, "topics.json");
 
 function ensureLocalDb() {
   try {
@@ -90,6 +92,25 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
     transcriptSource: (allowed.has(source)
       ? source
       : "none") as VideoRecord["transcriptSource"],
+    userTags: normalizeTagList(raw.userTags),
+  };
+}
+
+function normalizeTopic(raw: Topic): Topic {
+  const rt = (raw.reportType ?? "C") as ReportType;
+  const title = (raw.title ?? "").trim() || "제목 없음";
+  return {
+    ...raw,
+    title,
+    description: raw.description?.trim() || undefined,
+    themeTag:
+      normalizeTagList([raw.themeTag ?? ""])[0] ||
+      themeTagFromTitle(title),
+    entryIds: Array.from(new Set(raw.entryIds ?? [])),
+    selectedComposeTags: normalizeTagList(raw.selectedComposeTags),
+    reportType: ["H", "S", "C", "P"].includes(rt) ? rt : "C",
+    report: raw.report ?? null,
+    status: raw.status === "ready" ? "ready" : "draft",
   };
 }
 
@@ -327,6 +348,7 @@ export async function searchVideos(query: string): Promise<VideoRecord[]> {
         ...(v.summaryBullets ?? []),
         ...(v.chapters ?? []).map((c) => c.title),
         ...v.tags,
+        ...(v.userTags ?? []),
         ...v.items.map((i) => i.statement),
         ...v.factChecks.map((f) => f.explanation),
         v.report?.summaryExcerpt ?? "",
@@ -338,6 +360,202 @@ export async function searchVideos(query: string): Promise<VideoRecord[]> {
     });
   } catch (e) {
     console.error("[store] searchVideos failed", e);
+    return [];
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Topics                                                             */
+/* ------------------------------------------------------------------ */
+
+function ensureLocalTopicsDb() {
+  ensureLocalDb();
+  if (!fs.existsSync(TOPICS_FILE)) {
+    fs.writeFileSync(TOPICS_FILE, JSON.stringify({ topics: [] }, null, 2), "utf-8");
+  }
+}
+
+function readLocalTopics(): Topic[] {
+  ensureLocalTopicsDb();
+  const raw = fs.readFileSync(TOPICS_FILE, "utf-8");
+  const parsed = JSON.parse(raw) as { topics: Topic[] };
+  return (parsed.topics ?? []).map(normalizeTopic);
+}
+
+function readLocalTopicsSafe(): Topic[] {
+  try {
+    return readLocalTopics();
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalTopics(topics: Topic[]) {
+  ensureLocalTopicsDb();
+  fs.writeFileSync(TOPICS_FILE, JSON.stringify({ topics }, null, 2), "utf-8");
+}
+
+function upsertLocalTopic(topic: Topic, expectedUpdatedAt?: string): Topic {
+  const topics = readLocalTopicsSafe();
+  const idx = topics.findIndex((t) => t.id === topic.id);
+  if (
+    expectedUpdatedAt &&
+    (idx < 0 || topics[idx].updatedAt !== expectedUpdatedAt)
+  ) {
+    throw new StorageConflictError();
+  }
+  if (idx >= 0) topics[idx] = topic;
+  else topics.unshift(topic);
+  writeLocalTopics(topics);
+  return topic;
+}
+
+function deleteLocalTopic(id: string): boolean {
+  const topics = readLocalTopicsSafe();
+  const next = topics.filter((t) => t.id !== id);
+  if (next.length === topics.length) return false;
+  writeLocalTopics(next);
+  return true;
+}
+
+function rowToTopic(row: { data: unknown }): Topic {
+  const data =
+    typeof row.data === "string"
+      ? (JSON.parse(row.data) as Topic)
+      : (row.data as Topic);
+  return normalizeTopic(data);
+}
+
+async function dbReadAllTopics(): Promise<Topic[]> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    SELECT data FROM topics
+    ORDER BY (data->>'createdAt') DESC NULLS LAST
+  `) as Array<{ data: unknown }>;
+  return rows.map(rowToTopic);
+}
+
+async function dbGetTopic(id: string): Promise<Topic | undefined> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    SELECT data FROM topics WHERE id = ${id} LIMIT 1
+  `) as Array<{ data: unknown }>;
+  if (!rows.length) return undefined;
+  return rowToTopic(rows[0]);
+}
+
+async function dbUpsertTopic(
+  topic: Topic,
+  expectedUpdatedAt?: string
+): Promise<void> {
+  await ensureSchema();
+  const db = sql();
+  const json = JSON.stringify(topic);
+  if (expectedUpdatedAt) {
+    const rows = (await db`
+      UPDATE topics
+      SET data = ${json}::jsonb, updated_at = now()
+      WHERE id = ${topic.id}
+        AND data->>'updatedAt' = ${expectedUpdatedAt}
+      RETURNING id
+    `) as Array<{ id: string }>;
+    if (!rows.length) throw new StorageConflictError();
+    return;
+  }
+  await db`
+    INSERT INTO topics (id, data, created_at, updated_at)
+    VALUES (${topic.id}, ${json}::jsonb, now(), now())
+    ON CONFLICT (id)
+    DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+  `;
+}
+
+async function dbDeleteTopic(id: string): Promise<boolean> {
+  await ensureSchema();
+  const db = sql();
+  const rows = (await db`
+    DELETE FROM topics WHERE id = ${id} RETURNING id
+  `) as Array<{ id: string }>;
+  return rows.length > 0;
+}
+
+export async function readAllTopics(): Promise<Topic[]> {
+  try {
+    if (hasDatabase()) return await dbReadAllTopics();
+    return readLocalTopics();
+  } catch (e) {
+    console.error("[store] readAllTopics failed", e);
+    if (!onVercel()) return readLocalTopicsSafe();
+    return [];
+  }
+}
+
+export async function getTopic(id: string): Promise<Topic | undefined> {
+  if (hasDatabase()) {
+    try {
+      return await dbGetTopic(id);
+    } catch (e) {
+      console.error("[store] getTopic failed", e);
+      if (!onVercel()) return readLocalTopicsSafe().find((t) => t.id === id);
+      throw e;
+    }
+  }
+  return readLocalTopics().find((t) => t.id === id);
+}
+
+export async function upsertTopic(
+  topic: Topic,
+  expectedUpdatedAt?: string
+): Promise<Topic> {
+  const prepared = normalizeTopic(topic);
+  if (hasDatabase()) {
+    try {
+      await dbUpsertTopic(prepared, expectedUpdatedAt);
+      return prepared;
+    } catch (e) {
+      if (e instanceof StorageConflictError) throw e;
+      if (onVercel()) throw e;
+      console.warn("[store] topic db write failed → local file fallback", e);
+      return upsertLocalTopic(prepared, expectedUpdatedAt);
+    }
+  }
+  return upsertLocalTopic(prepared, expectedUpdatedAt);
+}
+
+export async function deleteTopic(id: string): Promise<boolean> {
+  if (hasDatabase()) {
+    try {
+      return await dbDeleteTopic(id);
+    } catch (e) {
+      if (onVercel()) throw e;
+      console.warn("[store] topic db delete failed → local file fallback", e);
+      return deleteLocalTopic(id);
+    }
+  }
+  return deleteLocalTopic(id);
+}
+
+export async function searchTopics(query: string): Promise<Topic[]> {
+  try {
+    const q = query.trim().toLowerCase();
+    const all = await readAllTopics();
+    if (!q) return all;
+    return all.filter((t) => {
+      const hay = [
+        t.title,
+        t.description ?? "",
+        t.themeTag,
+        ...t.selectedComposeTags,
+        t.report?.summaryExcerpt ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  } catch (e) {
+    console.error("[store] searchTopics failed", e);
     return [];
   }
 }
