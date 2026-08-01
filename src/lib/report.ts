@@ -395,16 +395,19 @@ export function normalizeAiReportPaste(raw: string): string {
 
   const lines = t.split("\n");
   const out: string[] = [];
-  let pendingClaim: {
+  type PendingClaim = {
     n: number;
     statement: string;
     verdict: string;
     evidence: string;
     body: string[];
     fromS?: boolean;
-  } | null = null;
+  };
+  // 중첩 함수에서 갱신하므로 박스로 두어 TS 가 null 로 고정하지 않게 함
+  const claimState: { current: PendingClaim | null } = { current: null };
 
   const flushClaim = () => {
+    const pendingClaim = claimState.current;
     if (!pendingClaim) return;
     const { n, statement, verdict, evidence, body, fromS } = pendingClaim;
     const label = fromS ? `S${n}` : `${n}`;
@@ -422,7 +425,7 @@ export function normalizeAiReportPaste(raw: string): string {
     }
     if (evidence) out.push(`근거(출처): ${evidence}`);
     out.push("");
-    pendingClaim = null;
+    claimState.current = null;
   };
 
   const stripMd = (s: string) =>
@@ -458,7 +461,7 @@ export function normalizeAiReportPaste(raw: string): string {
       verdict = trailVerd[1].trim();
       statement = statement.slice(0, trailVerd.index).trim();
     }
-    pendingClaim = {
+    claimState.current = {
       n,
       statement,
       verdict: verdict
@@ -577,7 +580,7 @@ export function normalizeAiReportPaste(raw: string): string {
           ""
         )
         .trim();
-      if (pendingClaim) pendingClaim.verdict = v;
+      if (claimState.current) claimState.current.verdict = v;
       else out.push(`판정: ${v}`);
       continue;
     }
@@ -586,9 +589,9 @@ export function normalizeAiReportPaste(raw: string): string {
       /^(?:출처|근거(?:\s*\(\s*출처\s*\))?)\s*[:：]\s*(.+)$/i
     );
     if (src) {
-      if (pendingClaim) {
-        pendingClaim.evidence = pendingClaim.evidence
-          ? `${pendingClaim.evidence} ${src[1].trim()}`
+      if (claimState.current) {
+        claimState.current.evidence = claimState.current.evidence
+          ? `${claimState.current.evidence} ${src[1].trim()}`
           : src[1].trim();
       } else {
         out.push(`근거(출처): ${src[1].trim()}`);
@@ -596,13 +599,13 @@ export function normalizeAiReportPaste(raw: string): string {
       continue;
     }
 
-    if (pendingClaim && !pendingClaim.statement) {
-      pendingClaim.statement = s;
+    if (claimState.current && !claimState.current.statement) {
+      claimState.current.statement = s;
       continue;
     }
-    if (pendingClaim) {
+    if (claimState.current) {
       // 본문·불릿은 근거가 아님 (출처: 줄만 evidence)
-      pendingClaim.body.push(bodyLine.startsWith("- ") ? bodyLine : s);
+      claimState.current.body.push(bodyLine.startsWith("- ") ? bodyLine : s);
       continue;
     }
 
