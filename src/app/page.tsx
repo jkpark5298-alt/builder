@@ -1,4 +1,5 @@
 import { HomeInputTabs } from "@/components/HomeInputTabs";
+import { ImageLibraryPanel } from "@/components/ImageLibraryPanel";
 import { SearchBar } from "@/components/SearchBar";
 import { TopicListCard } from "@/components/TopicListCard";
 import { VideoListCard } from "@/components/VideoListCard";
@@ -7,6 +8,7 @@ import {
   isFactCheckDraft,
   isReportPending,
 } from "@/lib/library";
+import { readAllLibraryImages, searchLibraryImages } from "@/lib/image-library-store";
 import { searchTopics, searchVideos } from "@/lib/store";
 import type { VideoRecord } from "@/lib/types";
 
@@ -49,6 +51,9 @@ export default async function HomePage({
   const { q } = await searchParams;
   const videos = await searchVideos(q ?? "");
   const topics = await searchTopics(q ?? "");
+  const libraryImages = q?.trim()
+    ? await searchLibraryImages(q)
+    : await readAllLibraryImages();
   const drafts = videos.filter(isFactCheckDraft);
   const reportPending = videos.filter(isReportPending);
   const reportComplete = videos.filter(isComplete);
@@ -62,7 +67,7 @@ export default async function HomePage({
           <div>
             <h2 className="font-display text-2xl text-ink-900">라이브러리</h2>
             <p className="text-sm text-ink-500 mt-1">
-              주제(#태그) → 임시 저장 → <strong>작성 대기</strong> →{" "}
+              주제(#태그) → 이미지 → 임시 저장 → <strong>작성 대기</strong> →{" "}
               <strong>보고서</strong>
             </p>
           </div>
@@ -80,6 +85,12 @@ export default async function HomePage({
             className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
           >
             주제 {topics.length}
+          </a>
+          <a
+            href="#images"
+            className="rounded-lg border border-ink-300 bg-ink-50 px-3 py-1.5 text-ink-800 hover:border-accent"
+          >
+            이미지 {libraryImages.length}
           </a>
           <a
             href="#drafts"
@@ -124,6 +135,17 @@ export default async function HomePage({
             ))}
           </div>
         )}
+      </section>
+
+      <section id="images" className="space-y-4 scroll-mt-24">
+        <div>
+          <h3 className="font-display text-xl text-ink-900">이미지</h3>
+          <p className="text-sm text-ink-500 mt-1">
+            저장·메모·삭제. FC에는 붙이지 않고, <strong>보고서</strong>에서만
+            불러 씁니다.
+          </p>
+        </div>
+        <ImageLibraryPanel initialImages={libraryImages} />
       </section>
 
       <section id="drafts" className="space-y-4 scroll-mt-24">

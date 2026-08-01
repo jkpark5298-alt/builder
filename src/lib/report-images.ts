@@ -93,11 +93,22 @@ export function normalizeReportImageRefs(report: TypedReport): TypedReport {
   let changed = room.length !== (report.imageRoom?.length ?? 0);
 
   const sections = report.sections.map((sec) => {
-    const legacyUrls = normalizeImageUrls(sec.imageUrl, sec.images);
+    // S 슬롯 순서 보존: images[i] 빈 칸("") 유지
+    const orderedSlotImages = (sec.images ?? []).map((u) => (u || "").trim());
+    const hasSlotOrder = orderedSlotImages.length > 0;
+    const legacyUrls = normalizeImageUrls(
+      sec.imageUrl,
+      hasSlotOrder ? orderedSlotImages.filter(Boolean) : sec.images
+    );
     if (!legacyUrls.length && !(sec.imageRefs?.length ?? 0)) return sec;
     const next = upsertRoomUrls(room, legacyUrls);
     room = next.room;
-    const imageRefs = Array.from(new Set([...(sec.imageRefs ?? []), ...next.refs]));
+    const byUrl = new Map(next.room.map((item) => [item.url, item.id]));
+    const imageRefs = hasSlotOrder
+      ? orderedSlotImages
+          .map((u) => (u ? byUrl.get(u) : undefined))
+          .filter(Boolean) as string[]
+      : Array.from(new Set([...(sec.imageRefs ?? []), ...next.refs]));
     if (
       !legacyUrls.length &&
       imageRefs.join("|") === (sec.imageRefs ?? []).join("|") &&
@@ -110,7 +121,8 @@ export function normalizeReportImageRefs(report: TypedReport): TypedReport {
     return {
       ...sec,
       imageUrl: undefined,
-      images: undefined,
+      // 슬롯 정렬용 images 유지 (빈 문자열 포함)
+      images: hasSlotOrder ? orderedSlotImages : undefined,
       imageRefs: imageRefs.length ? imageRefs : undefined,
     };
   });

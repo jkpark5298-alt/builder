@@ -18,7 +18,10 @@ export function SearchBar({
     e.preventDefault();
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
-    router.push(params.toString() ? `/?${params}` : "/");
+    const hash =
+      typeof window !== "undefined" ? window.location.hash || "" : "";
+    const qs = params.toString();
+    router.push(qs ? `/?${qs}${hash}` : `/${hash || ""}`);
   }
 
   return (

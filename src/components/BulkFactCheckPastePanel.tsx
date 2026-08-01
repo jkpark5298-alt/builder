@@ -8,7 +8,12 @@ import {
   Loader2,
   Sparkles,
 } from "lucide-react";
-import type { FactCheckResult, SummaryItem, VideoRecord } from "@/lib/types";
+import type {
+  FactCheckResult,
+  FactCheckVerdict,
+  SummaryItem,
+  VideoRecord,
+} from "@/lib/types";
 import {
   buildBulkFactCheckPrompt,
   formatBulkParsePreview,
@@ -17,15 +22,19 @@ import {
   rebuildPasteDraftFromItems,
   type BulkPasteEntry,
 } from "@/lib/bulk-factcheck-paste";
-import { verdictLabel } from "@/lib/labels";
+import { FC_VERDICT_OPTIONS } from "@/lib/factcheck-detail";
+import { normalizeSimpleVerdict, verdictLabel } from "@/lib/labels";
 
 export function BulkFactCheckPastePanel({
   video,
   items,
+  liveVerdicts,
   onApplied,
 }: {
   video: VideoRecord;
   items: SummaryItem[];
+  /** 아래 항목 화면에서 고른 판정(저장 전·후) */
+  liveVerdicts?: Record<string, FactCheckVerdict>;
   onApplied: (video: VideoRecord) => void;
 }) {
   const initialPaste = useMemo(() => {
@@ -40,9 +49,17 @@ export function BulkFactCheckPastePanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<BulkPasteEntry[] | null>(null);
+  /** 미리보기에서 판정만 고친 경우 (저장 전) */
+  const [verdictOverrides, setVerdictOverrides] = useState<
+    Record<string, FactCheckVerdict>
+  >({});
+  /** 일괄 저장 직후 — 붙여넣기 자동 인식 박스를 숨기고 「저장된 판정」만 보여 줌 */
+  const [hidePastePreview, setHidePastePreview] = useState(false);
 
   useEffect(() => {
     setPaste(initialPaste);
+    setVerdictOverrides({});
+    setHidePastePreview(false);
   }, [initialPaste]);
 
   const prompt = useMemo(() => buildBulkFactCheckPrompt(items), [items]);
@@ -50,6 +67,29 @@ export function BulkFactCheckPastePanel({
     () => items.filter((i) => i.needsFactCheck),
     [items]
   );
+
+  const fcMap = useMemo(
+    () => new Map(video.factChecks.map((f) => [f.itemId, f])),
+    [video.factChecks]
+  );
+
+  /** 항목별 화면에서 저장한 판정 — 붙여넣기 미리보기와 별개 */
+  const savedProgress = useMemo(() => {
+    return targets.map((item, i) => {
+      const fc = fcMap.get(item.id);
+      const saved =
+        Boolean(fc) &&
+        fc!.verdict !== "pending" &&
+        fc!.explanation.trim().length >= 8;
+      return {
+        index: i + 1,
+        itemId: item.id,
+        statement: item.statement,
+        verdict: fc?.verdict ?? ("pending" as FactCheckVerdict),
+        saved,
+      };
+    });
+  }, [targets, fcMap]);
 
   const live = useMemo(() => {
     if (!paste.trim()) return null;
@@ -70,6 +110,7 @@ export function BulkFactCheckPastePanel({
       }
       setPaste((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text));
       setPreview(null);
+      setHidePastePreview(false);
       setNotice("클립보드에서 붙여넣었습니다.");
     } catch {
       setError(
@@ -90,30 +131,30 @@ export function BulkFactCheckPastePanel({
 
   function runNormalize() {
     setError(null);
+    setVerdictOverrides({});
     const cleaned = normalizeAiFactCheckPaste(paste);
     if (!cleaned.trim()) {
       setError("정리할 내용이 없습니다.");
       return;
     }
     setPaste(cleaned);
-    const result = parseBulkFactCheckPasteRobust(cleaned, items);
-    setPreview(result.entries);
+    // 인식 목록은 「붙여넣기 인식」을 눌렀을 때만 표시
+    setPreview(null);
     setNotice(
-      result.entries.length
-        ? `정리 완료 · ${result.notice}`
-        : "정리했습니다. 형식을 확인한 뒤 다시 미리보기 하세요."
+      "정리했습니다. 「붙여넣기 인식」을 눌러 항목을 확인한 뒤 저장하세요."
     );
-    if (!result.entries.length) setError(result.notice);
   }
 
   function runParse() {
     setError(null);
     setNotice(null);
+    setVerdictOverrides({});
     const result = parseBulkFactCheckPasteRobust(paste, items);
     if (result.normalizedText && result.normalizedText !== paste.trim()) {
       setPaste(result.normalizedText);
     }
-    setPreview(result.entries);
+    setPreview(result.entries.length ? result.entries : null);
+    setHidePastePreview(false);
     setNotice(result.notice);
     if (!result.entries.length) setError(result.notice);
   }
@@ -121,7 +162,7 @@ export function BulkFactCheckPastePanel({
   async function applyParsed(entries: BulkPasteEntry[], pasteText: string) {
     if (!entries.length) {
       setError(
-        "적용할 항목이 없습니다. 「미리보기」또는 「정리 후 항목에 반영」을 눌러 주세요."
+        "적용할 항목이 없습니다. 「붙여넣기 인식」또는 「정리 후 항목에 반영」을 눌러 주세요."
       );
       return;
     }
@@ -137,7 +178,8 @@ export function BulkFactCheckPastePanel({
           factCheckPasteDraft: pasteText,
           bulkFactChecks: entries.map((e) => ({
             itemId: e.itemId,
-            verdict: e.verdict,
+            verdict:
+              verdictOverrides[e.itemId] ?? e.verdict,
             explanation: e.explanation,
             statement: e.statement,
             isNew: e.isNew,
@@ -155,9 +197,11 @@ export function BulkFactCheckPastePanel({
       onApplied(data.video);
       const n = data.video.items.filter((i) => i.needsFactCheck).length;
       setNotice(
-        `${entries.length}건 반영 · 항목 ${n}개. 외부 AI 답변란도 저장해 두었습니다.`
+        `저장 완료 · ${entries.length}건 반영 · 항목 ${n}개. 아래 「저장된 판정」에 표시됩니다.`
       );
       setPreview(null);
+      setVerdictOverrides({});
+      setHidePastePreview(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "일괄 적용 실패");
     } finally {
@@ -179,8 +223,28 @@ export function BulkFactCheckPastePanel({
     await applyParsed(result.entries, text);
   }
 
-  const readyEntries = preview?.length ? preview : live?.entries ?? [];
+  // 「붙여넣기 인식」버튼을 눌렀을 때만 목록 표시 (자동 인식 숨김)
+  const readyEntries =
+    hidePastePreview || !preview?.length ? [] : preview;
+  const displayEntries = readyEntries.map((e) => {
+    const saved = fcMap.get(e.itemId);
+    const fromDb =
+      saved &&
+      saved.verdict !== "pending" &&
+      saved.explanation.trim().length >= 8
+        ? normalizeSimpleVerdict(saved.verdict)
+        : null;
+    return {
+      ...e,
+      verdict:
+        verdictOverrides[e.itemId] ??
+        liveVerdicts?.[e.itemId] ??
+        fromDb ??
+        e.verdict,
+    };
+  });
   const liveCount = live?.claimCount ?? 0;
+  const savedCount = savedProgress.filter((r) => r.saved).length;
   const restoredHint =
     !video.factCheckPasteDraft?.trim() &&
     Boolean(paste.trim()) &&
@@ -205,9 +269,9 @@ export function BulkFactCheckPastePanel({
               사용 방법 보기
             </summary>
             <p className="text-xs text-ink-500 mt-1 leading-relaxed">
-              「정리 후 항목에 반영」하면 아래 대상이 생기고{" "}
-              <strong>외부 AI 답변란도 저장</strong>됩니다. 항목만 있고 답변란이
-              비면, 저장된 항목에서 다시 채웁니다.
+              <strong>정리 후 항목에 반영·저장</strong> = 외부 AI 답변 전체를
+              한 번에 각 팩트체크 항목(답변·판정)에 나눠 넣습니다. 항목을 하나씩
+              채울 필요 없을 때 씁니다. 미리보기만으로는 저장되지 않습니다.
             </p>
           </details>
         </div>
@@ -249,6 +313,8 @@ export function BulkFactCheckPastePanel({
           onChange={(e) => {
             setPaste(e.target.value);
             setPreview(null);
+            setVerdictOverrides({});
+            setHidePastePreview(false);
             setNotice(null);
             setError(null);
           }}
@@ -294,24 +360,14 @@ export function BulkFactCheckPastePanel({
           className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-300 bg-white px-3 text-sm font-medium disabled:opacity-50"
         >
           <ClipboardPaste className="h-4 w-4" />
-          미리보기
-        </button>
-        <button
-          type="button"
-          disabled={busy || !paste.trim()}
-          onClick={() => void normalizeAndApply()}
-          className="inline-flex items-center gap-1.5 min-h-10 rounded-xl bg-accent px-3 text-sm font-medium text-white hover:bg-ink-900 disabled:opacity-50"
-        >
-          {busy ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Check className="h-4 w-4" />
-          )}
-          {busy
-            ? "반영 중…"
-            : `정리 후 항목에 반영${liveCount ? ` (${liveCount})` : ""}`}
+          붙여넣기 인식
         </button>
       </div>
+
+      <p className="text-[11px] text-ink-500 leading-relaxed">
+        「붙여넣기 인식」을 눌러야 아래 목록이 나옵니다. 확인 후{" "}
+        <strong>「항목에 반영·저장」</strong>을 눌러야 DB에 저장됩니다.
+      </p>
 
       {notice && (
         <p className="text-xs text-ink-600" role="status">
@@ -323,24 +379,164 @@ export function BulkFactCheckPastePanel({
           {error}
         </p>
       )}
-      {readyEntries.length > 0 && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 space-y-1.5">
-          <p className="text-xs font-medium text-emerald-800">
-            반영될 항목 {readyEntries.length}건
-            {preview ? " (미리보기)" : " (자동 인식)"}
+      {displayEntries.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2 space-y-2">
+          <p className="text-xs font-medium text-amber-950">
+            붙여넣기 인식 {displayEntries.length}건
           </p>
+          <p className="text-[11px] text-ink-600 leading-relaxed">
+            아래 항목에서 판정을 고르면 여기 목록에도 바로 바뀝니다. DB 저장은
+            「항목에 반영·저장」또는 「이 항목 저장하고 다음」입니다.
+          </p>
+          {displayEntries.every((e) => e.verdict === "unverifiable") && (
+            <p className="text-[11px] text-amber-900 bg-amber-100/80 border border-amber-200 rounded-md px-2 py-1.5 leading-relaxed">
+              답변에 <strong>판정: …</strong> 줄이 없어 모두 「검증 불가」로
+              잡혔습니다. 아래에서 판정을 고친 뒤 저장하거나, 답변에 판정 줄을
+              넣어 주세요.
+            </p>
+          )}
           <pre className="whitespace-pre-wrap text-[11px] text-ink-700 leading-relaxed">
-            {formatBulkParsePreview(readyEntries)}
+            {formatBulkParsePreview(displayEntries)}
           </pre>
-          <ul className="text-[11px] text-ink-600 space-y-0.5">
-            {readyEntries.map((e) => (
-              <li key={`${e.itemId}-${e.index}`}>
-                {e.index}. 판정 <strong>{verdictLabel(e.verdict)}</strong>
-                {e.isNew ? " · 새 대상 추가" : " · 기존 대상 갱신"}
+          <ul className="space-y-1.5">
+            {displayEntries.map((e) => (
+              <li
+                key={`${e.itemId}-${e.index}`}
+                className="flex flex-wrap items-center gap-2 text-[11px] text-ink-700"
+              >
+                <span className="min-w-[1.25rem] font-medium">{e.index}.</span>
+                <label className="inline-flex items-center gap-1.5">
+                  판정
+                  <select
+                    value={e.verdict}
+                    disabled={busy}
+                    onChange={(ev) => {
+                      const v = ev.target.value as FactCheckVerdict;
+                      setVerdictOverrides((prev) => ({
+                        ...prev,
+                        [e.itemId]: v,
+                      }));
+                    }}
+                    className="rounded-md border border-ink-200 bg-white px-1.5 py-1 text-[11px]"
+                  >
+                    {FC_VERDICT_OPTIONS.map((v) => (
+                      <option key={v} value={v}>
+                        {verdictLabel(v)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-ink-500">
+                  {e.isNew ? "새 대상 추가" : "기존 대상 갱신"}
+                </span>
               </li>
             ))}
           </ul>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void applyParsed(displayEntries, paste)}
+            className="w-full inline-flex items-center justify-center gap-1.5 min-h-12 rounded-xl bg-accent px-3 text-sm font-medium text-white hover:bg-ink-900 disabled:opacity-50"
+          >
+            {busy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                저장 중…
+              </>
+            ) : (
+              <>
+                <Check className="h-4 w-4" />
+                항목에 반영·저장 ({displayEntries.length}건)
+              </>
+            )}
+          </button>
         </div>
+      )}
+
+      {savedCount > 0 && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 space-y-1.5">
+          <p className="text-xs font-medium text-emerald-900">
+            저장된 판정 {savedCount}/{targets.length}건
+            <span className="font-normal text-emerald-800">
+              {" "}
+              · 「이 항목 저장하고 다음」또는 일괄 저장 결과
+            </span>
+          </p>
+          <ul className="text-[11px] text-ink-700 space-y-0.5">
+            {savedProgress.map((r) => {
+              const draft = liveVerdicts?.[r.itemId];
+              const show =
+                draft && (!r.saved || draft !== r.verdict)
+                  ? draft
+                  : r.saved
+                    ? r.verdict
+                    : draft;
+              return (
+                <li key={r.itemId}>
+                  {r.index}.{" "}
+                  {show ? (
+                    <>
+                      <strong>{verdictLabel(show)}</strong>
+                      {!r.saved && draft ? (
+                        <span className="text-amber-700"> · 선택됨(미저장)</span>
+                      ) : null}
+                      <span className="text-ink-500">
+                        {" "}
+                        · {r.statement.replace(/\s+/g, " ").slice(0, 36)}
+                        {r.statement.length > 36 ? "…" : ""}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-ink-400">아직 미저장</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* 저장은 아직 없어도 판정만 고른 경우 목록 표시 */}
+      {savedCount === 0 &&
+        liveVerdicts &&
+        Object.keys(liveVerdicts).length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 space-y-1.5">
+            <p className="text-xs font-medium text-amber-950">
+              선택한 판정 (아직 미저장)
+            </p>
+            <ul className="text-[11px] text-ink-700 space-y-0.5">
+              {targets.map((item, i) => {
+                const v = liveVerdicts[item.id];
+                if (!v) return null;
+                return (
+                  <li key={item.id}>
+                    {i + 1}. <strong>{verdictLabel(v)}</strong>
+                    <span className="text-ink-500">
+                      {" "}
+                      · {item.statement.replace(/\s+/g, " ").slice(0, 36)}
+                      {item.statement.length > 36 ? "…" : ""}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+      {displayEntries.length === 0 && paste.trim() && (
+        <button
+          type="button"
+          disabled={busy || !paste.trim()}
+          onClick={() => void normalizeAndApply()}
+          className="w-full inline-flex items-center justify-center gap-1.5 min-h-11 rounded-xl bg-accent px-3 text-sm font-medium text-white hover:bg-ink-900 disabled:opacity-50"
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Check className="h-4 w-4" />
+          )}
+          {busy ? "반영 중…" : "정리 후 항목에 반영·저장 (일괄)"}
+        </button>
       )}
     </div>
   );

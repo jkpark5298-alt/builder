@@ -29,7 +29,8 @@ export function HistoryPostConfirmImages({
       <div className="p-4 sm:p-5 space-y-3">
         <p className="text-sm text-ink-600">
           보고서가 확정된 뒤, 팩트체크 항목(1·2·3…)에 참고 이미지를 붙입니다.
-          본문·판정은 위에서 이미 확정된 상태입니다.
+          FC 단계에서는 이미지를 붙이지 않습니다. 본문 안 이미지는 위 보고서
+          편집에서도 넣을 수 있습니다.
         </p>
         <NumberedFactCheckImages
           video={video}

@@ -187,6 +187,23 @@ export function ReportCreateForm({
     }
   }
 
+  async function parseJsonResponse(res: Response): Promise<{
+    error?: string;
+    video?: { id: string; status?: string };
+  }> {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as {
+        error?: string;
+        video?: { id: string; status?: string };
+      };
+    } catch {
+      throw new Error(
+        text.trim().slice(0, 180) || `서버 오류 (${res.status})`
+      );
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -197,7 +214,11 @@ export function ReportCreateForm({
     }
 
     setLoading(true);
-    setStatus("요약·검증 중… (1~3분 걸릴 수 있어요)");
+    setStatus(
+      hasScript
+        ? "요약·검증 중… (1~3분 걸릴 수 있어요)"
+        : "수동 요약 화면으로 이동 중…"
+    );
     feedbackRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
@@ -217,15 +238,17 @@ export function ReportCreateForm({
             updateReportInput: formPayload(),
           }),
         });
-        const data = (await res.json()) as {
-          error?: string;
-          video?: { id: string };
-        };
+        const data = await parseJsonResponse(res);
         if (!res.ok || !data.video?.id) {
           throw new Error(data.error || "Report 생성 실패");
         }
+        if (data.video.status === "report_input_draft") {
+          throw new Error(
+            "요약·검증이 시작되지 않았습니다. 새로고침 후 다시 시도해 주세요."
+          );
+        }
         cacheVideoSnapshot(data.video);
-        setStatus("완료. 팩트체크 화면으로 이동합니다…");
+        setStatus("완료. 다음 화면으로 이동합니다…");
         window.location.assign(`/videos/${data.video.id}`);
         return;
       }
@@ -240,16 +263,13 @@ export function ReportCreateForm({
         }),
       });
 
-      const data = (await res.json()) as {
-        error?: string;
-        video?: { id: string };
-      };
+      const data = await parseJsonResponse(res);
       if (!res.ok || !data.video?.id) {
         throw new Error(data.error || "Report 생성 실패");
       }
 
       cacheVideoSnapshot(data.video);
-      setStatus("완료. 팩트체크 화면으로 이동합니다…");
+      setStatus("완료. 다음 화면으로 이동합니다…");
       window.location.assign(`/videos/${data.video.id}`);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -270,7 +290,7 @@ export function ReportCreateForm({
     <form
       id="report-create"
       onSubmit={onSubmit}
-      className="relative overflow-hidden rounded-2xl border border-ink-200 bg-white/80 p-5 sm:p-6 shadow-sm pb-28 sm:pb-6"
+      className="relative rounded-2xl border border-ink-200 bg-white/80 p-5 sm:p-6 shadow-sm pb-36 sm:pb-6"
     >
       <div className="relative space-y-4">
         <div className="flex items-center gap-2 text-accent">
@@ -439,7 +459,28 @@ export function ReportCreateForm({
         </div>
       </div>
 
-      <div className="fixed bottom-0 inset-x-0 z-40 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4 space-y-2">
+      <div className="fixed bottom-0 inset-x-0 z-50 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4 space-y-2">
+        {(loading || draftSaving || status || error) && (
+          <div className="sm:hidden space-y-2">
+            {(loading || draftSaving || status) && (
+              <div
+                className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-sm text-ink-700"
+                role="status"
+                aria-live="polite"
+              >
+                {status || (draftSaving ? "임시 저장 중…" : "처리 중…")}
+              </div>
+            )}
+            {error && (
+              <p
+                className="rounded-xl border border-verify-false/30 bg-verify-false/5 px-3 py-2 text-sm text-verify-false font-medium"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row gap-2">
           <button
             type="button"
@@ -461,7 +502,7 @@ export function ReportCreateForm({
           </button>
           <button
             type="submit"
-            disabled={loading || draftSaving}
+            disabled={loading || draftSaving || !step1Done}
             className="w-full sm:flex-[1.4] inline-flex items-center justify-center gap-2 rounded-xl bg-accent min-h-12 px-5 py-3.5 text-white font-medium hover:bg-ink-900 disabled:opacity-60 transition-colors shadow-lg sm:shadow-none"
           >
             {loading ? (
@@ -479,7 +520,7 @@ export function ReportCreateForm({
             )}
           </button>
         </div>
-        {step1Done && !loading && (
+        {step1Done && !loading && !error && (
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript

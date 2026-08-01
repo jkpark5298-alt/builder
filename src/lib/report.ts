@@ -156,9 +156,48 @@ function parseImportHeadingLine(line: string): string | null {
   return null;
 }
 
-function preprocessImportRaw(raw: string): string {
+/** AI/웹 붙여넣기: HTML 엔티티·워드 글머리 기호 정리 */
+export function sanitizeAiPasteText(raw: string): string {
   return raw
+    .replace(/\u200B|\uFEFF/g, "")
     .replace(/\r\n/g, "\n")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#0*39;/gi, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return _;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return _;
+      }
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
+      const code = parseInt(h, 16);
+      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return _;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return _;
+      }
+    })
+    // Word/PDF 글머리( U+F0B7 등) → "-"
+    .replace(
+      /^[\t ]*[\u2022\u2023\u2043\u2219\u25CF\u25E6\u25AA\uF0B7]\s*/gm,
+      "- "
+    )
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
+function preprocessImportRaw(raw: string): string {
+  return sanitizeAiPasteText(raw)
     .replace(/^\s*---+\s*$/gm, "")
     .replace(/^#\s+.+$/m, "")
     .replace(/^##\s*보고서\s*/m, "")
@@ -351,7 +390,7 @@ export function inspectImportedReportText(raw: string): {
  * 섹션마다 이미지를 붙일 수 있게 한다.
  */
 export function normalizeAiReportPaste(raw: string): string {
-  let t = raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim();
+  let t = sanitizeAiPasteText(raw);
   if (!t) return "";
 
   const lines = t.split("\n");
@@ -361,12 +400,13 @@ export function normalizeAiReportPaste(raw: string): string {
     statement: string;
     verdict: string;
     evidence: string;
+    body: string[];
     fromS?: boolean;
   } | null = null;
 
   const flushClaim = () => {
     if (!pendingClaim) return;
-    const { n, statement, verdict, evidence, fromS } = pendingClaim;
+    const { n, statement, verdict, evidence, body, fromS } = pendingClaim;
     const label = fromS ? `S${n}` : `${n}`;
     const titleBase = statement
       ? statement.length > 42
@@ -377,6 +417,9 @@ export function normalizeAiReportPaste(raw: string): string {
     out.push("");
     if (statement) out.push(statement);
     if (verdict) out.push(`판정: ${verdict}`);
+    for (const line of body) {
+      if (line.trim()) out.push(line);
+    }
     if (evidence) out.push(`근거(출처): ${evidence}`);
     out.push("");
     pendingClaim = null;
@@ -386,8 +429,47 @@ export function normalizeAiReportPaste(raw: string): string {
     s
       .replace(/\*\*([^*]+)\*\*/g, "$1")
       .replace(/\*([^*]+)\*/g, "$1")
-      .replace(/^[-*•]\s+/, "")
+      .replace(/^[-*•\u2022\uF0B7]\s+/, "")
       .trim();
+
+  const asBodyLine = (s: string) =>
+    s.replace(/^[-*•\u2022\uF0B7]\s+/, "- ").trim();
+
+  const startClaim = (
+    n: number,
+    statementRaw: string,
+    fromS: boolean,
+    original: string
+  ) => {
+    flushClaim();
+    let statement = statementRaw.trim();
+    let verdict = "";
+    const inlineVerd = statement.match(
+      /[（(]?\s*판정\s*[:：]\s*([^）)]+)[）)]?\s*$/i
+    );
+    if (inlineVerd) {
+      verdict = inlineVerd[1]
+        .replace(/\s*\(\s*(True|False|Unverifiable|Mostly\s*True)\s*\)\s*/gi, "")
+        .trim();
+      statement = statement.slice(0, inlineVerd.index).trim();
+    }
+    const trailVerd = statement.match(/\(\s*판정\s*:\s*([^)]+)\)\s*$/i);
+    if (trailVerd) {
+      verdict = trailVerd[1].trim();
+      statement = statement.slice(0, trailVerd.index).trim();
+    }
+    pendingClaim = {
+      n,
+      statement,
+      verdict: verdict
+        .replace(/\s*\(\s*(True|False|Unverifiable|Mostly\s*True)\s*\)\s*/gi, "")
+        .trim(),
+      evidence: "",
+      body: [],
+      fromS:
+        fromS || /^S\d/i.test(original.replace(/^[-*•\u2022\uF0B7]\s+/, "")),
+    };
+  };
 
   for (const rawLine of lines) {
     let s = rawLine.trim();
@@ -398,6 +480,8 @@ export function normalizeAiReportPaste(raw: string): string {
     }
 
     const original = s;
+    // 본문 글머리는 "-"로 유지 (매칭용 strip과 분리)
+    const bodyLine = asBodyLine(s);
     s = stripMd(s);
     if (!s) continue;
 
@@ -443,6 +527,18 @@ export function normalizeAiReportPaste(raw: string): string {
       continue;
     }
 
+    // F3 & F4. 제목 / F3 &amp; F4 (sanitize 후 &)
+    const multiF = s.match(
+      /^F(\d+)\s*[&＋+]\s*F?(\d+)\s*[.):]?\s*(.*)$/i
+    );
+    if (multiF) {
+      const title =
+        multiF[3].trim() ||
+        `골각문·갑골문 (F${multiF[1]}·F${multiF[2]})`;
+      startClaim(parseInt(multiF[1], 10) || 1, title, false, original);
+      continue;
+    }
+
     // F1. / S1. / 긴 1. 주장 → 각각 ## 섹션 (S = 섹션·이미지 단위 표시)
     const claimHead = s.match(/^(?:S|F)?(\d+)[.):]\s+(.+)$/i);
     if (
@@ -451,37 +547,25 @@ export function normalizeAiReportPaste(raw: string): string {
         /^(?:S|F)\d/i.test(original) ||
         /판정/.test(claimHead[2]))
     ) {
-      flushClaim();
-      let statement = claimHead[2].trim();
-      let verdict = "";
-      const inlineVerd = statement.match(
-        /[（(]?\s*판정\s*[:：]\s*([^）)]+)[）)]?\s*$/i
+      startClaim(
+        parseInt(claimHead[1], 10) || 1,
+        claimHead[2],
+        /^S\d/i.test(original.replace(/^[-*•\u2022\uF0B7]\s+/, "")),
+        original
       );
-      if (inlineVerd) {
-        verdict = inlineVerd[1]
-          .replace(/\s*\(\s*(True|False|Unverifiable)\s*\)\s*/i, "")
-          .trim();
-        statement = statement.slice(0, inlineVerd.index).trim();
-      }
-      // "(판정: 사실)" 형태가 주장 끝에 붙은 경우
-      const trailVerd = statement.match(/\(\s*판정\s*:\s*([^)]+)\)\s*$/i);
-      if (trailVerd) {
-        verdict = trailVerd[1].trim();
-        statement = statement.slice(0, trailVerd.index).trim();
-      }
-      pendingClaim = {
-        n: parseInt(claimHead[1], 10) || 1,
-        statement,
-        verdict: verdict.replace(/\s*\(\s*(True|False)\s*\)\s*/i, "").trim(),
-        evidence: "",
-        fromS: /^S\d/i.test(original.replace(/^[-*•]\s+/, "")),
-      };
       continue;
     }
 
-    // 단독 줄 "S" / "S." → 다음 블록을 새 섹션으로 (이미지 단위 표시)
+    // 단독 줄 "S" / "S." → 직전 문장 끝에 이미지 슬롯 S 유지
     if (/^S\.?$/i.test(s)) {
       flushClaim();
+      let i = out.length - 1;
+      while (i >= 0 && !out[i].trim()) i--;
+      if (i >= 0 && !/^##\s+/.test(out[i]) && !/(?:^|[\s.!?。…])S\.?\s*$/u.test(out[i])) {
+        out[i] = `${out[i].replace(/\s+$/u, "")} S`;
+      } else if (i < 0 || /^##\s+/.test(out[i] ?? "")) {
+        out.push("S");
+      }
       continue;
     }
 
@@ -516,18 +600,14 @@ export function normalizeAiReportPaste(raw: string): string {
       pendingClaim.statement = s;
       continue;
     }
-    if (
-      pendingClaim &&
-      pendingClaim.statement &&
-      !pendingClaim.evidence &&
-      !/판정/.test(s)
-    ) {
-      pendingClaim.evidence = s;
+    if (pendingClaim) {
+      // 본문·불릿은 근거가 아님 (출처: 줄만 evidence)
+      pendingClaim.body.push(bodyLine.startsWith("- ") ? bodyLine : s);
       continue;
     }
 
     flushClaim();
-    out.push(s);
+    out.push(bodyLine.startsWith("- ") ? bodyLine : s);
   }
 
   flushClaim();
@@ -567,6 +647,7 @@ type ExtractedClaim = {
 /**
  * 본문에서 S1. / F1. / 1. 주장 블록 추출.
  * S1·S2·S3 = 섹션(이미지) 단위 표시.
+ * 줄 맨 앞 `S ` / 단독 줄 `S` 도 같은 의미.
  */
 export function extractNumberedClaimsFromPlain(plain: string): ExtractedClaim[] {
   const text = plain.replace(/\r\n/g, "\n").trim();
@@ -578,7 +659,11 @@ export function extractNumberedClaimsFromPlain(plain: string): ExtractedClaim[] 
     return sNumbered.map((c) => ({ ...c, fromS: true }));
   }
 
-  // 단독 줄 S 로 구분
+  // 줄 앞 "S 문장…" 또는 단독 줄 S
+  const byLeadingS = extractByLeadingSLines(text);
+  if (byLeadingS.length >= 2) return byLeadingS;
+
+  // 단독 줄 S 로 구분 (레거시)
   const byLoneS = extractByLoneSBreaks(text);
   if (byLoneS.length >= 2) return byLoneS;
 
@@ -588,6 +673,76 @@ export function extractNumberedClaimsFromPlain(plain: string): ExtractedClaim[] 
     /(?=^(?:F?\d+)\.\s+)/m,
     /^F?(\d+)\.\s+([\s\S]+)$/i
   );
+}
+
+/** 보고서 본문에 S 이미지 단위 표시가 몇 블록인지 */
+export function countSImageMarkersInReport(report: TypedReport): number {
+  let max = 0;
+  for (const sec of report.sections) {
+    const plain = htmlBodyToPlain(sec.body || "");
+    const claims = extractNumberedClaimsFromPlain(plain);
+    const sClaims = claims.filter((c) => c.fromS);
+    if (sClaims.length > max) max = sClaims.length;
+    // 표시만 있고 아직 2블록 미만이어도 줄 단위로 센다
+    const loose = plain.match(/(?:^|\n)\s*S(?:\d+[.):]|\.?)(?:\s|$)/gim);
+    if (loose && loose.length > max) max = loose.length;
+  }
+  return max;
+}
+
+/**
+ * `S 첫문장…` / 단독 줄 `S` / `S1. …` 혼용 → 이미지 단위 블록
+ */
+function extractByLeadingSLines(plain: string): ExtractedClaim[] {
+  const lines = plain.replace(/\r\n/g, "\n").split("\n");
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let sawMarker = false;
+
+  const flush = () => {
+    const t = current.join("\n").trim();
+    if (t) blocks.push(t);
+    current = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const trimmed = line.trim();
+    // 단독 S / S.
+    if (/^S\.?$/i.test(trimmed)) {
+      sawMarker = true;
+      flush();
+      continue;
+    }
+    // S1. 문장 / S 문장(공백 뒤 본문)
+    const numbered = trimmed.match(/^S(\d+)[.):]\s+(.+)$/i);
+    if (numbered) {
+      sawMarker = true;
+      flush();
+      current.push(numbered[2].trim());
+      continue;
+    }
+    const leading = trimmed.match(/^S\s+(.+)$/i);
+    if (leading) {
+      sawMarker = true;
+      flush();
+      current.push(leading[1].trim());
+      continue;
+    }
+    current.push(line);
+  }
+  flush();
+  if (!sawMarker || blocks.length < 2) return [];
+  return blocks.map((block, i) => {
+    const rest = block.replace(/^(?:S|F)?\d+[.):]\s+/i, "").trim();
+    return {
+      n: i + 1,
+      statement: rest || `섹션 ${i + 1}`,
+      verdict: "",
+      evidence: "",
+      fromS: true,
+    };
+  });
 }
 
 function extractByMarker(
@@ -703,11 +858,11 @@ export function splitNumberedClaimsInReport(report: TypedReport): TypedReport {
 
     changed = true;
     blocks.forEach((c, i) => {
-      const label = c.fromS ? `S${c.n}` : `${c.n}`;
+      // 보고서에는 S/번호 표시를 남기지 않음 — 주장 문장만 제목
       const title =
-        c.statement.length > 42
-          ? `${label}. ${c.statement.slice(0, 40).trim()}…`
-          : `${label}. ${c.statement}`;
+        c.statement.length > 48
+          ? `${c.statement.slice(0, 46).trim()}…`
+          : c.statement;
       const bodyParts = [
         c.statement,
         c.verdict ? `판정: ${c.verdict}` : "",
@@ -715,17 +870,19 @@ export function splitNumberedClaimsInReport(report: TypedReport): TypedReport {
       ].filter(Boolean);
       nextSections.push({
         sectionId: i === 0 ? sec.sectionId : undefined,
-        heading: title,
+        heading: title || `섹션 ${i + 1}`,
         body: plainTextToHtml(bodyParts.join("\n\n")),
         rich: true,
-        imageUrl: i === 0 ? sec.imageUrl : undefined,
-        images: i === 0 ? sec.images : undefined,
-        imageRefs: i === 0 ? sec.imageRefs : undefined,
+        // 이미지 칸은 비워 두고, 나눈 뒤 섹션마다 붙임
+        imageUrl: undefined,
+        images: undefined,
+        imageRefs: undefined,
       });
     });
   }
 
   if (!changed) return report;
+  // 원본 첫 섹션에만 있던 이미지는 이미지 룸에 남겨 재사용
   return { ...report, sections: nextSections };
 }
 
@@ -792,6 +949,79 @@ export function replaceAllReportBodies(
     ...report,
     sections,
     summaryExcerpt: firstPlain.slice(0, 280) || report.summaryExcerpt,
+  };
+}
+
+const GENERIC_SECTION_HEADING =
+  /^(본문|새 소주제|핵심 설명|섹션\s*\d*|보고서)$/i;
+
+/**
+ * 여러 섹션을 하나의 연속 본문으로 합칩니다.
+ * 제목은 본문 안 굵은 문단으로 넣고, 이미지·FC 연결은 순서대로 이어 붙입니다.
+ */
+export function mergeReportSectionsToSingleBody(
+  report: TypedReport
+): TypedReport {
+  if (report.sections.length <= 1) {
+    const only = report.sections[0];
+    if (!only) return report;
+    if (only.heading && !GENERIC_SECTION_HEADING.test(only.heading.trim())) {
+      return report;
+    }
+    return {
+      ...report,
+      sections: [{ ...only, heading: "본문" }],
+    };
+  }
+
+  const htmlParts: string[] = [];
+  const images: string[] = [];
+  const imageRefs: string[] = [];
+  const entries: NonNullable<ReportSectionBlock["entries"]> = [];
+  const seenEntry = new Set<string>();
+
+  for (const sec of report.sections) {
+    const heading = (sec.heading || "").trim();
+    if (heading && !GENERIC_SECTION_HEADING.test(heading)) {
+      htmlParts.push(`<p><strong>${escapeHtml(heading)}</strong></p>`);
+    }
+    const body = (sec.body || "").trim();
+    if (body) htmlParts.push(body);
+
+    for (const u of sec.images ?? []) {
+      images.push(u || "");
+    }
+    for (const id of sec.imageRefs ?? []) {
+      if (id && !imageRefs.includes(id)) imageRefs.push(id);
+    }
+    // images 가 비어 있고 imageUrl 만 있으면
+    if ((!sec.images || !sec.images.length) && sec.imageUrl) {
+      images.push(sec.imageUrl);
+    }
+
+    for (const e of sec.entries ?? []) {
+      const key = e.itemId || e.text;
+      if (key && seenEntry.has(key)) continue;
+      if (key) seenEntry.add(key);
+      entries.push(e);
+    }
+  }
+
+  const first = report.sections[0]!;
+  return {
+    ...report,
+    sections: [
+      {
+        sectionId: first.sectionId,
+        heading: "본문",
+        body: htmlParts.join("") || "<p><br></p>",
+        rich: true,
+        imageUrl: undefined,
+        images: images.length ? images : undefined,
+        imageRefs: imageRefs.length ? imageRefs : undefined,
+        entries: entries.length ? entries : undefined,
+      },
+    ],
   };
 }
 

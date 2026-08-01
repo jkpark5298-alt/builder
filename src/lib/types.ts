@@ -276,6 +276,18 @@ export interface VideoRecord {
 /** 주제 폴더 — 여러 Entry(VideoRecord)를 모아 태그 기준 통합 보고서 작성 */
 export type TopicStatus = "draft" | "ready";
 
+/** 전역 이미지 라이브러리 — 보고서에 재사용 (FC에는 사용하지 않음) */
+export interface LibraryImage {
+  id: string;
+  url: string;
+  /** 이미지 아래 메모 (필요 사항·출처·캡션 등) */
+  memo: string;
+  /** 선택 태그 (검색용) */
+  tag?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Topic {
   id: string;
   title: string;

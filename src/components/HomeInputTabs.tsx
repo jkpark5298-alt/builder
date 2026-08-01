@@ -17,7 +17,7 @@ export function HomeInputTabs() {
   ];
 
   return (
-    <div className="space-y-4">
+    <div id="paste" className="space-y-4 scroll-mt-24">
       <div
         className="flex gap-1 rounded-xl bg-ink-100/80 p-1"
         role="tablist"

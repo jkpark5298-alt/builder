@@ -11,8 +11,8 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  // Blob SDK가 서버리스에서 env를 정상적으로 읽도록
-  serverExternalPackages: ["@vercel/blob"],
+  // Blob SDK·PDF 추출이 서버리스에서 정상 동작하도록
+  serverExternalPackages: ["@vercel/blob", "unpdf"],
 };
 
 export default nextConfig;

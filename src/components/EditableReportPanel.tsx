@@ -10,7 +10,9 @@ import {
 import { useRouter } from "next/navigation";
 import {
   Check,
+  ClipboardPaste,
   Home,
+  ImagePlus,
   Loader2,
   Plus,
   Save,
@@ -19,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type {
+  LibraryImage,
   ReportSectionBlock,
   TypedReport,
   VideoRecord,
@@ -68,6 +71,7 @@ import { FactCheckAppendix } from "@/components/FactCheckAppendix";
 import { FormatToolbar } from "@/components/ReportFormatToolbar";
 import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
+import { ImageLibraryPicker } from "@/components/ImageLibraryPicker";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
@@ -75,10 +79,17 @@ import {
   formatSectionText,
   importReportText,
   inspectImportedReportText,
+  mergeReportSectionsToSingleBody,
   normalizeAiReportPaste,
   replaceAllReportBodies,
-  splitNumberedClaimsInReport,
+  sanitizeAiPasteText,
 } from "@/lib/report";
+import {
+  appendTrailingSMarker,
+  countTrailingSMarkers,
+  htmlWithSImages,
+  parseBodySImageSlots,
+} from "@/lib/report-body-s-slots";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
@@ -108,12 +119,14 @@ export function EditableReportPanel({
   const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
-  /** 툴바 「붙여넣기」 후 Ctrl+V 대기 섹션 인덱스 */
-  const [imagePasteArmedIdx, setImagePasteArmedIdx] = useState<number | null>(
-    null
-  );
+  /** 툴바·S슬롯 Ctrl+V 대기: 섹션 + S 슬롯 인덱스 */
+  const [armedSSlot, setArmedSSlot] = useState<{
+    secIdx: number;
+    slotIdx: number;
+  } | null>(null);
   const [imagePasteHint, setImagePasteHint] = useState<string | null>(null);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
@@ -284,8 +297,11 @@ export function EditableReportPanel({
   }, [editing, undoEdit, redoEdit]);
 
   useEffect(() => {
-    setDraft(report);
-  }, [report]);
+    // 본문 편집 중에는 서버 report 로 draft 를 덮지 않음
+    // (TipTap 포커스 중 화면과 draft 가 어긋나 S 슬롯이 안 뜨는 문제 방지)
+    if (mode === "body") return;
+    setDraft(report ? normalizeReportImageRefs(report) : report);
+  }, [report, mode]);
 
   useEffect(() => {
     const serverTs = new Date(video.updatedAt).getTime();
@@ -319,9 +335,10 @@ export function EditableReportPanel({
       void (async () => {
         const current = draftRef.current;
         if (!current) return;
+        const toSave = stabilizeReportFcAnchors(current);
+        const sentSnap = JSON.stringify(toSave);
         setAutoSaveStatus("saving");
         try {
-          const toSave = stabilizeReportFcAnchors(current);
           const res = await fetch(`/api/videos/${video.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -334,12 +351,18 @@ export function EditableReportPanel({
           if (!res.ok) throw new Error(data.error || "자동 저장 실패");
           if (data.video?.report) {
             lastSavedSnapRef.current = JSON.stringify(data.video.report);
-            setDraft(data.video.report);
-            setSavedSections(data.video.report.sections.map(sectionSnapshot));
+            // 저장 요청 보낸 뒤 사용자가 더 타이핑했으면 draft 유지
+            const stillSame =
+              JSON.stringify(draftRef.current) === sentSnap;
+            if (stillSame) {
+              setDraft(data.video.report);
+              setSavedSections(
+                data.video.report.sections.map(sectionSnapshot)
+              );
+            }
             setLocalVideo(data.video);
           }
           setAutoSaveStatus("saved");
-          router.refresh();
         } catch {
           setAutoSaveStatus("error");
         }
@@ -349,11 +372,25 @@ export function EditableReportPanel({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [draft, mode, video.id, router]);
+  }, [draft, mode, video.id]);
+
+  function goBodyMode() {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const next = mergeReportSectionsToSingleBody(prev);
+      queueMicrotask(() => {
+        setSavedSections(next.sections.map(sectionSnapshot));
+        setActiveSectionIdx(0);
+      });
+      return next;
+    });
+    setActiveSectionIdx(0);
+    setMode("body");
+  }
 
   useEffect(() => {
     function enterBody() {
-      setMode("body");
+      goBodyMode();
       document.getElementById("report")?.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -518,7 +555,8 @@ export function EditableReportPanel({
   function applyImportedReportText(mode: "merge" | "replaceAll" = "merge") {
     const current = draftRef.current;
     if (!current) return;
-    let text = importText;
+    let text = sanitizeAiPasteText(importText);
+    if (text !== importText.trim()) setImportText(text);
     let cleanedTried = false;
     const run = (src: string) =>
       mode === "replaceAll"
@@ -544,16 +582,17 @@ export function EditableReportPanel({
       alert(`붙여넣은 텍스트를 반영하지 못했습니다.\n\n${parsed}`);
       return;
     }
-    setDraft(next);
+    setDraft(mergeReportSectionsToSingleBody(next));
     setImportOpen(false);
     setImportText("");
+    setActiveSectionIdx(0);
     setMode("body");
     alert(
       mode === "replaceAll"
-        ? "본문 전체를 새 섹션으로 교체했습니다. 팩트체크·이미지룸은 유지됩니다."
+        ? "본문을 반영했습니다. 팩트체크·이미지룸은 유지됩니다."
         : cleanedTried
-          ? "AI 정리 후 정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다."
-          : "정리본을 반영했습니다. 이미지와 팩트체크는 유지됩니다."
+          ? "AI 정리 후 본문에 반영했습니다. 이미지와 팩트체크는 유지됩니다."
+          : "본문에 반영했습니다. 이미지와 팩트체크는 유지됩니다."
     );
   }
 
@@ -572,29 +611,110 @@ export function EditableReportPanel({
     );
   }
 
-  function splitClaimsToSections() {
-    const current = draftRef.current;
-    if (!current) return;
-    const next = splitNumberedClaimsInReport(current);
-    if (next === current) {
-      alert(
-        "나눌 표시가 없습니다.\n\n본문에 아래처럼 표시하세요:\n· S1. 주장…\n· S2. 주장…\n또는 블록 사이에 단독 줄로 S\n\n표시 후 다시 이 버튼을 누르세요."
+  /** 본문 S 슬롯(0-based)에 이미지 설정 — 섹션 분할 없음 */
+  async function addImagesToSSlot(
+    secIdx: number,
+    slotIdx: number,
+    files: File[]
+  ) {
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    if (!imageFiles.length) return;
+    try {
+      const dataUrls = await compressImageFiles(imageFiles);
+      if (!dataUrls.length) return;
+      const uploaded = await uploadDataUrls(
+        dataUrls,
+        `videos/${video.id}/report-s${secIdx}-${slotIdx}`
       );
-      return;
+      if (!uploaded.length) return;
+      updateDraft((prev) => {
+        const sec = prev.sections[secIdx];
+        if (!sec) return prev;
+        const slotCount = Math.max(
+          slotIdx + 1,
+          countTrailingSMarkers(sec.body || "")
+        );
+        const ordered = slotUrlsForSectionFrom(sec, prev.imageRoom, slotCount);
+        ordered[slotIdx] = uploaded[0]!;
+        const filled = ordered.filter(Boolean);
+        const { room } = upsertRoomUrls(prev.imageRoom, filled);
+        const refByUrl = new Map(
+          normalizeRoomItems(room).map((it) => [it.url, it.id])
+        );
+        const imageRefs = ordered
+          .map((u) => (u ? refByUrl.get(u) : undefined))
+          .filter(Boolean) as string[];
+        const sections = [...prev.sections];
+        sections[secIdx] = {
+          ...sec,
+          imageUrl: undefined,
+          images: ordered,
+          imageRefs: imageRefs.length ? imageRefs : undefined,
+        };
+        return { ...prev, imageRoom: room, sections };
+      }, { history: "immediate" });
+      setArmedSSlot(null);
+      setImagePasteHint(null);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "이미지 추가에 실패했습니다.");
     }
-    if (
-      !confirm(
-        `S/번호 표시를 섹션 ${next.sections.length}개로 나눌까요?\n나눈 뒤 각 섹션을 클릭해 이미지를 붙일 수 있습니다.`
-      )
-    ) {
-      return;
+  }
+
+  function clearSSlotImage(secIdx: number, slotIdx: number) {
+    updateDraft((prev) => {
+      const sec = prev.sections[secIdx];
+      if (!sec) return prev;
+      const slotCount = countTrailingSMarkers(sec.body || "");
+      if (!slotCount) return prev;
+      const ordered = slotUrlsForSectionFrom(sec, prev.imageRoom, slotCount);
+      ordered[slotIdx] = "";
+      const filled = ordered.filter(Boolean);
+      const { room } = upsertRoomUrls(prev.imageRoom, filled);
+      const refByUrl = new Map(
+        normalizeRoomItems(room).map((it) => [it.url, it.id])
+      );
+      const imageRefs = ordered
+        .map((u) => (u ? refByUrl.get(u) : undefined))
+        .filter(Boolean) as string[];
+      const sections = [...prev.sections];
+      sections[secIdx] = {
+        ...sec,
+        imageUrl: undefined,
+        images: ordered,
+        imageRefs: imageRefs.length ? imageRefs : undefined,
+      };
+      return { ...prev, imageRoom: room, sections };
+    }, { history: "immediate" });
+  }
+
+  function slotUrlsForSectionFrom(
+    sec: ReportSectionBlock,
+    room: TypedReport["imageRoom"] | undefined,
+    slotCount: number
+  ): string[] {
+    const out: string[] = Array.from({ length: slotCount }, () => "");
+    const stored = sec.images;
+    if (stored && stored.length) {
+      for (let i = 0; i < slotCount; i++) {
+        out[i] = (stored[i] || "").trim();
+      }
+      return out;
     }
-    setDraft(next);
-    setMode("body");
-    setActiveSectionIdx(0);
-    alert(
-      "섹션으로 나눴습니다. 각 섹션을 선택해 툴바 이미지/붙여넣기로 넣으세요."
-    );
+    const items = normalizeRoomItems(room);
+    const byId = new Map(items.map((it) => [it.id, it.url]));
+    const refs = sec.imageRefs ?? [];
+    for (let i = 0; i < slotCount; i++) {
+      const id = refs[i];
+      out[i] = (id && byId.get(id)) || "";
+    }
+    return out;
+  }
+
+  function slotUrlsForSection(
+    sec: ReportSectionBlock,
+    slotCount: number
+  ): string[] {
+    return slotUrlsForSectionFrom(sec, draft?.imageRoom, slotCount);
   }
 
   const resolveActiveTipTap = useCallback(() => {
@@ -603,14 +723,34 @@ export function EditableReportPanel({
       const key = sectionEditKey(sec, activeSectionIdx);
       const byKey = getReportEditor(key);
       if (byKey) return { editor: byKey, idx: activeSectionIdx };
+      const segLen = Math.max(
+        1,
+        parseBodySImageSlots(sec.body || "").segments.length
+      );
+      for (let g = 0; g < segLen + 2; g++) {
+        const segEd = getReportEditor(`${key}-seg-${g}`);
+        if (segEd?.isFocused) {
+          return { editor: segEd, idx: activeSectionIdx };
+        }
+      }
     }
     const active = getActiveReportEditor();
     if (active) {
       const sections = draftRef.current?.sections ?? [];
       for (let i = 0; i < sections.length; i++) {
         const s = sections[i]!;
-        if (getReportEditor(sectionEditKey(s, i)) === active) {
+        const base = sectionEditKey(s, i);
+        if (getReportEditor(base) === active) {
           return { editor: active, idx: i };
+        }
+        const segLen = Math.max(
+          1,
+          parseBodySImageSlots(s.body || "").segments.length
+        );
+        for (let g = 0; g < segLen + 2; g++) {
+          if (getReportEditor(`${base}-seg-${g}`) === active) {
+            return { editor: active, idx: i };
+          }
         }
       }
       return { editor: active, idx: activeSectionIdx };
@@ -737,14 +877,7 @@ export function EditableReportPanel({
     }
     try {
       let working = draft;
-      // 편집 끝내기 시 S1/S2 또는 단독 S 표시가 있으면 섹션으로 자동 분할
-      if (opts?.exit) {
-        const split = splitNumberedClaimsInReport(working);
-        if (split !== working) {
-          working = split;
-          setDraft(split);
-        }
-      }
+      // S 는 섹션 분할이 아니라 본문 이미지 위치 표시 — 자동 분할하지 않음
       const toSave = stabilizeReportFcAnchors(working);
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
@@ -896,16 +1029,47 @@ export function EditableReportPanel({
       Math.max(0, activeSectionIdx),
       Math.max(0, (draft?.sections.length ?? 1) - 1)
     );
-    const { refs } = upsertRoomUrls(draft?.imageRoom, [src]);
-    patchSection(
-      idx,
-      {
-        imageRefs: Array.from(
-          new Set([...(draft?.sections[idx]?.imageRefs ?? []), ...refs])
+    const sec = draft?.sections[idx];
+    if (!countTrailingSMarkers(sec?.body || "")) {
+      setImagePasteHint(
+        "이미지 넣을 문장 끝에 S 를 붙인 뒤 「현재 섹션에 넣기」를 누르세요. (예: …이다.S)"
+      );
+      return;
+    }
+    applyUrlsToSSlots(idx, [src]);
+  }
+
+  function pickLibraryImageIntoReport(img: LibraryImage) {
+    updateDraft((prev) => {
+      const { room, refs } = upsertRoomUrls(prev.imageRoom, [img.url]);
+      const withMeta = room.map((it) =>
+        it.url === img.url
+          ? {
+              ...it,
+              note: img.memo || it.note,
+              tag: img.tag || it.tag,
+            }
+          : it
+      );
+      const idx = Math.min(
+        Math.max(0, activeSectionIdx),
+        Math.max(0, prev.sections.length - 1)
+      );
+      return {
+        ...prev,
+        imageRoom: withMeta,
+        sections: prev.sections.map((sec, i) =>
+          i === idx
+            ? {
+                ...sec,
+                imageRefs: Array.from(
+                  new Set([...(sec.imageRefs ?? []), ...refs])
+                ),
+              }
+            : sec
         ),
-      },
-      "immediate"
-    );
+      };
+    }, { history: "immediate" });
   }
 
   function deleteSection(idx: number) {
@@ -1003,6 +1167,45 @@ export function EditableReportPanel({
     });
   }
 
+  function applyUrlsToSSlots(secIdx: number, urls: string[]) {
+    if (!urls.length) return;
+    updateDraft((prev) => {
+      const sec = prev.sections[secIdx];
+      if (!sec) return prev;
+      const slotCount = countTrailingSMarkers(sec.body || "");
+      if (!slotCount) {
+        return prev;
+      }
+      const ordered = slotUrlsForSectionFrom(sec, prev.imageRoom, slotCount);
+      let ui = 0;
+      for (let i = 0; i < slotCount && ui < urls.length; i++) {
+        if (!ordered[i]) {
+          ordered[i] = urls[ui++]!;
+        }
+      }
+      // 남은 URL은 마지막 슬롯부터 덮어쓰지 않고, 빈 칸이 없으면 끝 슬롯에 추가 표시용으로 images 뒤에
+      while (ui < urls.length) {
+        ordered.push(urls[ui++]!);
+      }
+      const filled = ordered.filter(Boolean);
+      const { room } = upsertRoomUrls(prev.imageRoom, filled);
+      const refByUrl = new Map(
+        normalizeRoomItems(room).map((it) => [it.url, it.id])
+      );
+      const imageRefs = ordered
+        .map((u) => (u ? refByUrl.get(u) : undefined))
+        .filter(Boolean) as string[];
+      const sections = [...prev.sections];
+      sections[secIdx] = {
+        ...sec,
+        imageUrl: undefined,
+        images: ordered,
+        imageRefs: imageRefs.length ? imageRefs : undefined,
+      };
+      return { ...prev, imageRoom: room, sections };
+    }, { history: "immediate" });
+  }
+
   function pasteFcImagesToActiveSection(urls: string[]) {
     if (!draft || !urls.length) return;
     if (!editing) setMode("body");
@@ -1010,20 +1213,14 @@ export function EditableReportPanel({
       Math.max(0, activeSectionIdx),
       Math.max(0, draft.sections.length - 1)
     );
-    updateDraft((prev) => {
-      const sections = [...prev.sections];
-      const sec = sections[idx];
-      const { room, refs } = upsertRoomUrls(prev.imageRoom, urls);
-      sections[idx] = {
-        ...sec,
-        imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
-      };
-      return {
-        ...prev,
-        sections,
-        imageRoom: room,
-      };
-    });
+    const sec = draft.sections[idx];
+    if (!countTrailingSMarkers(sec?.body || "")) {
+      setImagePasteHint(
+        "이미지 넣을 문장 끝에 S 를 붙인 뒤 다시 붙여넣으세요."
+      );
+      return;
+    }
+    applyUrlsToSSlots(idx, urls);
   }
 
   function linkFcToActiveSection(row: ReportFcRow) {
@@ -1079,64 +1276,37 @@ export function EditableReportPanel({
     });
   }
 
-  async function addImagesToSection(idx: number, files: File[]) {
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-    if (!imageFiles.length) return;
-    try {
-      const dataUrls = await compressImageFiles(imageFiles);
-      if (!dataUrls.length) return;
-      const uploaded = await uploadDataUrls(
-        dataUrls,
-        `videos/${video.id}/report`
-      );
-      updateDraft((prev) => {
-        const sections = [...prev.sections];
-        const sec = sections[idx];
-        const { room, refs } = upsertRoomUrls(prev.imageRoom, uploaded);
-        sections[idx] = {
-          ...sec,
-          imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
-        };
-        return {
-          ...prev,
-          sections,
-          imageRoom: room,
-        };
-      });
-    } catch (e) {
-      alert(
-        e instanceof Error ? e.message : "이미지 추가에 실패했습니다."
-      );
-    }
-  }
-
   async function pasteImagesToSection(idx: number) {
     if (!editing) {
       setMode("body");
     }
     setActiveSectionIdx(idx);
-    // alert 금지 — 포커스를 뺏어 Ctrl+V가 막힘
-    setImagePasteArmedIdx(idx);
-    setImagePasteHint(
-      "이미지를 복사한 뒤 지금 Ctrl+V 하세요. 또는 「이미지」버튼으로 파일을 선택하세요."
-    );
-
-    const el = document.getElementById(
-      `sec-paste-${idx}`
-    ) as HTMLTextAreaElement | null;
-    if (el) {
-      el.value = "";
-      el.focus();
-      el.select();
+    const sec = draftRef.current?.sections[idx];
+    const slotCount = countTrailingSMarkers(sec?.body || "");
+    if (!slotCount) {
+      setImagePasteHint(
+        "이미지 넣을 문장 끝에 S 를 붙이세요. 예: …이다. S  → 아래에 칸이 열립니다"
+      );
+      return;
     }
-
+    const urls = slotUrlsForSection(sec!, slotCount);
+    const emptyIdx = urls.findIndex((u) => !u);
+    const slotIdx = emptyIdx >= 0 ? emptyIdx : 0;
+    setArmedSSlot({ secIdx: idx, slotIdx });
+    setImagePasteHint(
+      "이미지를 복사한 뒤 지금 Ctrl+V 하세요. 또는 파일 버튼을 누르세요."
+    );
+    window.setTimeout(() => {
+      (
+        document.getElementById(
+          "s-slot-paste-" + idx + "-" + slotIdx
+        ) as HTMLTextAreaElement | null
+      )?.focus();
+    }, 50);
     try {
       const files = await readImagesFromClipboard();
       if (files.length) {
-        await addImagesToSection(idx, files);
-        setImagePasteArmedIdx(null);
-        setImagePasteHint(null);
-        return;
+        await addImagesToSSlot(idx, slotIdx, files);
       }
     } catch {
       /* Ctrl+V 대기 */
@@ -1146,21 +1316,28 @@ export function EditableReportPanel({
   function handleSectionPaste(idx: number, e: React.ClipboardEvent) {
     if (!editing) return;
     const files = extractImageFilesFromDataTransfer(e.clipboardData);
-    // 이미지면 입력란/본문 어디서든 즉시 섹션에 추가 (textarea early-return 버그 수정)
     if (files.length) {
       e.preventDefault();
       e.stopPropagation();
-      void addImagesToSection(idx, files).then(() => {
-        setImagePasteArmedIdx(null);
-        setImagePasteHint(null);
-      });
+      const slotCount = countTrailingSMarkers(
+        draftRef.current?.sections[idx]?.body || ""
+      );
+      if (!slotCount) {
+        setImagePasteHint(
+          "문장 끝에 S 를 붙인 뒤에만 이미지를 넣을 수 있습니다."
+        );
+        return;
+      }
+      const slotIdx =
+        armedSSlot?.secIdx === idx ? armedSSlot.slotIdx : 0;
+      void addImagesToSSlot(idx, Math.min(slotIdx, slotCount - 1), files);
       return;
     }
 
     const target = e.target as HTMLElement | null;
     const isPasteCapture =
       target instanceof HTMLTextAreaElement &&
-      target.id === `sec-paste-${idx}`;
+      target.id.startsWith("s-slot-paste-" + idx + "-");
     if (isPasteCapture) return;
 
     const isPlainTextField =
@@ -1178,22 +1355,19 @@ export function EditableReportPanel({
   }
 
   useEffect(() => {
-    if (imagePasteArmedIdx === null) return;
-    const idx = imagePasteArmedIdx;
+    if (!armedSSlot) return;
+    const { secIdx, slotIdx } = armedSSlot;
     const onWin = (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
       const files = extractImageFilesFromDataTransfer(e.clipboardData);
       if (!files.length) return;
       e.preventDefault();
-      void addImagesToSection(idx, files).then(() => {
-        setImagePasteArmedIdx(null);
-        setImagePasteHint(null);
-      });
+      void addImagesToSSlot(secIdx, slotIdx, files);
     };
     window.addEventListener("paste", onWin, true);
     return () => window.removeEventListener("paste", onWin, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm only when idx changes
-  }, [imagePasteArmedIdx]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armedSSlot]);
 
   async function insertHandwriting(idx: number, dataUrl: string) {
     try {
@@ -1201,20 +1375,12 @@ export function EditableReportPanel({
         [dataUrl],
         `videos/${video.id}/report`
       );
-      updateDraft((prev) => {
-        const sections = [...prev.sections];
-        const sec = sections[idx];
-        const { room, refs } = upsertRoomUrls(prev.imageRoom, [url]);
-        sections[idx] = {
-          ...sec,
-          imageRefs: Array.from(new Set([...(sec.imageRefs ?? []), ...refs])),
-        };
-        return {
-          ...prev,
-          sections,
-          imageRoom: room,
-        };
-      });
+      if (!url) return;
+      if (!countTrailingSMarkers(draftRef.current?.sections[idx]?.body || "")) {
+        alert("이미지 넣을 문장 끝에 S 를 붙인 뒤 손글씨를 넣으세요.");
+        return;
+      }
+      applyUrlsToSSlots(idx, [url]);
     } catch (e) {
       alert(e instanceof Error ? e.message : "손글씨 이미지 저장 실패");
     } finally {
@@ -1228,21 +1394,12 @@ export function EditableReportPanel({
         [dataUrl],
         `videos/${video.id}/report`
       );
-      updateDraft((prev) => {
-        const sections = [...prev.sections];
-        const { room, refs } = upsertRoomUrls(prev.imageRoom, [url]);
-        sections[idx] = {
-          ...sections[idx],
-          imageRefs: Array.from(
-            new Set([...(sections[idx].imageRefs ?? []), ...refs])
-          ),
-        };
-        return {
-          ...prev,
-          sections,
-          imageRoom: room,
-        };
-      });
+      if (!url) return;
+      if (!countTrailingSMarkers(draftRef.current?.sections[idx]?.body || "")) {
+        alert("이미지 넣을 문장 끝에 S 를 붙인 뒤 텍스트 이미지를 넣으세요.");
+        return;
+      }
+      applyUrlsToSSlots(idx, [url]);
     } catch (e) {
       alert(e instanceof Error ? e.message : "텍스트 이미지 저장 실패");
     } finally {
@@ -1269,10 +1426,23 @@ export function EditableReportPanel({
     const key = sec
       ? sectionEditKey(sec, activeSectionIdx)
       : null;
-    const editor =
+    let editor =
       (key ? getReportEditor(key) : null) ||
       getActiveReportEditor() ||
       null;
+    if (!editor && key && sec) {
+      const segLen = Math.max(
+        1,
+        parseBodySImageSlots(sec.body || "").segments.length
+      );
+      for (let g = 0; g < segLen; g++) {
+        const segEd = getReportEditor(`${key}-seg-${g}`);
+        if (segEd) {
+          editor = segEd;
+          break;
+        }
+      }
+    }
     if (!editor) return null;
     editor.chain().focus().run();
     return editor;
@@ -1356,10 +1526,11 @@ export function EditableReportPanel({
                   setSectionSavedFlash({});
                 }
                 setOpenFcKey(null);
-                setMode(tab.id);
-                if (tab.id === "body" && report) {
-                  setSavedSections(report.sections.map(sectionSnapshot));
+                if (tab.id === "body") {
+                  goBodyMode();
+                  return;
                 }
+                setMode(tab.id);
               }}
               className={`min-h-10 flex-1 sm:flex-none rounded-lg px-4 text-sm font-medium transition-colors ${
                 mode === tab.id
@@ -1393,8 +1564,8 @@ export function EditableReportPanel({
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2 flex flex-wrap items-center gap-2">
             <span>
               {draftPhase
-                ? "본문 탭 · 자동 저장됩니다. 수정한 본문은 팩트체크 완료 후 「보고서 만들기」 시 유지됩니다."
-                : "본문 탭 · 입력 후 자동 저장됩니다. 「편집 끝내기」로 보기 탭으로 돌아갑니다."}
+                ? "본문 탭 · 자동 저장됩니다. 수정한 본문은 팩트체크 완료 후 「보고서 만들기」 시 유지됩니다. 이미지 필요 문장 끝에 S 를 붙이면 칸이 열립니다."
+                : "본문 탭 · 입력 후 자동 저장됩니다. 이미지 필요 문장 끝에 S 를 붙이면 칸이 열리고, 없으면 텍스트만 보입니다."}
             </span>
             {autoSaveStatus === "pending" && (
               <span className="text-ink-400">저장 대기…</span>
@@ -1533,10 +1704,31 @@ export function EditableReportPanel({
                 }
                 onImage={() => {
                   focusActiveBodyEditor();
-                  const input = document.getElementById(
-                    `sec-img-${activeSectionIdx}`
-                  ) as HTMLInputElement | null;
-                  input?.click();
+                  const sec = draftRef.current?.sections[activeSectionIdx];
+                  const slotCount = countTrailingSMarkers(sec?.body || "");
+                  if (!slotCount) {
+                    setImagePasteHint(
+                      "이미지 넣을 문장 끝에 S 를 붙이세요. 예: …이다. S"
+                    );
+                    return;
+                  }
+                  const urls = slotUrlsForSection(sec!, slotCount);
+                  const slotIdx = Math.max(
+                    0,
+                    urls.findIndex((u) => !u)
+                  );
+                  const emptyIdx = urls.findIndex((u) => !u);
+                  const target =
+                    emptyIdx >= 0 ? emptyIdx : Math.min(slotIdx, slotCount - 1);
+                  setArmedSSlot({
+                    secIdx: activeSectionIdx,
+                    slotIdx: target,
+                  });
+                  (
+                    document.getElementById(
+                      `s-slot-img-${activeSectionIdx}-${target}`
+                    ) as HTMLInputElement | null
+                  )?.click();
                 }}
                 onPasteImage={() => {
                   void pasteImagesToSection(activeSectionIdx);
@@ -1564,11 +1756,12 @@ export function EditableReportPanel({
             {importOpen && (
               <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
                 <p className="text-xs text-ink-700">
-                  이미지 단위로 나누려면 본문에{" "}
-                  <strong>S1. / S2. / S3.</strong> 또는 블록 사이 단독 줄{" "}
-                  <strong>S</strong> 를 넣으세요. 「AI 답변 정리」·「전체 본문
-                  교체」또는 아래 <strong>S 표시 → 섹션 나누기</strong>로
-                  적용합니다.
+                  여기는 텍스트만 붙입니다. 이미지 넣을 문장{" "}
+                  <strong>끝에 S</strong> 를 적어 두고(예:{" "}
+                  <code className="text-[11px]">…기원이다. S</code>
+                  ) 「전체 본문 교체」한 뒤, 본문 아래 칸 또는 이미지 룸의
+                  「현재 섹션에 넣기」로 그림을 넣으세요. 보기 화면에는 S 가
+                  보이지 않습니다.
                 </p>
                 <textarea
                   value={importText}
@@ -1629,26 +1822,40 @@ export function EditableReportPanel({
             )}
 
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs font-medium text-ink-700">
                   이미지 룸 · 재사용 보관함
                 </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    (
-                      document.getElementById("report-room-upload") as
-                        | HTMLInputElement
-                        | null
-                    )?.click()
-                  }
-                  disabled={imageRoomBusy}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 disabled:opacity-50"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  {imageRoomBusy ? "업로드 중…" : "이미지 룸에 추가"}
-                </button>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setLibraryPickerOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-2 py-1 text-xs font-medium text-ink-900"
+                  >
+                    이미지 빠른 넣기 (Ctrl+V)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      (
+                        document.getElementById("report-room-upload") as
+                          | HTMLInputElement
+                          | null
+                      )?.click()
+                    }
+                    disabled={imageRoomBusy}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 disabled:opacity-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {imageRoomBusy ? "업로드 중…" : "룸에만 추가"}
+                  </button>
+                </div>
               </div>
+              <p className="text-[11px] text-ink-500">
+                <strong>홈으로 나가지 마세요.</strong> 「이미지 빠른 넣기」에서
+                Ctrl+V·파일로 바로 현재 섹션에 붙입니다. 섹션을 선택한 뒤
+                붙여넣기도 됩니다.
+              </p>
               <input
                 id="report-room-upload"
                 type="file"
@@ -1725,178 +1932,255 @@ export function EditableReportPanel({
               )}
             </div>
 
-            <div className="divide-y divide-ink-100">
+            <div className="p-4 sm:p-5">
               {draft.sections.map((sec, idx) => {
                 const sectionMarkers = markers.filter(
                   (m) => m.sectionIdx === idx
                 );
-                const sectionImages = collectSectionImagesFromRoom(
-                  sec,
-                  draft.imageRoom
-                );
-                const dirty = isSectionDirty(idx);
-                const savingThis = savingSectionIdx === idx;
-                const savedFlash = sectionSavedFlash[idx];
+                const { segments: sSegments, slotCount: sSlotCount } =
+                  parseBodySImageSlots(sec.body || "");
+                const slotUrls = slotUrlsForSection(sec, sSlotCount);
 
                 return (
                   <div
                     key={sectionEditKey(sec, idx)}
-                    className={`p-4 sm:p-5 space-y-3 transition-colors ${
-                      activeSectionIdx === idx ? "bg-accent-muted/20" : ""
-                    }`}
+                    className="space-y-3"
                     onPaste={(e) => handleSectionPaste(idx, e)}
                     onFocusCapture={() => setActiveSectionIdx(idx)}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        value={sec.heading}
-                        onChange={(e) =>
-                          patchSection(
-                            idx,
-                            { heading: e.target.value },
-                            "debounced"
-                          )
-                        }
-                        onFocus={() => setActiveSectionIdx(idx)}
-                        className="flex-1 min-w-[12rem] rounded-lg border border-ink-200 px-3 py-2 text-lg font-medium text-accent outline-none focus:border-accent"
-                      />
-                      {dirty && !savingThis && !savedFlash && (
-                        <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
-                          수정됨
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void saveSection(idx)}
-                        disabled={
-                          saving ||
-                          savingSectionIdx !== null ||
-                          !dirty
-                        }
-                        className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-accent/40 bg-white px-3 text-sm font-medium text-accent hover:bg-accent-muted/30 disabled:opacity-50"
-                      >
-                        {savedFlash ? (
-                          <Check className="h-4 w-4 text-verify-true" />
-                        ) : (
-                          <Save className="h-4 w-4" />
-                        )}
-                        {savingThis
-                          ? "저장 중…"
-                          : savedFlash
-                            ? "저장됨"
-                            : "이 단락 저장"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteSection(idx)}
-                        className="inline-flex items-center gap-1 min-h-10 rounded-lg border border-verify-false/40 bg-verify-false/5 px-3 text-sm text-verify-false"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        삭제
-                      </button>
-                    </div>
+                    {/* S 위치마다 본문 조각 → 이미지 칸 순으로 배치 */}
+                    {(sSegments.length
+                      ? sSegments
+                      : [
+                          {
+                            html: sec.body || "<p></p>",
+                            hasSlot: false,
+                            preview: "",
+                          },
+                        ]
+                    ).map((seg, segIdx) => {
+                      const slotIdxBefore = sSegments
+                        .slice(0, segIdx)
+                        .filter((s) => s.hasSlot).length;
+                      const slotIdx = seg.hasSlot ? slotIdxBefore : -1;
+                      const src =
+                        slotIdx >= 0 ? slotUrls[slotIdx] || "" : "";
+                      const armed =
+                        slotIdx >= 0 &&
+                        armedSSlot?.secIdx === idx &&
+                        armedSSlot.slotIdx === slotIdx;
+                      const baseKey = sectionEditKey(sec, idx);
+                      const editorKey =
+                        sSlotCount > 0
+                          ? `${baseKey}-seg-${segIdx}`
+                          : baseKey;
 
-                    <input
-                      id={`sec-img-${idx}`}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        void addImagesToSection(
-                          idx,
-                          Array.from(e.target.files ?? [])
-                        );
-                        e.target.value = "";
-                        setImagePasteArmedIdx(null);
-                        setImagePasteHint(null);
-                      }}
-                    />
+                      return (
+                        <div
+                          key={`${baseKey}-block-${segIdx}`}
+                          className="space-y-2"
+                        >
+                          <RichBody
+                            id={
+                              segIdx === 0 && sec.sectionId
+                                ? `sec-body-${sec.sectionId}`
+                                : undefined
+                            }
+                            editorKey={editorKey}
+                            html={seg.html || "<p></p>"}
+                            onSaveSelection={saveEditorSelection}
+                            onFocus={() => setActiveSectionIdx(idx)}
+                            onChange={(html) => {
+                              if (sSlotCount === 0) {
+                                patchSection(
+                                  idx,
+                                  { body: html, rich: true },
+                                  "debounced"
+                                );
+                                return;
+                              }
+                              const body = sSegments
+                                .map((s, i) => {
+                                  if (i !== segIdx) {
+                                    return s.hasSlot
+                                      ? appendTrailingSMarker(s.html)
+                                      : s.html || "<p></p>";
+                                  }
+                                  // 이 조각에 S 를 새로 쓰면 그대로 두고, 아니면 기존 슬롯 유지
+                                  if (countTrailingSMarkers(html) > 0) {
+                                    return html;
+                                  }
+                                  return s.hasSlot
+                                    ? appendTrailingSMarker(html)
+                                    : html;
+                                })
+                                .join("");
+                              patchSection(
+                                idx,
+                                { body, rich: true },
+                                "debounced"
+                              );
+                            }}
+                          />
 
-                    <textarea
-                      id={`sec-paste-${idx}`}
-                      aria-label="이미지 붙여넣기"
-                      rows={2}
-                      placeholder="여기 클릭 후 Ctrl+V로 이미지 붙여넣기"
-                      className={`w-full rounded-lg border border-dashed px-2 py-1.5 text-xs outline-none focus:border-accent ${
-                        imagePasteArmedIdx === idx
-                          ? "border-accent bg-accent-muted/40 text-ink-800"
-                          : "border-ink-200 bg-white text-ink-500"
-                      }`}
-                      onFocus={() => {
-                        setActiveSectionIdx(idx);
-                        setImagePasteArmedIdx(idx);
-                        setImagePasteHint(
-                          "지금 Ctrl+V로 이미지를 붙여넣으세요."
-                        );
-                      }}
-                      onPaste={(e) => handleSectionPaste(idx, e)}
-                      onInput={(e) => {
-                        (e.target as HTMLTextAreaElement).value = "";
-                      }}
-                    />
-
-                    {imagePasteArmedIdx === idx && (
-                      <p className="text-[11px] text-amber-800">
-                        Ctrl+V 대기 중 · 또는 위 툴바 「이미지」로 파일 선택
-                      </p>
-                    )}
-                    <RichBody
-                      id={sec.sectionId ? `sec-body-${sec.sectionId}` : undefined}
-                      editorKey={sectionEditKey(sec, idx)}
-                      html={sec.body}
-                      onSaveSelection={saveEditorSelection}
-                      onFocus={() => setActiveSectionIdx(idx)}
-                      onChange={(html) =>
-                        patchSection(
-                          idx,
-                          { body: html, rich: true },
-                          "debounced"
-                        )
-                      }
-                    />
-
-                    {sectionImages.length > 0 && (
-                      <div className="space-y-2 pt-1">
-                        {sectionImages.map((src) => {
-                          const roomItem = normalizeRoomItems(draft.imageRoom).find(
-                            (item) => item.url === src
-                          );
-                          const isAttached = Boolean(
-                            roomItem && sec.imageRefs?.includes(roomItem.id)
-                          );
-                          return (
+                          {seg.hasSlot && slotIdx >= 0 && (
                             <div
-                              key={src.slice(0, 64)}
-                              className="relative overflow-hidden rounded-xl border border-ink-100"
+                              className={`rounded-xl border border-dashed px-3 py-2.5 space-y-2 ${
+                                armed
+                                  ? "border-accent bg-accent-muted/35"
+                                  : "border-ink-200 bg-ink-50/60"
+                              }`}
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={src}
-                                alt=""
-                                className="w-full max-h-72 object-contain bg-white"
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-medium text-ink-800">
+                                  이미지 {slotIdx + 1}
+                                  {seg.preview
+                                    ? ` · ${seg.preview}${
+                                        seg.preview.length >= 40 ? "…" : ""
+                                      }`
+                                    : ""}
+                                  {src ? "" : " · 비어 있음"}
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  <input
+                                    id={`s-slot-img-${idx}-${slotIdx}`}
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      void addImagesToSSlot(
+                                        idx,
+                                        slotIdx,
+                                        Array.from(e.target.files ?? [])
+                                      );
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    title="파일에서 이미지"
+                                    onClick={() => {
+                                      setActiveSectionIdx(idx);
+                                      setArmedSSlot({
+                                        secIdx: idx,
+                                        slotIdx,
+                                      });
+                                      (
+                                        document.getElementById(
+                                          `s-slot-img-${idx}-${slotIdx}`
+                                        ) as HTMLInputElement | null
+                                      )?.click();
+                                    }}
+                                    className="inline-flex items-center justify-center min-h-9 min-w-9 rounded-lg border border-ink-200 bg-white text-ink-700 hover:border-accent"
+                                  >
+                                    <ImagePlus className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="클립보드에서 붙여넣기"
+                                    onClick={() => {
+                                      setActiveSectionIdx(idx);
+                                      setArmedSSlot({
+                                        secIdx: idx,
+                                        slotIdx,
+                                      });
+                                      setImagePasteHint(
+                                        "이미지를 복사한 뒤 지금 Ctrl+V 하세요."
+                                      );
+                                      window.setTimeout(() => {
+                                        (
+                                          document.getElementById(
+                                            `s-slot-paste-${idx}-${slotIdx}`
+                                          ) as HTMLTextAreaElement | null
+                                        )?.focus();
+                                      }, 50);
+                                      void (async () => {
+                                        try {
+                                          const files =
+                                            await readImagesFromClipboard();
+                                          if (files.length) {
+                                            await addImagesToSSlot(
+                                              idx,
+                                              slotIdx,
+                                              files
+                                            );
+                                          }
+                                        } catch {
+                                          /* Ctrl+V 대기 */
+                                        }
+                                      })();
+                                    }}
+                                    className={`inline-flex items-center gap-1 min-h-9 rounded-lg border px-2.5 text-xs font-medium ${
+                                      armed
+                                        ? "border-accent bg-accent-muted/50 text-ink-900"
+                                        : "border-ink-200 bg-white text-ink-700 hover:border-accent"
+                                    }`}
+                                  >
+                                    <ClipboardPaste className="h-3.5 w-3.5" />
+                                    붙여넣기
+                                  </button>
+                                </div>
+                              </div>
+                              <textarea
+                                id={`s-slot-paste-${idx}-${slotIdx}`}
+                                aria-label={`이미지 ${slotIdx + 1} 붙여넣기`}
+                                rows={1}
+                                placeholder="여기 클릭 후 Ctrl+V"
+                                className="w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs text-ink-500 outline-none focus:border-accent"
+                                onFocus={() => {
+                                  setActiveSectionIdx(idx);
+                                  setArmedSSlot({ secIdx: idx, slotIdx });
+                                  setImagePasteHint(
+                                    "지금 Ctrl+V로 이미지를 붙여넣으세요."
+                                  );
+                                }}
+                                onPaste={(e) => {
+                                  const files =
+                                    extractImageFilesFromDataTransfer(
+                                      e.clipboardData
+                                    );
+                                  if (!files.length) return;
+                                  e.preventDefault();
+                                  void addImagesToSSlot(
+                                    idx,
+                                    slotIdx,
+                                    files
+                                  );
+                                }}
+                                onInput={(e) => {
+                                  (e.target as HTMLTextAreaElement).value =
+                                    "";
+                                }}
                               />
-                              {isAttached && (
-                                <button
-                                  type="button"
-                                  className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
-                                  onClick={() => {
-                                    if (!roomItem) return;
-                                    patchSection(idx, {
-                                      imageRefs: sec.imageRefs?.filter(
-                                        (ref) => ref !== roomItem.id
-                                      ),
-                                    });
-                                  }}
-                                >
-                                  <X className="h-4 w-4" />
-                                </button>
+                              {armed && !src && (
+                                <p className="text-[11px] text-amber-800">
+                                  Ctrl+V 대기 중
+                                </p>
                               )}
+                              {src ? (
+                                <div className="relative overflow-hidden rounded-xl border border-ink-100">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={src}
+                                    alt=""
+                                    className="w-full max-h-72 object-contain object-left bg-white"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="absolute top-2 right-2 rounded-lg bg-white/90 border border-ink-200 p-1.5"
+                                    onClick={() =>
+                                      clearSSlotImage(idx, slotIdx)
+                                    }
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                          )}
+                        </div>
+                      );
+                    })}
 
                     {sectionMarkers.length > 0 && (
                       <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2">
@@ -1943,30 +2227,12 @@ export function EditableReportPanel({
               })}
             </div>
 
-            <div className="border-t border-ink-100 p-3 space-y-2">
-              <button
-                type="button"
-                onClick={splitClaimsToSections}
-                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-accent/40 bg-white text-sm font-medium text-ink-900 hover:bg-accent-muted/40"
-              >
-                S 표시 → 섹션·이미지용으로 나누기
-              </button>
-              <button
-                type="button"
-                onClick={addFlowSection}
-                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-accent/40 bg-accent-muted/40 text-sm font-medium text-accent hover:bg-accent-muted"
-              >
-                <Plus className="h-4 w-4" />
-                본문 흐름용 섹션 추가 (핵심 설명 + 대표 이미지)
-              </button>
-              <button
-                type="button"
-                onClick={() => addSection()}
-                className="inline-flex items-center gap-1.5 min-h-11 w-full justify-center rounded-xl border border-dashed border-ink-300 bg-ink-50 text-sm font-medium text-ink-700 hover:border-accent"
-              >
-                <Plus className="h-4 w-4" />
-                섹션 추가
-              </button>
+            <div className="border-t border-ink-100 p-3">
+              <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
+                본문은 하나의 글로 편집합니다. 이미지가 필요하면 문장 끝에{" "}
+                <strong>S</strong> 를 붙이세요. S 가 있는 곳에만 칸이 열리고,
+                없으면 텍스트만 보입니다.
+              </div>
             </div>
           </div>
         ) : (
@@ -1977,23 +2243,21 @@ export function EditableReportPanel({
               markers
             );
             const fcImages = collectSectionFcImages(sec, fcByItem);
-            const sectionOwn = new Set(
-              collectSectionImagesFromRoom(sec, draft.imageRoom)
-            );
+            const sSlotCount = countTrailingSMarkers(sec.body || "");
+            const slotUrls = slotUrlsForSection(sec, sSlotCount);
+            const sectionOwn = new Set(slotUrls.filter(Boolean));
             const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));
-            const sectionImages = collectSectionImagesFromRoom(
-              sec,
-              draft.imageRoom
-            );
+            const viewHtml = draftPhase
+              ? parseBodySImageSlots(markedHtml).textOnlyHtml || markedHtml
+              : htmlWithSImages(markedHtml, slotUrls);
 
             return (
               <div
                 key={`${sec.heading}-${idx}`}
                 className="space-y-3 report-section"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-medium text-accent text-lg">{sec.heading}</h3>
-                  <div className="flex flex-wrap gap-1 print:hidden">
+                <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+                  <div className="flex flex-wrap gap-1">
                     <button
                       type="button"
                       onClick={() =>
@@ -2004,7 +2268,7 @@ export function EditableReportPanel({
                       }
                       className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
                     >
-                      섹션 text 복사
+                      본문 복사
                     </button>
                     <button
                       type="button"
@@ -2013,12 +2277,12 @@ export function EditableReportPanel({
                           [formatSectionText(draft, idx), formatFactChecksText(draft)]
                             .filter(Boolean)
                             .join("\n\n"),
-                          "섹션+팩트체크"
+                          "본문+팩트체크"
                         )
                       }
                       className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
                     >
-                      섹션+FC 복사
+                      본문+FC 복사
                     </button>
                   </div>
                 </div>
@@ -2026,27 +2290,9 @@ export function EditableReportPanel({
                 {sec.body && (
                   <div
                     className="report-body text-sm text-ink-800 leading-relaxed space-y-2"
-                    dangerouslySetInnerHTML={{ __html: markedHtml }}
+                    dangerouslySetInnerHTML={{ __html: viewHtml }}
                     onClick={onBodyClick}
                   />
-                )}
-
-                {sectionImages.length > 0 && (
-                  <div className="space-y-2">
-                    {sectionImages.map((src) => (
-                      <div
-                        key={src.slice(0, 64)}
-                        className="overflow-hidden rounded-xl border border-ink-100 bg-white"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={src}
-                          alt=""
-                          className="w-full max-h-72 object-contain bg-white"
-                        />
-                      </div>
-                    ))}
-                  </div>
                 )}
 
                 {unmatched.length > 0 && (
@@ -2176,7 +2422,7 @@ export function EditableReportPanel({
                   </ul>
                 )}
 
-                {reportFcImages.length > 0 && (
+                {reportFcImages.length > 0 && !draftPhase && (
                   <details className="space-y-2 print:hidden">
                     <summary className="cursor-pointer select-none text-xs text-ink-500 rounded-md border border-ink-200 bg-ink-50 px-2.5 py-1.5 hover:border-accent">
                       관련 이미지 {reportFcImages.length}장
@@ -2191,7 +2437,7 @@ export function EditableReportPanel({
                           <img
                             src={src}
                             alt=""
-                            className="w-full max-h-72 object-contain bg-white"
+                            className="w-full max-h-72 object-contain object-left bg-white"
                           />
                         </div>
                       ))}
@@ -2226,6 +2472,12 @@ export function EditableReportPanel({
             onInsert={(dataUrl) => insertTextImage(textImageFor, dataUrl)}
           />
         )}
+
+        <ImageLibraryPicker
+          open={libraryPickerOpen}
+          onClose={() => setLibraryPickerOpen(false)}
+          onPick={pickLibraryImageIntoReport}
+        />
 
         {/* 편집 모드: F 상세 모달 / 보기 모드는 인라인 DETAIL */}
         {openMarker && (editing || factcheckMode) && (

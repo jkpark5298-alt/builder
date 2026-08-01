@@ -1,3 +1,4 @@
+import { htmlToPlainText } from "./text-format";
 import type { FactCheckResult, SummaryItem, VideoRecord } from "./types";
 
 /** Client-safe copy of fact-check progress helpers (no Node APIs). */
@@ -16,7 +17,7 @@ export function isItemChecked(
 ): boolean {
   const fc = factChecks.find((f) => f.itemId === itemId);
   if (!fc) return false;
-  const answer = fc.explanation.trim();
+  const answer = htmlToPlainText(fc.explanation).trim();
   // AI 질문(프롬프트)만 있고 답변이 없으면 미완료
   if (answer.length < 20) return false;
   if (/^다음 주장을/.test(answer) && /팩트체크해 주세요/.test(answer)) {

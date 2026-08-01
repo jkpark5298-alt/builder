@@ -4,7 +4,6 @@ import { getVideo, upsertVideo } from "@/lib/store";
 import { ensureSkeletonReport } from "@/lib/report-skeleton";
 import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
-import { HistoryPostConfirmImages } from "@/components/HistoryPostConfirmImages";
 import { InfographicPanel } from "@/components/InfographicPanel";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
 import { OverviewSummaryPanel } from "@/components/OverviewSummaryPanel";
@@ -90,8 +89,8 @@ export default async function VideoDetailPage({
           t: "초안·재수정",
           on: (awaiting && progress.gateComplete) || ready,
         },
-        { n: "4", t: "확정 보고서", on: ready },
-        { n: "5", t: "번호 이미지·인포", on: ready },
+        { n: "4", t: "확정 보고서·이미지", on: ready },
+        { n: "5", t: "인포·공유", on: ready },
       ]
     : [
         { n: "1", t: summaryStepLabel, on: true },
@@ -302,13 +301,14 @@ export default async function VideoDetailPage({
                   {historyFlow ? (
                     <>
                       이제 할 일: 아래 <strong>확정 보고서</strong>에서 본문을
-                      확인하고, <strong>5. 번호별 이미지</strong>를 붙인 뒤
-                      인포·공유하세요.
+                      확인하고, 홈 <strong>이미지</strong> 라이브러리에서 골라
+                      붙인 뒤 인포·공유하세요.
                     </>
                   ) : (
                     <>
                       이제 할 일: 아래 보고서에서{" "}
-                      <strong>보기 / 본문</strong>으로 문장을 다듬고, 인포·공유로
+                      <strong>보기 / 본문</strong>으로 문장을 다듬고, 이미지는
+                      홈 라이브러리·보고서 이미지 룸에서 붙인 뒤 인포·공유로
                       마무리하세요.
                     </>
                   )}
@@ -344,8 +344,6 @@ export default async function VideoDetailPage({
               <EditableReportPanel video={video} />
             </div>
           )}
-
-          {historyFlow && <HistoryPostConfirmImages video={video} />}
 
           <InfographicPanel video={video} />
         </>

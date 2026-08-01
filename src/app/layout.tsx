@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { HomeSectionLink } from "@/components/HomeSectionLink";
 
 export const metadata: Metadata = {
   title: "YouTube FactCheck — 요약 · 검증 · 보고서",
@@ -38,36 +39,42 @@ export default function RootLayout({
                 </p>
               </a>
               <nav className="flex items-center gap-1.5 sm:gap-2 text-sm text-ink-600 shrink-0">
-                <a
-                  href="/#topics"
+                <HomeSectionLink
+                  hash="topics"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
                   주제
-                </a>
-                <a
-                  href="/#drafts"
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="images"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  이미지
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="drafts"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
                   임시 저장
-                </a>
-                <a
-                  href="/#pending"
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="pending"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
                   작성 대기
-                </a>
-                <a
-                  href="/#reports"
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="reports"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
                   보고서
-                </a>
-                <a
-                  href="/#paste"
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="paste"
                   className="rounded-xl bg-ink-900 text-white px-3 py-2.5 min-h-11 inline-flex items-center hover:bg-accent transition-colors text-sm font-medium"
                 >
                   새로 만들기
-                </a>
+                </HomeSectionLink>
               </nav>
             </div>
           </header>

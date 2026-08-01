@@ -6,11 +6,21 @@ import type { TypedReport, VideoRecord } from "./types";
 export const SKELETON_REPORT_NOTICE =
   "요약·팩트체크 항목으로 골격 보고서를 만들었습니다. 팩트체크를 이어가며 아래에서 미리 보거나 본문을 다듬을 수 있습니다. 팩트체크 완료 후 「보고서 만들기」를 누르면 글쓰기 AI로 본문을 다시 쓰거나, 이미 수정한 본문은 그대로 유지됩니다.";
 
-/** 요약·FC 항목만으로 조립 보고서(골격) 생성 */
+/** 요약·FC 항목만으로 조립 보고서(골격) 생성 — 초안 단계에서는 이미지 제외 */
 export function buildSkeletonReport(
   video: Parameters<typeof buildTypedReport>[0]
 ): TypedReport {
-  return stabilizeReportFcAnchors(buildTypedReport(video));
+  const report = stabilizeReportFcAnchors(buildTypedReport(video));
+  return {
+    ...report,
+    imageRoom: [],
+    sections: report.sections.map((sec) => ({
+      ...sec,
+      imageUrl: undefined,
+      images: undefined,
+      imageRefs: undefined,
+    })),
+  };
 }
 
 /** report가 없으면 골격 보고서·인포그래픽을 채운다 */

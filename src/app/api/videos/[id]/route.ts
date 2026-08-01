@@ -332,7 +332,12 @@ async function patchVideo(req: Request, ctx: Ctx) {
     return jsonVideo(saved, { mode: "thumbnail_updated" });
   }
 
-  if (body.updateReportInput && video.status === "report_input_draft") {
+  // 임시 저장만 — startReportPipeline 과 같이 오면 아래 파이프라인 분기로
+  if (
+    body.updateReportInput &&
+    video.status === "report_input_draft" &&
+    !body.startReportPipeline
+  ) {
     const title = (body.updateReportInput.title ?? video.title).trim();
     if (title.length < 2) {
       return NextResponse.json(
