@@ -418,7 +418,12 @@ export function normalizeAiReportPaste(raw: string): string {
       : `섹션 ${n}`;
     out.push(`## ${label}. ${titleBase}`);
     out.push("");
-    if (statement) out.push(statement);
+    // 제목과 같은 주장을 본문에 한 번 더 넣지 않음 (중복 방지)
+    const statementIsTitle =
+      !!statement &&
+      (statement === titleBase ||
+        statement.startsWith(titleBase.replace(/…$/, "")));
+    if (statement && !statementIsTitle) out.push(statement);
     if (verdict) out.push(`판정: ${verdict}`);
     for (const line of body) {
       if (line.trim()) out.push(line);
@@ -985,10 +990,20 @@ export function mergeReportSectionsToSingleBody(
 
   for (const sec of report.sections) {
     const heading = (sec.heading || "").trim();
-    if (heading && !GENERIC_SECTION_HEADING.test(heading)) {
+    const body = (sec.body || "").trim();
+    const bodyPlainStart = body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, Math.max(heading.length + 8, 24));
+    // 본문에 이미 같은 제목이 있으면 strong 제목을 또 넣지 않음
+    const headingAlreadyInBody =
+      !!heading &&
+      !GENERIC_SECTION_HEADING.test(heading) &&
+      bodyPlainStart.includes(heading.slice(0, Math.min(heading.length, 20)));
+    if (heading && !GENERIC_SECTION_HEADING.test(heading) && !headingAlreadyInBody) {
       htmlParts.push(`<p><strong>${escapeHtml(heading)}</strong></p>`);
     }
-    const body = (sec.body || "").trim();
     if (body) htmlParts.push(body);
 
     for (const u of sec.images ?? []) {

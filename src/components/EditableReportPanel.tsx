@@ -1999,6 +1999,30 @@ export function EditableReportPanel({
                                 );
                                 return;
                               }
+                              const plainOf = (h: string) =>
+                                h
+                                  .replace(/<[^>]+>/g, " ")
+                                  .replace(/\s+/g, " ")
+                                  .trim();
+                              const editedPlain = plainOf(html);
+                              const nextPreview = sSegments
+                                .slice(segIdx + 1)
+                                .map((s) => plainOf(s.html))
+                                .join(" ")
+                                .slice(0, 36);
+                              // TipTap 이 세그먼트 전체를 다시 들고 있으면 join 하지 않음 (중복 방지)
+                              const looksLikeFullDoc =
+                                !!nextPreview &&
+                                nextPreview.length >= 12 &&
+                                editedPlain.includes(nextPreview.slice(0, 12));
+                              if (looksLikeFullDoc) {
+                                patchSection(
+                                  idx,
+                                  { body: html, rich: true },
+                                  "debounced"
+                                );
+                                return;
+                              }
                               const body = sSegments
                                 .map((s, i) => {
                                   if (i !== segIdx) {
@@ -2006,7 +2030,6 @@ export function EditableReportPanel({
                                       ? appendTrailingSMarker(s.html)
                                       : s.html || "<p></p>";
                                   }
-                                  // 이 조각에 S 를 새로 쓰면 그대로 두고, 아니면 기존 슬롯 유지
                                   if (countTrailingSMarkers(html) > 0) {
                                     return html;
                                   }
@@ -2034,12 +2057,13 @@ export function EditableReportPanel({
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="text-xs font-medium text-ink-800">
                                   이미지 {slotIdx + 1}
-                                  {seg.preview
-                                    ? ` · ${seg.preview}${
-                                        seg.preview.length >= 40 ? "…" : ""
-                                      }`
-                                    : ""}
-                                  {src ? "" : " · 비어 있음"}
+                                  {src
+                                    ? ""
+                                    : seg.preview
+                                      ? ` · ${seg.preview}${
+                                          seg.preview.length >= 40 ? "…" : ""
+                                        }`
+                                      : " · 비어 있음"}
                                 </p>
                                 <div className="flex flex-wrap gap-1.5">
                                   <input
@@ -2058,7 +2082,7 @@ export function EditableReportPanel({
                                   />
                                   <button
                                     type="button"
-                                    title="파일에서 이미지"
+                                    title={src ? "이미지 바꾸기" : "파일에서 이미지"}
                                     onClick={() => {
                                       setActiveSectionIdx(idx);
                                       setArmedSSlot({
@@ -2075,83 +2099,87 @@ export function EditableReportPanel({
                                   >
                                     <ImagePlus className="h-4 w-4" />
                                   </button>
-                                  <button
-                                    type="button"
-                                    title="클립보드에서 붙여넣기"
-                                    onClick={() => {
-                                      setActiveSectionIdx(idx);
-                                      setArmedSSlot({
-                                        secIdx: idx,
-                                        slotIdx,
-                                      });
-                                      setImagePasteHint(
-                                        "이미지를 복사한 뒤 지금 Ctrl+V 하세요."
-                                      );
-                                      window.setTimeout(() => {
-                                        (
-                                          document.getElementById(
-                                            `s-slot-paste-${idx}-${slotIdx}`
-                                          ) as HTMLTextAreaElement | null
-                                        )?.focus();
-                                      }, 50);
-                                      void (async () => {
-                                        try {
-                                          const files =
-                                            await readImagesFromClipboard();
-                                          if (files.length) {
-                                            await addImagesToSSlot(
-                                              idx,
-                                              slotIdx,
-                                              files
-                                            );
+                                  {!src && (
+                                    <button
+                                      type="button"
+                                      title="클립보드에서 붙여넣기"
+                                      onClick={() => {
+                                        setActiveSectionIdx(idx);
+                                        setArmedSSlot({
+                                          secIdx: idx,
+                                          slotIdx,
+                                        });
+                                        setImagePasteHint(
+                                          "이미지를 복사한 뒤 지금 Ctrl+V 하세요."
+                                        );
+                                        window.setTimeout(() => {
+                                          (
+                                            document.getElementById(
+                                              `s-slot-paste-${idx}-${slotIdx}`
+                                            ) as HTMLTextAreaElement | null
+                                          )?.focus();
+                                        }, 50);
+                                        void (async () => {
+                                          try {
+                                            const files =
+                                              await readImagesFromClipboard();
+                                            if (files.length) {
+                                              await addImagesToSSlot(
+                                                idx,
+                                                slotIdx,
+                                                files
+                                              );
+                                            }
+                                          } catch {
+                                            /* Ctrl+V 대기 */
                                           }
-                                        } catch {
-                                          /* Ctrl+V 대기 */
-                                        }
-                                      })();
-                                    }}
-                                    className={`inline-flex items-center gap-1 min-h-9 rounded-lg border px-2.5 text-xs font-medium ${
-                                      armed
-                                        ? "border-accent bg-accent-muted/50 text-ink-900"
-                                        : "border-ink-200 bg-white text-ink-700 hover:border-accent"
-                                    }`}
-                                  >
-                                    <ClipboardPaste className="h-3.5 w-3.5" />
-                                    붙여넣기
-                                  </button>
+                                        })();
+                                      }}
+                                      className={`inline-flex items-center gap-1 min-h-9 rounded-lg border px-2.5 text-xs font-medium ${
+                                        armed
+                                          ? "border-accent bg-accent-muted/50 text-ink-900"
+                                          : "border-ink-200 bg-white text-ink-700 hover:border-accent"
+                                      }`}
+                                    >
+                                      <ClipboardPaste className="h-3.5 w-3.5" />
+                                      붙여넣기
+                                    </button>
+                                  )}
                                 </div>
                               </div>
-                              <textarea
-                                id={`s-slot-paste-${idx}-${slotIdx}`}
-                                aria-label={`이미지 ${slotIdx + 1} 붙여넣기`}
-                                rows={1}
-                                placeholder="여기 클릭 후 Ctrl+V"
-                                className="w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs text-ink-500 outline-none focus:border-accent"
-                                onFocus={() => {
-                                  setActiveSectionIdx(idx);
-                                  setArmedSSlot({ secIdx: idx, slotIdx });
-                                  setImagePasteHint(
-                                    "지금 Ctrl+V로 이미지를 붙여넣으세요."
-                                  );
-                                }}
-                                onPaste={(e) => {
-                                  const files =
-                                    extractImageFilesFromDataTransfer(
-                                      e.clipboardData
+                              {!src && (
+                                <textarea
+                                  id={`s-slot-paste-${idx}-${slotIdx}`}
+                                  aria-label={`이미지 ${slotIdx + 1} 붙여넣기`}
+                                  rows={1}
+                                  placeholder="여기 클릭 후 Ctrl+V"
+                                  className="w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs text-ink-500 outline-none focus:border-accent"
+                                  onFocus={() => {
+                                    setActiveSectionIdx(idx);
+                                    setArmedSSlot({ secIdx: idx, slotIdx });
+                                    setImagePasteHint(
+                                      "지금 Ctrl+V로 이미지를 붙여넣으세요."
                                     );
-                                  if (!files.length) return;
-                                  e.preventDefault();
-                                  void addImagesToSSlot(
-                                    idx,
-                                    slotIdx,
-                                    files
-                                  );
-                                }}
-                                onInput={(e) => {
-                                  (e.target as HTMLTextAreaElement).value =
-                                    "";
-                                }}
-                              />
+                                  }}
+                                  onPaste={(e) => {
+                                    const files =
+                                      extractImageFilesFromDataTransfer(
+                                        e.clipboardData
+                                      );
+                                    if (!files.length) return;
+                                    e.preventDefault();
+                                    void addImagesToSSlot(
+                                      idx,
+                                      slotIdx,
+                                      files
+                                    );
+                                  }}
+                                  onInput={(e) => {
+                                    (e.target as HTMLTextAreaElement).value =
+                                      "";
+                                  }}
+                                />
+                              )}
                               {armed && !src && (
                                 <p className="text-[11px] text-amber-800">
                                   Ctrl+V 대기 중
