@@ -16,6 +16,7 @@ import {
   toAnswerEditorHtml,
 } from "@/lib/text-format";
 import {
+  pastedHtmlLooksPlain,
   sanitizePastedHtml,
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
@@ -68,14 +69,31 @@ export function FactCheckAnswerEditor({
         const clipboard = event.clipboardData;
         if (!clipboard) return false;
         const rawHtml = clipboard.getData("text/html");
-        const text = clipboard.getData("text/plain");
+        const text =
+          clipboard.getData("text/plain") ||
+          clipboard.getData("text/uri-list") ||
+          "";
         if (rawHtml?.trim()) {
-          event.preventDefault();
+          const plain = text.trim();
+          if (plain && pastedHtmlLooksPlain(rawHtml)) {
+            event.preventDefault();
+            ed.commands.insertContent(wrapPlainPasteText(plain));
+            return true;
+          }
           const clean = sanitizePastedHtml(rawHtml);
-          ed.commands.insertContent(clean || wrapPlainPasteText(text || ""));
-          return true;
+          if (clean) {
+            event.preventDefault();
+            ed.commands.insertContent(clean);
+            return true;
+          }
+          if (plain) {
+            event.preventDefault();
+            ed.commands.insertContent(wrapPlainPasteText(plain));
+            return true;
+          }
+          return false;
         }
-        if (text) {
+        if (text.trim()) {
           event.preventDefault();
           ed.commands.insertContent(wrapPlainPasteText(text));
           return true;

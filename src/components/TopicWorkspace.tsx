@@ -179,7 +179,7 @@ export function TopicWorkspace({
         </h2>
         <p className="text-sm text-ink-500">
           이미 만든 요약·팩트체크 항목을 이 주제에 넣고, 분류 태그를 붙입니다.
-          새 내용은 홈에서 Report/유튜브로 만든 뒤 여기서 연결하세요.
+          새 내용은 홈에서 팩트체크보고서/유튜브로 만든 뒤 여기서 연결하세요.
         </p>
         {candidates.length === 0 ? (
           <p className="text-sm text-ink-400">

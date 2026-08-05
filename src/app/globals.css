@@ -38,8 +38,9 @@ h3,
 /* 보고서 형광펜 · 서식 · 본문 박스 안에만 유지 */
 .report-body {
   overflow-x: hidden;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  /* anywhere는 한글을 한 글자씩 쪼개 보이게 함 → keep-all + break-word */
+  overflow-wrap: break-word;
+  word-break: keep-all;
   box-sizing: border-box;
   max-width: 100%;
 }
@@ -48,12 +49,10 @@ h3,
 .report-body *::before,
 .report-body *::after {
   box-sizing: border-box;
-  max-width: 100%;
 }
 
 .report-body p,
 .report-body div,
-.report-body span,
 .report-body li,
 .report-body ul,
 .report-body ol,
@@ -66,6 +65,7 @@ h3,
 .report-body table,
 .report-body td,
 .report-body th {
+  max-width: 100%;
   margin-left: 0 !important;
   margin-right: 0 !important;
   padding-left: 0 !important;
@@ -113,7 +113,8 @@ h3,
 }
 
 .report-body .report-s-image {
-  margin: 0.75em 0;
+  position: relative;
+  margin: 0.35em 0 0.65em;
   padding: 0;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.75rem;
@@ -128,6 +129,65 @@ h3,
   object-fit: contain;
   object-position: left center;
   background: #fff;
+}
+
+/* 본문 편집: S 자리 이미지도 보기와 동일하게 문장 직하 */
+.report-s-image {
+  position: relative;
+  margin: 0.35em 0 0.65em;
+  padding: 0;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #fff;
+}
+
+.report-s-image img {
+  display: block;
+  width: 100%;
+  max-height: 18rem;
+  object-fit: contain;
+  object-position: left center;
+  background: #fff;
+}
+
+.report-s-image .s-slot-badge {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 0.35rem;
+  background: rgb(194 65 12 / 0.92);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  pointer-events: none;
+  user-select: none;
+}
+
+.report-s-image.report-s-slot-empty {
+  border-style: dashed;
+  background: rgb(248 250 252 / 0.9);
+  cursor: pointer;
+}
+
+.report-s-image .s-slot-ph {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.7rem;
+  color: rgb(100 116 139);
+}
+
+.report-s-image .s-slot-ph strong {
+  color: rgb(194 65 12);
+  font-weight: 700;
 }
 
 /* FC 답변 서식 편집기 */

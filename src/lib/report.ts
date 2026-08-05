@@ -10,6 +10,7 @@ import { REPORT_TYPE_LABELS } from "./types";
 import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
 import { stabilizeReportFcAnchors } from "./fc-markers";
+import { unwrapSoftLineBreaks } from "./paste";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
@@ -158,7 +159,7 @@ function parseImportHeadingLine(line: string): string | null {
 
 /** AI/웹 붙여넣기: HTML 엔티티·워드 글머리 기호 정리 */
 export function sanitizeAiPasteText(raw: string): string {
-  return raw
+  const decoded = raw
     .replace(/\u200B|\uFEFF/g, "")
     .replace(/\r\n/g, "\n")
     .replace(/&nbsp;/gi, " ")
@@ -194,6 +195,8 @@ export function sanitizeAiPasteText(raw: string): string {
     )
     .replace(/[ \t]+\n/g, "\n")
     .trim();
+  // PDF/Word 소프트 줄바꿈으로 문장이 잘린 경우 이어 붙임
+  return unwrapSoftLineBreaks(decoded).trim();
 }
 
 function preprocessImportRaw(raw: string): string {
@@ -1462,7 +1465,7 @@ export function buildTypedReport(
       channel: video.channel,
       url:
         video.inputMode === "report"
-          ? "Report 생성 (직접 입력)"
+          ? "팩트체크보고서 (직접 입력)"
           : video.youtubeUrl,
       writtenAt,
     },

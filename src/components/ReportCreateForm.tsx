@@ -171,7 +171,7 @@ export function ReportCreateForm({
         }
         setActiveDraftId(data.video.id);
         cacheVideoSnapshot(data.video);
-        setStatus("임시 저장됨. 홈 「임시 저장」 목록에서 이어서 작성할 수 있습니다.");
+        setStatus("임시 저장됨. 홈 「팩트체크 보고서」 탭에서 이어서 작성할 수 있습니다.");
         if (!draftId) {
           window.history.replaceState(null, "", `/videos/${data.video.id}`);
         }
@@ -240,7 +240,7 @@ export function ReportCreateForm({
         });
         const data = await parseJsonResponse(res);
         if (!res.ok || !data.video?.id) {
-          throw new Error(data.error || "Report 생성 실패");
+          throw new Error(data.error || "팩트체크보고서 생성 실패");
         }
         if (data.video.status === "report_input_draft") {
           throw new Error(
@@ -265,7 +265,7 @@ export function ReportCreateForm({
 
       const data = await parseJsonResponse(res);
       if (!res.ok || !data.video?.id) {
-        throw new Error(data.error || "Report 생성 실패");
+        throw new Error(data.error || "팩트체크보고서 생성 실패");
       }
 
       cacheVideoSnapshot(data.video);
@@ -296,7 +296,7 @@ export function ReportCreateForm({
         <div className="flex items-center gap-2 text-accent">
           <FileText className="h-5 w-5" />
           <span className="text-sm font-medium tracking-wide uppercase">
-            Report 생성
+            팩트체크보고서
           </span>
         </div>
         <div>
@@ -380,7 +380,8 @@ export function ReportCreateForm({
             ) : null}
           </div>
           <p className="text-xs text-ink-400">
-            목록·상세 상단에 보이는 표지입니다. 없으면 기본 Report 이미지가
+            목록·상세 상단에 보이는 표지입니다. 없으면 기본 팩트체크보고서
+            이미지가
             사용됩니다.
           </p>
         </div>

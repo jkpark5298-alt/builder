@@ -430,11 +430,9 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
   }
 
   function saveDraftAndLeave() {
-    if (progress.gateComplete) {
-      router.push("/#pending");
-    } else {
-      router.push("/#drafts");
-    }
+    const section =
+      localVideo.inputMode === "report" ? "factcheck" : "youtube";
+    router.push(`/#${section}`);
     router.refresh();
   }
 
@@ -452,8 +450,8 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
           onVideoUpdate={setLocalVideo}
         />
         <p className="text-sm text-ink-600 text-center rounded-xl border border-accent/25 bg-accent-muted/30 px-3 py-2">
-          이미지는 FC에 붙이지 않습니다. 홈 <strong>이미지</strong> 라이브러리 →{" "}
-          <strong>보고서</strong>에서만 사용하세요.
+          이미지는 FC에 붙이지 않습니다. <strong>보고서</strong> 이미지 룸에서
+          붙이세요.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
           <button
@@ -568,8 +566,7 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
         />
 
         <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
-          FC에서는 답변·판정만 합니다. 이미지는 홈 「이미지」에 저장한 뒤
-          보고서에서 붙이세요.
+          FC에서는 답변·판정만 합니다. 이미지는 보고서 이미지 룸에서 붙이세요.
         </p>
         {historyFlow && progress.gateComplete && (
           <div className="rounded-xl border border-verify-true/30 bg-verify-true/10 px-3 py-2.5 text-sm text-ink-800">

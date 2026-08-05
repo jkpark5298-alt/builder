@@ -8,12 +8,14 @@ import Color from "@tiptap/extension-color";
 import Highlight from "@tiptap/extension-highlight";
 import { normalizeStoredFcAnchors } from "@/lib/fc-markers";
 import { FcAnchor } from "@/lib/report-tiptap-fc-anchor";
+import { ReportSImage } from "@/lib/report-tiptap-s-image";
 import {
   registerReportEditor,
   setActiveReportEditorKey,
   unregisterReportEditor,
 } from "@/lib/report-editor-registry";
 import {
+  pastedHtmlLooksPlain,
   sanitizePastedHtml,
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
@@ -35,6 +37,8 @@ export function RichBody({
   onFocus,
   onSaveSelection,
   onPasteImages,
+  /** S 슬롯으로 쪼갠 연속 본문 — 테두리 없이 한 글처럼 보이게 */
+  plainChrome = false,
 }: {
   id?: string;
   /** 섹션별 TipTap 인스턴스 키 */
@@ -45,6 +49,7 @@ export function RichBody({
   onSaveSelection?: () => void;
   /** 본문에 이미지 Ctrl+V 시 섹션 첨부로 넘김 */
   onPasteImages?: (files: File[]) => void;
+  plainChrome?: boolean;
 }) {
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onChange);
@@ -57,6 +62,10 @@ export function RichBody({
   onChangeRef.current = onChange;
   onFocusRef.current = onFocus;
   onSaveSelectionRef.current = onSaveSelection;
+
+  const chromeClass = plainChrome
+    ? "report-body min-h-[1.5rem] w-full max-w-full overflow-x-hidden bg-transparent px-0 py-1 text-sm outline-none leading-relaxed prose prose-sm max-w-none"
+    : "report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none";
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -76,43 +85,63 @@ export function RichBody({
       Highlight.configure({ multicolor: true }),
       FontSize,
       FcAnchor,
+      ReportSImage,
     ],
     content: normalizeEditorHtml(html || "<p></p>"),
     editorProps: {
       attributes: {
         ...(id ? { id } : {}),
-        class:
-          "report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none",
+        class: chromeClass,
       },
       handlePaste: (_view, event) => {
         const ed = editorRef.current;
         if (!ed) return false;
 
         const clipboard = event.clipboardData;
+        // iOS: clipboardData 없으면 네이티브 붙여넣기에 맡김
         if (!clipboard) return false;
 
         const files = extractImageFilesFromDataTransfer(clipboard);
-        if (files.length) {
+        const text =
+          clipboard.getData("text/plain") ||
+          clipboard.getData("text/uri-list") ||
+          "";
+        const rawHtml = clipboard.getData("text/html");
+        // 스크린샷·이미지 복사는 HTML 조각이 같이 오는 경우가 많음 → 이미지 파일 우선
+        const substantialText =
+          text.replace(/\s+/g, " ").trim().length >= 40 &&
+          !/^https?:\/\/\S+$/i.test(text.trim());
+
+        if (files.length && !substantialText) {
           event.preventDefault();
           onPasteImagesRef.current?.(files);
           return true;
         }
 
-        const rawHtml = clipboard.getData("text/html");
-        const text = clipboard.getData("text/plain");
-
+        // Word/웹 HTML은 문장 중간 줄바꿈·레이아웃이 많아, 서식이 거의 없으면 plain 경로
         if (rawHtml?.trim()) {
-          event.preventDefault();
+          const plain = text.trim();
+          if (plain && pastedHtmlLooksPlain(rawHtml)) {
+            event.preventDefault();
+            ed.commands.insertContent(wrapPlainPasteText(plain));
+            return true;
+          }
           const clean = sanitizePastedHtml(rawHtml);
           if (clean) {
+            event.preventDefault();
             ed.commands.insertContent(clean);
-          } else if (text) {
-            ed.commands.insertContent(wrapPlainPasteText(text));
+            return true;
           }
-          return true;
+          if (plain) {
+            event.preventDefault();
+            ed.commands.insertContent(wrapPlainPasteText(plain));
+            return true;
+          }
+          // 읽은 내용이 비면 preventDefault 하지 않음 (아이폰 네이티브 경로)
+          return false;
         }
 
-        if (text) {
+        if (text.trim()) {
           event.preventDefault();
           ed.commands.insertContent(wrapPlainPasteText(text));
           return true;
@@ -152,6 +181,7 @@ export function RichBody({
 
   useEffect(() => {
     if (!editor) return;
+    // 포커스 중에는 절대 덮어쓰지 않음 — S 입력 mid-flight 가 지워지는 문제 방지
     if (editor.isFocused) return;
     const next = normalizeEditorHtml(html || "<p></p>");
     if (next === lastEmittedRef.current) return;

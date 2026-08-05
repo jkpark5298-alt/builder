@@ -187,12 +187,16 @@ export async function persistMediaDataUrl(
 
 export async function persistMediaUrls(
   urls: string[] | undefined | null,
-  opts?: { prefix?: string }
+  opts?: { prefix?: string; keepEmptySlots?: boolean }
 ): Promise<string[]> {
   if (!urls?.length) return [];
   const out: string[] = [];
   for (const url of urls) {
-    if (!url?.trim()) continue;
+    if (!url?.trim()) {
+      // 보고서 S 슬롯처럼 인덱스=칸 매핑을 유지해야 할 때 빈 칸 보존
+      if (opts?.keepEmptySlots) out.push("");
+      continue;
+    }
     out.push(await persistMediaDataUrl(url.trim(), opts));
   }
   return out;
@@ -282,6 +286,7 @@ async function persistReport(
   for (const s of report.sections) {
     const images = await persistMediaUrls(s.images, {
       prefix: `videos/${videoId}/report`,
+      keepEmptySlots: true,
     });
     const imageUrl = s.imageUrl
       ? await persistMediaDataUrl(s.imageUrl, {

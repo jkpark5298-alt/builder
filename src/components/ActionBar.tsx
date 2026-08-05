@@ -162,9 +162,9 @@ export function ActionBar({ video }: { video: VideoRecord }) {
     <div className="space-y-3 print:hidden">
       {!ready && (
         <p className="text-sm text-accent bg-accent-muted/50 rounded-xl px-3 py-2">
-          ① 팩트체크 중 → <strong>임시 저장</strong>. ② 팩트체크 끝 →{" "}
-          <strong>작성 대기</strong>. ③ <strong>보고서 만들기</strong> →{" "}
-          <strong>보고서</strong>.
+          ① 팩트체크 중 → <strong>정보/요약 입력</strong> 또는 유튜브 목록. ②
+          팩트체크 끝 → <strong>작성 대기</strong>. ③{" "}
+          <strong>보고서 만들기</strong> → <strong>보고서 현황</strong>.
         </p>
       )}
 

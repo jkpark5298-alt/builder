@@ -9,7 +9,7 @@ export type LibraryStage =
   | "complete"
   | "error";
 
-/** Report 생성 — 제목·스크립트 입력만 저장된 단계 */
+/** 팩트체크보고서 — 제목·스크립트 입력만 저장된 단계 */
 export function isReportInputDraft(
   video: Pick<VideoRecord, "status">
 ): boolean {

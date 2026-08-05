@@ -40,40 +40,28 @@ export default function RootLayout({
               </a>
               <nav className="flex items-center gap-1.5 sm:gap-2 text-sm text-ink-600 shrink-0">
                 <HomeSectionLink
+                  hash="youtube"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  유튜브
+                </HomeSectionLink>
+                <HomeSectionLink
+                  hash="factcheck"
+                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
+                >
+                  팩트체크 보고서
+                </HomeSectionLink>
+                <HomeSectionLink
                   hash="topics"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
                   주제
                 </HomeSectionLink>
                 <HomeSectionLink
-                  hash="images"
-                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
-                >
-                  이미지
-                </HomeSectionLink>
-                <HomeSectionLink
-                  hash="drafts"
-                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
-                >
-                  임시 저장
-                </HomeSectionLink>
-                <HomeSectionLink
-                  hash="pending"
-                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
-                >
-                  작성 대기
-                </HomeSectionLink>
-                <HomeSectionLink
-                  hash="reports"
-                  className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
-                >
-                  보고서
-                </HomeSectionLink>
-                <HomeSectionLink
                   hash="paste"
                   className="rounded-xl bg-ink-900 text-white px-3 py-2.5 min-h-11 inline-flex items-center hover:bg-accent transition-colors text-sm font-medium"
                 >
-                  새로 만들기
+                  홈
                 </HomeSectionLink>
               </nav>
             </div>

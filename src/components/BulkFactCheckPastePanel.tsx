@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ClipboardPaste,
@@ -55,6 +55,7 @@ export function BulkFactCheckPastePanel({
   >({});
   /** 일괄 저장 직후 — 붙여넣기 자동 인식 박스를 숨기고 「저장된 판정」만 보여 줌 */
   const [hidePastePreview, setHidePastePreview] = useState(false);
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     setPaste(initialPaste);
@@ -100,21 +101,42 @@ export function BulkFactCheckPastePanel({
     }
   }, [paste, items]);
 
+  function focusPasteField() {
+    const el = pasteRef.current;
+    if (!el) return;
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+  }
+
   async function pasteFromClipboard() {
     setError(null);
+    setNotice(null);
+
+    // 브라우저가 클립보드 읽기를 막는 경우가 많음 → 실패 시 답변란에 포커스
     try {
+      if (!navigator.clipboard?.readText) {
+        throw new Error("unsupported");
+      }
       const text = await navigator.clipboard.readText();
       if (!text.trim()) {
-        setError("클립보드에 텍스트가 없습니다. 먼저 외부 AI 답변을 복사하세요.");
+        focusPasteField();
+        setError(
+          "클립보드에 텍스트가 없습니다. AI 답변을 복사한 뒤 다시 누르거나, 답변란에 Ctrl+V / Cmd+V 하세요."
+        );
         return;
       }
       setPaste((prev) => (prev.trim() ? `${prev.trim()}\n\n${text}` : text));
       setPreview(null);
       setHidePastePreview(false);
-      setNotice("클립보드에서 붙여넣었습니다.");
+      setNotice(
+        "클립보드에서 붙여넣었습니다. 「붙여넣기 인식」후 「항목에 반영·저장」해야 DB에 저장됩니다."
+      );
+      window.setTimeout(() => focusPasteField(), 0);
     } catch {
+      focusPasteField();
       setError(
-        "클립보드 권한이 없습니다. 답변란을 클릭한 뒤 Ctrl+V로 직접 붙여넣으세요."
+        "이 브라우저는 클립보드 자동 읽기를 막습니다. 답변란이 선택된 상태이니 Ctrl+V(맥: Cmd+V)로 직접 붙여넣으세요. 붙여넣은 뒤 「항목에 반영·저장」을 눌러야 DB에 저장됩니다."
       );
     }
   }
@@ -309,6 +331,7 @@ export function BulkFactCheckPastePanel({
           </span>
         )}
         <textarea
+          ref={pasteRef}
           value={paste}
           onChange={(e) => {
             setPaste(e.target.value);
@@ -334,6 +357,13 @@ export function BulkFactCheckPastePanel({
         <ClipboardPaste className="h-3.5 w-3.5" />
         클립보드에서 붙여넣기
       </button>
+      <p className="text-[11px] text-ink-500 -mt-1">
+        자동 붙여넣기가 안 되면 답변란에 <kbd className="px-1 rounded border border-ink-200 bg-ink-50">Ctrl</kbd>+
+        <kbd className="px-1 rounded border border-ink-200 bg-ink-50">V</kbd>{" "}
+        (맥 <kbd className="px-1 rounded border border-ink-200 bg-ink-50">Cmd</kbd>+
+        <kbd className="px-1 rounded border border-ink-200 bg-ink-50">V</kbd>) ·{" "}
+        <strong>「항목에 반영·저장」</strong>을 눌러야 DB에 저장됩니다.
+      </p>
 
       {liveCount > 0 && targets.length < liveCount && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-ink-700">

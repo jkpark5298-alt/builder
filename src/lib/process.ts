@@ -100,7 +100,7 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   return record;
 }
 
-/** Report 생성 — URL·자막 자동 수집 없이 제목(·스크립트)·메타로 시작 */
+/** 팩트체크보고서 — URL·자막 자동 수집 없이 제목(·스크립트)·메타로 시작 */
 export async function createReportJob(opts: {
   title: string;
   channel?: string;

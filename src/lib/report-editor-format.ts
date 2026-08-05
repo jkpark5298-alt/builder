@@ -1,3 +1,5 @@
+import { unwrapSoftLineBreaks } from "@/lib/paste";
+
 export const MIN_REPORT_FONT_PX = 8;
 export const MAX_REPORT_FONT_PX = 28;
 export const DEFAULT_REPORT_FONT_PX = 14;
@@ -5,6 +7,11 @@ export const DEFAULT_REPORT_FONT_PX = 14;
 export const PASTE_DEFAULT_FONT_PX = 12;
 /** 붙여넣기 시 이 값보다 크면 PASTE_DEFAULT_FONT_PX 로 맞춤 */
 export const PASTE_SOFT_MAX_FONT_PX = 16;
+
+/** 서식(굵게·링크·목록 등)이 거의 없으면 plain text 경로가 더 안전 */
+export function pastedHtmlLooksPlain(html: string): boolean {
+  return !/<(strong|b|em|i|u|a|mark|h[1-6]|ul|ol|li|table|img)\b/i.test(html);
+}
 
 export function parseFontSizeToPx(size: string): number | null {
   const raw = size.trim().toLowerCase();
@@ -545,12 +552,16 @@ export function escapeHtmlText(text: string): string {
 }
 
 export function wrapPlainPasteText(text: string): string {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  return lines
-    .map((line) => {
-      const safe = escapeHtmlText(line);
-      if (!safe) return "<p><br></p>";
-      return `<p><span style="font-size:${PASTE_DEFAULT_FONT_PX}px">${safe}</span></p>`;
+  const unwrapped = unwrapSoftLineBreaks(text.replace(/\r\n/g, "\n"));
+  const blocks = unwrapped.split(/\n{2,}/);
+  return blocks
+    .map((block) => {
+      const lines = block.split("\n");
+      const html = lines
+        .map((line) => escapeHtmlText(line.trimEnd()))
+        .join("<br>");
+      if (!html.trim()) return "<p><br></p>";
+      return `<p><span style="font-size:${PASTE_DEFAULT_FONT_PX}px">${html}</span></p>`;
     })
     .join("");
 }

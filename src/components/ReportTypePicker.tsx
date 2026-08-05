@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ReportType, VideoRecord } from "@/lib/types";
-import { REPORT_TYPE_LABELS, REPORT_TYPE_STRUCTURE } from "@/lib/types";
+import {
+  REPORT_TYPE_HINTS,
+  REPORT_TYPE_LABELS,
+  REPORT_TYPE_STRUCTURE,
+} from "@/lib/types";
 
 export function ReportTypePicker({
   video,
@@ -47,31 +51,39 @@ export function ReportTypePicker({
           : "rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-3"
       }
     >
-      <h3
-        className={
-          compact
-            ? "text-sm font-medium text-ink-800"
-            : "font-display text-lg sm:text-xl"
-        }
-      >
-        보고서 유형
-      </h3>
-      <details>
-        <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800">
-          설명 보기
-        </summary>
-        <p className="text-xs sm:text-sm text-ink-500 mt-1.5 leading-relaxed">
-          영상 분류 태그입니다. 보고서는 유형과 무관하게 «결론 → 요약 →
-          팩트체크+이미지» 일반 형식으로 작성됩니다.
-        </p>
-        {!compact && (
-          <ul className="text-xs text-ink-500 space-y-1 pt-2">
-            {REPORT_TYPE_STRUCTURE[type].map((h) => (
-              <li key={h}>· {h}</li>
-            ))}
-          </ul>
-        )}
-      </details>
+      <div className="space-y-1">
+        <h3
+          className={
+            compact
+              ? "text-sm font-medium text-ink-800"
+              : "font-display text-lg sm:text-xl"
+          }
+        >
+          보고서 유형
+        </h3>
+        <details className="group">
+          <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800 list-none inline-flex items-center gap-1 [&::-webkit-details-marker]:hidden">
+            <span className="text-[10px] leading-none group-open:rotate-90 transition-transform">
+              ▶
+            </span>
+            설명 보기
+          </summary>
+          <div className="mt-1.5 rounded-lg border border-ink-100 bg-ink-50/80 px-2.5 py-2 space-y-1.5">
+            <p className="text-xs text-ink-700 leading-relaxed">
+              <span className="font-medium text-ink-900">
+                {REPORT_TYPE_LABELS[type]}
+              </span>
+              {" — "}
+              {REPORT_TYPE_HINTS[type]}
+            </p>
+            <ul className="text-[11px] text-ink-500 space-y-0.5">
+              {REPORT_TYPE_STRUCTURE[type].map((h) => (
+                <li key={h}>· {h}</li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {(["H", "S", "C", "P"] as ReportType[]).map((t) => (
           <button

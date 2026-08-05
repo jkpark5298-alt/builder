@@ -151,12 +151,14 @@ export default async function VideoDetailPage({
                 {video.youtubeUrl}
               </a>
             ) : (
-              <p className="text-sm text-ink-400 mt-2">Report 생성 · 직접 입력</p>
+              <p className="text-sm text-ink-400 mt-2">
+                팩트체크보고서 · 직접 입력
+              </p>
             )}
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-ink-500">
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-              {isYoutube ? "유튜브" : "Report"}
+              {isYoutube ? "유튜브" : "팩트체크보고서"}
             </span>
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {REPORT_TYPE_LABELS[video.reportType]}
@@ -301,15 +303,13 @@ export default async function VideoDetailPage({
                   {historyFlow ? (
                     <>
                       이제 할 일: 아래 <strong>확정 보고서</strong>에서 본문을
-                      확인하고, 홈 <strong>이미지</strong> 라이브러리에서 골라
-                      붙인 뒤 인포·공유하세요.
+                      확인하고, 이미지 룸에서 붙인 뒤 인포·공유하세요.
                     </>
                   ) : (
                     <>
                       이제 할 일: 아래 보고서에서{" "}
                       <strong>보기 / 본문</strong>으로 문장을 다듬고, 이미지는
-                      홈 라이브러리·보고서 이미지 룸에서 붙인 뒤 인포·공유로
-                      마무리하세요.
+                      보고서 이미지 룸에서 붙인 뒤 인포·공유로 마무리하세요.
                     </>
                   )}
                 </p>

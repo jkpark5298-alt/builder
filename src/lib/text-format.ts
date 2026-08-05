@@ -1,3 +1,5 @@
+import { unwrapSoftLineBreaks } from "./paste";
+
 /** HTML 답변 → 평문 (길이·번호 분할·저장 게이트용) */
 export function htmlToPlainText(html: string): string {
   if (!html) return "";
@@ -98,7 +100,9 @@ export function normalizeAiAnswer(text: string): string {
  * - 판정·근거(출처) 라벨 정규화
  */
 export function normalizeAiFactCheckAnswer(raw: string): string {
-  let t = raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim();
+  let t = unwrapSoftLineBreaks(
+    raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim()
+  );
   if (!t) return "";
 
   t = t.replace(/^```(?:markdown|md|text)?\s*\n?/i, "").replace(/\n?```$/i, "");
@@ -248,7 +252,9 @@ export function normalizeAiFactCheckAnswer(raw: string): string {
  *   최종 결론
  */
 export function normalizeAiOverviewPaste(raw: string): string {
-  let t = raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim();
+  let t = unwrapSoftLineBreaks(
+    raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim()
+  );
   if (!t) return "";
 
   // 코드 펜스 제거

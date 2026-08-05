@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  Check,
   CheckCircle2,
+  ClipboardCopy,
   FileText,
   Loader2,
   Pencil,
@@ -59,6 +61,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
   const [draft, setDraft] = useState(video.overview || "");
   const [saving, setSaving] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const hasExistingFc = video.items.some((i) => i.needsFactCheck);
@@ -66,6 +69,23 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
 
   const charCount = useMemo(() => draft.trim().length, [draft]);
   const fcProgress = useMemo(() => factCheckProgress(video), [video]);
+
+  async function copyOverviewAll() {
+    const text = (editing ? draft : video.overview || "").trim();
+    if (!text) {
+      setError("복사할 요약이 없습니다.");
+      return;
+    }
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setHint(`요약 전체 ${text.length.toLocaleString()}자를 복사했습니다.`);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("복사에 실패했습니다. 텍스트를 직접 드래그해 복사해 주세요.");
+    }
+  }
 
   async function importFromPdf(files: FileList | null) {
     const file = files?.[0];
@@ -259,6 +279,19 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!(video.overview?.trim())}
+              onClick={() => void copyOverviewAll()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-verify-true" />
+              ) : (
+                <ClipboardCopy className="h-3.5 w-3.5" />
+              )}
+              {copied ? "복사됨" : "전체 복사"}
+            </button>
             {(needsManual || source === "ai" || source === "manual") && (
               <button
                 type="button"
@@ -289,6 +322,19 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             >
               <Sparkles className="h-3.5 w-3.5" />
               AI 답변 정리
+            </button>
+            <button
+              type="button"
+              disabled={saving || pdfBusy || !draft.trim()}
+              onClick={() => void copyOverviewAll()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-verify-true" />
+              ) : (
+                <ClipboardCopy className="h-3.5 w-3.5" />
+              )}
+              {copied ? "복사됨" : "전체 복사"}
             </button>
             <p className="text-xs text-ink-500">
               Gemini 등 요약을 붙여넣은 뒤 정리 · PDF {(PDF_MAX_BYTES / (1024 * 1024)).toFixed(0)}MB 이하

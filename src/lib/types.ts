@@ -276,18 +276,6 @@ export interface VideoRecord {
 /** 주제 폴더 — 여러 Entry(VideoRecord)를 모아 태그 기준 통합 보고서 작성 */
 export type TopicStatus = "draft" | "ready";
 
-/** 전역 이미지 라이브러리 — 보고서에 재사용 (FC에는 사용하지 않음) */
-export interface LibraryImage {
-  id: string;
-  url: string;
-  /** 이미지 아래 메모 (필요 사항·출처·캡션 등) */
-  memo: string;
-  /** 선택 태그 (검색용) */
-  tag?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface Topic {
   id: string;
   title: string;
@@ -314,6 +302,14 @@ export const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   S: "주식 (S)",
   C: "교양 (C)",
   P: "정치/시사 (P)",
+};
+
+/** 유형별 한 줄 설명 — UI「설명 보기」용 */
+export const REPORT_TYPE_HINTS: Record<ReportType, string> = {
+  H: "사건·인물의 배경과 흐름을 정리하는 역사형 보고서입니다.",
+  S: "시세·지표·리스크를 중심으로 정리하는 투자·시장형 보고서입니다.",
+  C: "핵심 메시지와 실천 포인트를 짧게 정리하는 교양형 보고서입니다.",
+  P: "쟁점·대립 의견·전망을 균형 있게 정리하는 시사형 보고서입니다.",
 };
 
 export const REPORT_TYPE_STRUCTURE: Record<ReportType, string[]> = {

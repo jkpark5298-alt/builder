@@ -104,10 +104,9 @@ export function normalizeReportImageRefs(report: TypedReport): TypedReport {
     const next = upsertRoomUrls(room, legacyUrls);
     room = next.room;
     const byUrl = new Map(next.room.map((item) => [item.url, item.id]));
+    // 빈 칸("") 유지 — filter 하면 S 슬롯 순서가 붕괴됨
     const imageRefs = hasSlotOrder
-      ? orderedSlotImages
-          .map((u) => (u ? byUrl.get(u) : undefined))
-          .filter(Boolean) as string[]
+      ? orderedSlotImages.map((u) => (u ? byUrl.get(u) || "" : ""))
       : Array.from(new Set([...(sec.imageRefs ?? []), ...next.refs]));
     if (
       !legacyUrls.length &&
@@ -123,7 +122,7 @@ export function normalizeReportImageRefs(report: TypedReport): TypedReport {
       imageUrl: undefined,
       // 슬롯 정렬용 images 유지 (빈 문자열 포함)
       images: hasSlotOrder ? orderedSlotImages : undefined,
-      imageRefs: imageRefs.length ? imageRefs : undefined,
+      imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
     };
   });
 

@@ -69,14 +69,6 @@ export async function ensureSchema(): Promise<void> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `;
-      await db`
-        CREATE TABLE IF NOT EXISTS image_library (
-          id TEXT PRIMARY KEY,
-          data JSONB NOT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `;
     })().catch((e) => {
       schemaReady = null;
       throw e;

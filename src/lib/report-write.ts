@@ -250,7 +250,7 @@ JSON:
         channel: video.channel,
         url:
           video.inputMode === "report"
-            ? "Report 생성 (직접 입력)"
+            ? "팩트체크보고서 (직접 입력)"
             : video.youtubeUrl,
         writtenAt,
       },
@@ -390,7 +390,7 @@ export function syncFactChecksIntoExistingReport(
       channel: video.channel || report.meta.channel,
       url:
         video.inputMode === "report"
-          ? "Report 생성 (직접 입력)"
+          ? "팩트체크보고서 (직접 입력)"
           : video.youtubeUrl || report.meta.url,
     },
     factChecks: inlineFactChecks,
