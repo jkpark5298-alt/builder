@@ -10,6 +10,7 @@ import {
 import { useRouter } from "next/navigation";
 import {
   Check,
+  ClipboardCopy,
   ClipboardPaste,
   Home,
   ImagePlus,
@@ -76,6 +77,8 @@ import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
   formatFactChecksText,
+  formatReportText,
+  formatReportWithFactChecksText,
   formatSectionText,
   importReportText,
   inspectImportedReportText,
@@ -560,6 +563,35 @@ export function EditableReportPanel({
     }
     await navigator.clipboard.writeText(text);
     alert(`${label} 텍스트를 복사했습니다.`);
+  }
+
+  async function copyDraftReport(
+    kind: "report" | "factchecks" | "all"
+  ) {
+    // 편집 중이면 TipTap에만 있는 내용도 반영
+    if (editing) flushLiveEditorsToDraft();
+    const current = draftRef.current;
+    if (!current) {
+      alert("복사할 보고서가 없습니다.");
+      return;
+    }
+    const text =
+      kind === "report"
+        ? formatReportText(current)
+        : kind === "factchecks"
+          ? formatFactChecksText(current)
+          : formatReportWithFactChecksText(current);
+    const label =
+      kind === "report"
+        ? draftPhase
+          ? "초안 전체"
+          : "보고서"
+        : kind === "factchecks"
+          ? "팩트체크"
+          : draftPhase
+            ? "초안+팩트체크"
+            : "보고서+팩트체크";
+    await copyToClipboard(text, label);
   }
 
   function applyImportedReportText(mode: "merge" | "replaceAll" = "merge") {
@@ -1624,6 +1656,22 @@ export function EditableReportPanel({
               <Home className="h-4 w-4" />
               표지
             </a>
+            <button
+              type="button"
+              onClick={() => void copyDraftReport("report")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+            >
+              <ClipboardCopy className="h-4 w-4" />
+              {draftPhase ? "초안 전체 복사" : "보고서 복사"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyDraftReport("all")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+            >
+              <ClipboardCopy className="h-4 w-4" />
+              {draftPhase ? "초안+FC 복사" : "전체 복사"}
+            </button>
             {editing && (
               <>
                 <button
