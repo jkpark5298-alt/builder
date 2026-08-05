@@ -124,7 +124,17 @@ export function FactcheckReportHub({
     [completedReports]
   );
 
+  const sortedWorkItems = useMemo(
+    () =>
+      [...workItems].sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      ),
+    [workItems]
+  );
+
   const latestFive = sortedCompleted.slice(0, 5);
+  const latestWorkFive = sortedWorkItems.slice(0, 5);
   const statusList = showAllReports ? sortedCompleted : latestFive;
 
   const stepItems = useMemo(
@@ -385,10 +395,21 @@ export function FactcheckReportHub({
           <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
             요약 붙여넣기 → 팩트체크 입력 → 보고서 작성·이미지
           </span>
-          <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-accent">
-            <FileText className="h-3.5 w-3.5" />
-            작업 중 {workItems.length}건
-          </span>
+          {latestWorkFive.length > 0 ? (
+            <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
+              {latestWorkFive.map((v, i) => (
+                <li key={v.id} className="flex gap-1.5 min-w-0">
+                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
+                  <span className="truncate">{v.title || "제목 없음"}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+              <FileText className="h-3.5 w-3.5" />
+              작업 중 없음
+            </span>
+          )}
         </button>
 
         <button
@@ -405,9 +426,20 @@ export function FactcheckReportHub({
           <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
             최신 5건 · 전체 보기 · 조회·삭제
           </span>
-          <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-600">
-            확정 {completedReports.length}건
-          </span>
+          {latestFive.length > 0 ? (
+            <ol className="mt-3 space-y-1 text-xs font-medium text-ink-700">
+              {latestFive.map((v, i) => (
+                <li key={v.id} className="flex gap-1.5 min-w-0">
+                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
+                  <span className="truncate">{v.title || "제목 없음"}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+              확정 보고서 없음
+            </span>
+          )}
         </button>
       </div>
     </section>

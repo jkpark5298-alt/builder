@@ -1644,7 +1644,7 @@ export function EditableReportPanel({
                   {saving || autoSaveStatus === "saving"
                     ? "저장 중…"
                     : draftPhase
-                      ? "미리보기로"
+                      ? "초안 저장"
                       : "편집 끝내기"}
                 </button>
               </>
