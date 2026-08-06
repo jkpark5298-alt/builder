@@ -10,6 +10,8 @@ import {
 import { useRouter } from "next/navigation";
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   ClipboardCopy,
   ClipboardPaste,
   Home,
@@ -37,6 +39,7 @@ import {
 import { compressDataUrl, compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
+import { preferPlainPaste } from "@/lib/device";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
   bindSectionSlotUrls,
@@ -143,6 +146,8 @@ export function EditableReportPanel({
     slotIdx: number;
   } | null>(null);
   const [imagePasteHint, setImagePasteHint] = useState<string | null>(null);
+  /** 모바일: 서식 툴바 기본 접힘 (입력 공간 확보) */
+  const [formatToolbarOpen, setFormatToolbarOpen] = useState(false);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
   const [sectionSavedFlash, setSectionSavedFlash] = useState<
@@ -1572,10 +1577,13 @@ export function EditableReportPanel({
     const html = (rawHtml || "").trim();
     if (!text && !html) return false;
 
+    // iPhone: HTML charset 깨짐 방지 — plain 우선
     const content =
-      text && (!html || pastedHtmlLooksPlain(html))
+      preferPlainPaste() && text
         ? wrapPlainPasteText(text)
-        : sanitizePastedHtml(html) || (text ? wrapPlainPasteText(text) : "");
+        : text && (!html || pastedHtmlLooksPlain(html))
+          ? wrapPlainPasteText(text)
+          : sanitizePastedHtml(html) || (text ? wrapPlainPasteText(text) : "");
     if (!content) return false;
 
     const ed =
@@ -1918,7 +1926,7 @@ export function EditableReportPanel({
 
         {editing && (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
-            <div className="sticky top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white/95 backdrop-blur-md px-3 py-2 space-y-2 shadow-sm">
+            <div className="md:sticky md:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white md:bg-white/95 md:backdrop-blur-md px-3 py-2 space-y-2 md:shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-500">
                   편집 중 ·{" "}
@@ -1937,17 +1945,37 @@ export function EditableReportPanel({
                     {formatHint}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImportOpen((prev) => !prev);
-                    setMode("body");
-                  }}
-                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 hover:border-accent hover:text-accent"
-                >
-                  정리본 붙여넣기
-                </button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setFormatToolbarOpen((prev) => !prev)}
+                    className="md:hidden inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700"
+                    aria-expanded={formatToolbarOpen}
+                  >
+                    서식
+                    {formatToolbarOpen ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportOpen((prev) => !prev);
+                      setMode("body");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 hover:border-accent hover:text-accent"
+                  >
+                    정리본 붙여넣기
+                  </button>
+                </div>
               </div>
+              <div
+                className={
+                  formatToolbarOpen ? "block" : "hidden md:block"
+                }
+              >
               <FormatToolbar
                 canUndo={historyUi.canUndo}
                 canRedo={historyUi.canRedo}
@@ -2022,6 +2050,7 @@ export function EditableReportPanel({
                   saveEditorSelection();
                 }}
               />
+              </div>
               {imagePasteHint && (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                   {imagePasteHint}
@@ -2031,7 +2060,7 @@ export function EditableReportPanel({
                 <p className="text-[11px] text-ink-500">
                   아이폰: 텍스트·이미지는 아래를{" "}
                   <strong className="font-medium text-ink-700">길게 눌러 붙여넣기</strong>
-                  {" "}또는 「이미지 파일」
+                  {" "}또는 「이미지 파일」(글자는 일반 텍스트로 붙습니다)
                 </p>
                 <textarea
                   rows={2}
@@ -2067,7 +2096,9 @@ export function EditableReportPanel({
                       e.clipboardData.getData("text/plain") ||
                       e.clipboardData.getData("text/uri-list") ||
                       "";
-                    const html = e.clipboardData.getData("text/html") || "";
+                    const html = preferPlainPaste()
+                      ? ""
+                      : e.clipboardData.getData("text/html") || "";
                     if (!text.trim() && !html.trim()) return;
                     e.preventDefault();
                     pasteTextIntoActiveBody(text, html);

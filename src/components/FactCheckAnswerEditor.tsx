@@ -20,6 +20,7 @@ import {
   sanitizePastedHtml,
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
+import { preferPlainPaste } from "@/lib/device";
 
 export function FactCheckAnswerEditor({
   value,
@@ -73,6 +74,11 @@ export function FactCheckAnswerEditor({
           clipboard.getData("text/plain") ||
           clipboard.getData("text/uri-list") ||
           "";
+        if (preferPlainPaste() && text.trim()) {
+          event.preventDefault();
+          ed.commands.insertContent(wrapPlainPasteText(text));
+          return true;
+        }
         if (rawHtml?.trim()) {
           const plain = text.trim();
           if (plain && pastedHtmlLooksPlain(rawHtml)) {

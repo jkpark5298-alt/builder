@@ -20,6 +20,7 @@ import {
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
 import { extractImageFilesFromDataTransfer } from "@/lib/image-client";
+import { preferPlainPaste } from "@/lib/device";
 import { countSSlotFigures } from "@/lib/report-body-s-slots";
 
 function normalizeEditorHtml(html: string): string {
@@ -122,6 +123,13 @@ export function RichBody({
         if (files.length && !substantialText) {
           event.preventDefault();
           onPasteImagesRef.current?.(files);
+          return true;
+        }
+
+        // iPhone: HTML charset/서식 깨짐 방지 — plain text 우선
+        if (preferPlainPaste() && text.trim()) {
+          event.preventDefault();
+          ed.commands.insertContent(wrapPlainPasteText(text));
           return true;
         }
 
