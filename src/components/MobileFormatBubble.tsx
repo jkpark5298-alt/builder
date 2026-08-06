@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Bold, Minus, Plus, Underline } from "lucide-react";
+import type { Editor } from "@tiptap/react";
+import { getActiveReportEditor } from "@/lib/report-editor-registry";
 import { HIGHLIGHT_COLORS, TEXT_COLORS } from "@/lib/report-editor-utils";
 
 const CIRCLED_NUMBERS = [
@@ -19,7 +21,33 @@ const CIRCLED_NUMBERS = [
 
 type Pos = { top: number; left: number };
 
-function selectionAnchorRect(): DOMRect | null {
+/** TipTap 커서/선택 좌표 (collapsed caret 포함 — iOS DOM rect 빈 값 보완) */
+function rectFromEditor(editor: Editor): DOMRect | null {
+  try {
+    const focused =
+      editor.isFocused ||
+      editor.view.hasFocus() ||
+      editor.view.dom.contains(document.activeElement);
+    if (!focused) return null;
+    const { from, to, empty } = editor.state.selection;
+    const a = editor.view.coordsAtPos(from);
+    const b = empty ? a : editor.view.coordsAtPos(to);
+    const top = Math.min(a.top, b.top);
+    const bottom = Math.max(a.bottom, b.bottom);
+    const left = Math.min(a.left, b.left);
+    const right = Math.max(a.right, b.right);
+    return new DOMRect(
+      left,
+      top,
+      Math.max(2, right - left),
+      Math.max(14, bottom - top)
+    );
+  } catch {
+    return null;
+  }
+}
+
+function rectFromDomSelection(): DOMRect | null {
   const sel = window.getSelection();
   if (!sel?.rangeCount) return null;
   const range = sel.getRangeAt(0);
@@ -27,22 +55,29 @@ function selectionAnchorRect(): DOMRect | null {
     range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? (range.commonAncestorContainer as Element)
       : range.commonAncestorContainer.parentElement;
-  if (
-    !node?.closest?.(
-      ".ProseMirror.report-body, .report-body.ProseMirror, .ProseMirror"
-    )
-  ) {
-    return null;
-  }
+  if (!node?.closest?.(".ProseMirror")) return null;
+
   const rects = range.getClientRects();
-  if (rects.length) {
-    return rects[rects.length - 1]!;
-  }
+  if (rects.length) return rects[rects.length - 1]!;
+
   const r = range.getBoundingClientRect();
-  if (r.width === 0 && r.height === 0 && r.top === 0 && r.left === 0) {
+  if (r.top === 0 && r.left === 0 && r.width === 0 && r.height === 0) {
     return null;
+  }
+  // collapsed라도 top/left 가 있으면 사용 (높이만 보정)
+  if (r.height < 2) {
+    return new DOMRect(r.left, r.top, Math.max(2, r.width), 16);
   }
   return r;
+}
+
+function resolveAnchorRect(): DOMRect | null {
+  const ed = getActiveReportEditor();
+  if (ed) {
+    const fromEd = rectFromEditor(ed);
+    if (fromEd) return fromEd;
+  }
+  return rectFromDomSelection();
 }
 
 /**
@@ -76,45 +111,96 @@ export function MobileFormatBubble({
     }
 
     let raf = 0;
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const place = (rect: DOMRect) => {
+      const barW = Math.min(360, window.innerWidth - 16);
+      const barH = 44;
+      const gap = 8;
+      let top = rect.top - barH - gap;
+      const vv = window.visualViewport;
+      const viewTop = vv?.offsetTop ?? 0;
+      const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
+      if (top < viewTop + 8) {
+        top = rect.bottom + gap;
+      }
+      if (top + barH > viewBottom - 8) {
+        top = Math.max(viewTop + 8, viewBottom - barH - 8);
+      }
+      let left = rect.left + rect.width / 2 - barW / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
+      setPos({ top, left });
+      setVisible(true);
+    };
+
     const update = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const rect = selectionAnchorRect();
+        const rect = resolveAnchorRect();
         if (!rect) {
-          setVisible(false);
+          // 서식 버튼 탭 순간 선택이 잠깐 비는 경우 — 바로 숨기지 않음
+          if (hideTimer) clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => {
+            const again = resolveAnchorRect();
+            if (!again) setVisible(false);
+            else place(again);
+          }, 280);
           return;
         }
-        const barW = Math.min(360, window.innerWidth - 16);
-        const barH = 44;
-        const gap = 8;
-        let top = rect.top - barH - gap;
-        const vv = window.visualViewport;
-        const viewTop = vv?.offsetTop ?? 0;
-        const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
-        if (top < viewTop + 8) {
-          top = rect.bottom + gap;
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
         }
-        if (top + barH > viewBottom - 8) {
-          top = Math.max(viewTop + 8, viewBottom - barH - 8);
-        }
-        let left = rect.left + rect.width / 2 - barW / 2;
-        left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
-        setPos({ top, left });
-        setVisible(true);
+        place(rect);
       });
     };
 
     update();
     document.addEventListener("selectionchange", update);
+    document.addEventListener("focusin", update);
+    document.addEventListener("touchend", update, { passive: true });
     window.addEventListener("scroll", update, true);
     window.visualViewport?.addEventListener("resize", update);
     window.visualViewport?.addEventListener("scroll", update);
+
+    let bound: Editor | null = null;
+    const onSel = () => update();
+    const ensureBound = () => {
+      const ed = getActiveReportEditor();
+      if (ed === bound) return;
+      if (bound) {
+        bound.off("selectionUpdate", onSel);
+        bound.off("focus", onSel);
+        bound.off("transaction", onSel);
+      }
+      bound = ed;
+      if (bound) {
+        bound.on("selectionUpdate", onSel);
+        bound.on("focus", onSel);
+        bound.on("transaction", onSel);
+      }
+    };
+    ensureBound();
+    const poll = window.setInterval(() => {
+      ensureBound();
+      update();
+    }, 400);
+
     return () => {
       cancelAnimationFrame(raf);
+      if (hideTimer) clearTimeout(hideTimer);
+      window.clearInterval(poll);
       document.removeEventListener("selectionchange", update);
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("touchend", update);
       window.removeEventListener("scroll", update, true);
       window.visualViewport?.removeEventListener("resize", update);
       window.visualViewport?.removeEventListener("scroll", update);
+      if (bound) {
+        bound.off("selectionUpdate", onSel);
+        bound.off("focus", onSel);
+        bound.off("transaction", onSel);
+      }
     };
   }, [active]);
 
