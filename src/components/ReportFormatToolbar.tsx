@@ -19,6 +19,19 @@ import {
   TEXT_COLORS,
 } from "@/lib/report-editor-utils";
 
+const CIRCLED_NUMBERS = [
+  "①",
+  "②",
+  "③",
+  "④",
+  "⑤",
+  "⑥",
+  "⑦",
+  "⑧",
+  "⑨",
+  "⑩",
+] as const;
+
 export function FormatToolbar({
   canUndo,
   canRedo,
@@ -30,6 +43,7 @@ export function FormatToolbar({
   onUnderline,
   onColor,
   onHighlight,
+  onInsertChar,
   onImage,
   onPasteImage,
   onTextImage,
@@ -46,6 +60,7 @@ export function FormatToolbar({
   onUnderline: () => void;
   onColor: (c: string) => void;
   onHighlight: (c: string) => void;
+  onInsertChar: (ch: string) => void;
   onImage: () => void;
   onPasteImage: () => void;
   onTextImage: () => void;
@@ -139,6 +154,21 @@ export function FormatToolbar({
           style={{ background: c.bg }}
         />
       ))}
+      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-ink-200 bg-white px-1 py-0.5">
+        <span className="text-[10px] text-ink-400 px-1">번호</span>
+        {CIRCLED_NUMBERS.map((ch) => (
+          <button
+            key={ch}
+            type="button"
+            title={`${ch} 삽입`}
+            onMouseDown={keepSelection}
+            onClick={() => onInsertChar(ch)}
+            className="min-h-7 min-w-7 rounded-md px-1 text-[13px] font-medium text-ink-800 hover:bg-accent-muted"
+          >
+            {ch}
+          </button>
+        ))}
+      </div>
       <ToolBtn onClick={onImage} title="이미지 추가">
         <ImagePlus className="h-4 w-4" />
       </ToolBtn>

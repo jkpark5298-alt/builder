@@ -1931,6 +1931,11 @@ export function EditableReportPanel({
                     ed.chain().focus().setHighlight({ color: c }).run();
                   })
                 }
+                onInsertChar={(ch) =>
+                  runFormatCommand((ed) => {
+                    ed.chain().focus().insertContent(ch).run();
+                  })
+                }
                 onImage={() => {
                   focusActiveBodyEditor();
                   const sec = draftRef.current?.sections[activeSectionIdx];
