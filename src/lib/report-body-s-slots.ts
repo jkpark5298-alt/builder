@@ -398,6 +398,12 @@ export function countTrailingSMarkers(html: string): number {
   return parseBodySImageSlots(html).slotCount;
 }
 
+/** 편집기 HTML 안 report-s-image figure 개수 (태그 1개 = 1칸, class·data 이중 카운트 금지) */
+export function countSSlotFigures(html: string): number {
+  return (html.match(/<figure\b[^>]*(?:report-s-image|data-s-slot)[^>]*>/gi) || [])
+    .length;
+}
+
 function normalizeBlockPlain(html: string): string {
   return stripTags(html)
     .replace(/\s+/g, " ")

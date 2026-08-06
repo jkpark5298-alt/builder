@@ -1,59 +1,39 @@
 import { NextResponse } from "next/server";
-import { persistMediaDataUrl } from "@/lib/media-store";
+import {
+  persistMediaBuffer,
+  persistMediaDataUrl,
+} from "@/lib/media-store";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/**
- * 클라이언트에서 압축한 data URL 이미지를 Blob(또는 로컬)에 올리고
- * 짧은 URL만 반환. 이후 PATCH에는 이 URL만 넣어 JSON 폭증을 막음.
- */
-export async function POST(req: Request) {
-  const rate = await checkRateLimit(req, "media-upload", 60, 60_000);
-  if (!rate.ok) {
-    return NextResponse.json(
-      { error: `요청이 너무 많습니다. ${rate.retryAfter}초 후 다시 시도해 주세요.` },
-      { status: 429, headers: { "Retry-After": String(rate.retryAfter) } }
-    );
-  }
+const MAX_BYTES = 1_000_000;
 
-  let body: { dataUrl?: string; prefix?: string } = {};
+function friendlyMediaError(msg: string): string {
+  if (/project size limit|512\s*MB|could not extend file/i.test(msg)) {
+    return "Neon DB capacity full. Connect Vercel Blob or run /api/media/cleanup.";
+  }
+  if (/suspended/i.test(msg)) {
+    return "Blob store suspended. Retry after refresh.";
+  }
+  return msg.replace(/^이미지 저장 실패:\s*/i, "");
+}
+
+type UploadBlob = {
+  arrayBuffer: () => Promise<ArrayBuffer>;
+  type?: string;
+};
+
+async function respondPersist(
+  persist: () => Promise<string>
+): Promise<NextResponse> {
   try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return NextResponse.json(
-      { error: "이미지 본문을 읽지 못했습니다. 용량이 너무 클 수 있습니다." },
-      { status: 400 }
-    );
-  }
-
-  const dataUrl = body.dataUrl?.trim();
-  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
-    return NextResponse.json(
-      { error: "data:image/... 형식의 이미지가 필요합니다." },
-      { status: 400 }
-    );
-  }
-  // ~1.0MB base64 상한 (클라이언트 압축 ~120KB면 여유)
-  if (dataUrl.length > 1_400_000) {
-    return NextResponse.json(
-      { error: "이미지가 너무 큽니다. 다시 압축해 주세요." },
-      { status: 413 }
-    );
-  }
-
-  try {
-    const url = await persistMediaDataUrl(dataUrl, {
-      prefix: body.prefix || "uploads",
-    });
+    const url = await persist();
     if (url.startsWith("data:")) {
       return NextResponse.json(
-        {
-          error:
-            "이미지 외부 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.",
-        },
+        { error: "Failed to externalize image. Retry shortly." },
         { status: 502 }
       );
     }
@@ -61,14 +41,96 @@ export async function POST(req: Request) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[media/upload]", msg);
-    const friendly = /project size limit|512\s*MB|could not extend file/i.test(msg)
-      ? "Neon DB 용량(512MB)이 가득 찼습니다. Vercel Blob 스토어를 연결하거나 /api/media/cleanup 으로 미사용 이미지를 정리해 주세요."
-      : /suspended/i.test(msg)
-        ? "이미지 저장소(Blob)가 정지되어 Neon DB로 저장을 시도했으나 실패했습니다. 새로고침 후 다시 시도해 주세요."
-        : msg.replace(/^이미지 저장 실패:\s*/i, "");
     return NextResponse.json(
-      { error: `이미지 저장 실패: ${friendly}` },
+      { error: "이미지 저장 실패: " + friendlyMediaError(msg) },
       { status: 502 }
     );
   }
+}
+
+export async function POST(req: Request) {
+  const rate = await checkRateLimit(req, "media-upload", 60, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "요청이 너무 많습니다. " +
+          rate.retryAfter +
+          "초 후 다시 시도해 주세요.",
+      },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfter) } }
+    );
+  }
+
+  const contentType = req.headers.get("content-type") || "";
+
+  if (contentType.includes("multipart/form-data")) {
+    try {
+      const form = await req.formData();
+      const file = form.get("file") as UploadBlob | string | null;
+      const prefix =
+        (typeof form.get("prefix") === "string"
+          ? (form.get("prefix") as string)
+          : "uploads") || "uploads";
+      if (
+        !file ||
+        typeof file === "string" ||
+        typeof file.arrayBuffer !== "function"
+      ) {
+        return NextResponse.json(
+          { error: "file field required" },
+          { status: 400 }
+        );
+      }
+      const buf = Buffer.from(await file.arrayBuffer());
+      if (!buf.length) {
+        return NextResponse.json({ error: "empty file" }, { status: 400 });
+      }
+      if (buf.length > MAX_BYTES) {
+        return NextResponse.json(
+          { error: "image too large" },
+          { status: 413 }
+        );
+      }
+      const ct = (typeof file.type === "string" && file.type) || "image/jpeg";
+      if (!ct.startsWith("image/")) {
+        return NextResponse.json(
+          { error: "image files only" },
+          { status: 400 }
+        );
+      }
+      return respondPersist(() => persistMediaBuffer(buf, ct, { prefix }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return NextResponse.json(
+        { error: "upload read failed: " + msg },
+        { status: 400 }
+      );
+    }
+  }
+
+  let body: { dataUrl?: string; prefix?: string } = {};
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json(
+      { error: "could not read image body" },
+      { status: 400 }
+    );
+  }
+
+  const dataUrl = body.dataUrl?.trim();
+  if (!dataUrl || !dataUrl.startsWith("data:image/")) {
+    return NextResponse.json(
+      { error: "data:image/... required" },
+      { status: 400 }
+    );
+  }
+  if (dataUrl.length > 1_400_000) {
+    return NextResponse.json({ error: "image too large" }, { status: 413 });
+  }
+
+  return respondPersist(() =>
+    persistMediaDataUrl(dataUrl, { prefix: body.prefix || "uploads" })
+  );
 }

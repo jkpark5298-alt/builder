@@ -34,13 +34,19 @@ import {
   stabilizeReportFcAnchors,
   stabilizeSectionFcAnchors,
 } from "@/lib/fc-markers";
-import { compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
-import { uploadDataUrls } from "@/lib/media-upload-client";
+import { compressDataUrl, compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
+import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
+import { reportImagePrefix } from "@/lib/media-paths";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
+  bindSectionSlotUrls,
   collectSectionImages as collectSectionImagesFromRoom,
+  countUnreferencedRoomItems,
   normalizeRoomItems,
   normalizeReportImageRefs,
+  orderedSlotUrls,
+  pruneUnreferencedRoomItems,
+  sectionSlotCapacity,
   upsertRoomUrls,
 } from "@/lib/report-images";
 import {
@@ -91,6 +97,7 @@ import {
   bodyHtmlFromSSlotFigures,
   bodyAndUrlsFromEditorHtml,
   bodyHtmlWithSSlotFigures,
+  countSSlotFigures,
   countTrailingSMarkers,
   dedupeRepeatedReportBodyHtml,
   ensureTrailingSMarkers,
@@ -144,6 +151,8 @@ export function EditableReportPanel({
   const wasEditingRef = useRef(false);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  /** 빈 룸을 섹션 이미지로 한 번만 시드 — 삭제 후 재등장 방지 */
+  const imageRoomSeededRef = useRef(false);
   const historyPastRef = useRef<TypedReport[]>([]);
   const historyFutureRef = useRef<TypedReport[]>([]);
   const pendingHistoryBaseRef = useRef<TypedReport | null>(null);
@@ -236,7 +245,10 @@ export function EditableReportPanel({
         } else if (mode === "debounced") {
           scheduleDebouncedHistory(prev);
         }
-        return updater(prev);
+        const next = updater(prev);
+        // syncSectionEditorFigures 등 microtask 가 최신본을 보도록 즉시 반영
+        draftRef.current = next;
+        return next;
       });
     },
     [pushHistorySnapshot, scheduleDebouncedHistory]
@@ -513,15 +525,24 @@ export function EditableReportPanel({
   );
 
   useEffect(() => {
+    imageRoomSeededRef.current = false;
+  }, [video.id]);
+
+  useEffect(() => {
     if (!draft) return;
-    if ((draft.imageRoom?.length ?? 0) > 0) return;
+    if (imageRoomSeededRef.current) return;
+    if ((draft.imageRoom?.length ?? 0) > 0) {
+      imageRoomSeededRef.current = true;
+      return;
+    }
     const seed = normalizeImageUrls(
       undefined,
       draft.sections.flatMap((sec) => [
-          ...collectSectionImagesFromRoom(sec, draft.imageRoom),
+        ...collectSectionImagesFromRoom(sec, draft.imageRoom),
         ...collectSectionFcImages(sec, fcByItem),
       ])
     );
+    imageRoomSeededRef.current = true;
     if (!seed.length) return;
     setDraft((prev) =>
       prev
@@ -537,6 +558,10 @@ export function EditableReportPanel({
   const imageRoom = useMemo(
     () => normalizeRoomItems(draft?.imageRoom),
     [draft?.imageRoom]
+  );
+  const unusedRoomCount = useMemo(
+    () => (draft ? countUnreferencedRoomItems(draft) : 0),
+    [draft]
   );
 
   const saveEditorSelection = useCallback(() => {
@@ -676,7 +701,7 @@ export function EditableReportPanel({
       if (!dataUrls.length) return;
       const uploaded = await uploadDataUrls(
         dataUrls,
-        `videos/${video.id}/report-s${secIdx}-${slotIdx}`
+        reportImagePrefix(video.id)
       );
       if (!uploaded.length) return;
       updateDraft((prev) => {
@@ -692,7 +717,7 @@ export function EditableReportPanel({
           needSlots,
           countTrailingSMarkers(body)
         );
-        const ordered = slotUrlsForSectionFrom(
+        const ordered = orderedSlotUrls(
           { ...sec, body },
           prev.imageRoom,
           slotCount
@@ -703,24 +728,14 @@ export function EditableReportPanel({
           ordered[target] = uploaded[i]!;
         }
         while (ordered.length < slotCount) ordered.push("");
-        const filled = ordered.filter(Boolean);
-        const { room } = upsertRoomUrls(prev.imageRoom, filled);
-        const refByUrl = new Map(
-          normalizeRoomItems(room).map((it) => [it.url, it.id])
-        );
-        // 빈 칸("") 유지 — filter 하면 슬롯 순서가 붕괴됨
-        const imageRefs = ordered.map((u) =>
-          u ? refByUrl.get(u) || "" : ""
+        const { room, section } = bindSectionSlotUrls(
+          sec,
+          prev.imageRoom,
+          ordered,
+          { body, rich: true }
         );
         const sections = [...prev.sections];
-        sections[secIdx] = {
-          ...sec,
-          body,
-          rich: true,
-          imageUrl: undefined,
-          images: ordered,
-          imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
-        };
+        sections[secIdx] = section;
         return { ...prev, imageRoom: room, sections };
       }, { history: "immediate" });
       setArmedSSlot(null);
@@ -733,60 +748,54 @@ export function EditableReportPanel({
 
   /** 에디터 figure 뱃지를 S1·S2… 순서로 다시 맞춤 */
   function syncSectionEditorFigures(secIdx: number) {
-    queueMicrotask(() => {
-      const draftNow = draftRef.current;
-      const cur = draftNow?.sections[secIdx];
-      if (!cur) return;
-      const ed = getReportEditor(sectionEditKey(cur, secIdx));
-      if (!ed) return;
-      const n = countTrailingSMarkers(cur.body || "");
-      const urls = slotUrlsForSectionFrom(cur, draftNow?.imageRoom, n);
-      const nextHtml = bodyHtmlWithSSlotFigures(cur.body || "<p></p>", urls);
-      const wasFocused = ed.isFocused;
-      const pos = ed.state.selection.from;
-      ed.commands.setContent(nextHtml, { emitUpdate: false });
-      if (wasFocused) {
-        try {
-          const max = ed.state.doc.content.size;
-          ed.commands.setTextSelection(Math.min(pos, Math.max(1, max - 1)));
-          ed.commands.focus();
-        } catch {
-          ed.commands.focus("end");
-        }
+    const draftNow = draftRef.current;
+    const cur = draftNow?.sections[secIdx];
+    if (!cur) return;
+    const ed = getReportEditor(sectionEditKey(cur, secIdx));
+    if (!ed) return;
+    const n = countTrailingSMarkers(cur.body || "");
+    const urls = slotUrlsForSectionFrom(cur, draftNow?.imageRoom, n);
+    const nextHtml = bodyHtmlWithSSlotFigures(cur.body || "<p></p>", urls);
+    const wasFocused = ed.isFocused;
+    const pos = ed.state.selection.from;
+    ed.commands.setContent(nextHtml, { emitUpdate: false });
+    if (wasFocused) {
+      try {
+        const max = ed.state.doc.content.size;
+        ed.commands.setTextSelection(Math.min(pos, Math.max(1, max - 1)));
+        ed.commands.focus();
+      } catch {
+        ed.commands.focus("end");
       }
-    });
+    }
   }
 
   function clearSSlotImage(secIdx: number, slotIdx: number) {
+    let released: string | null = null;
     updateDraft((prev) => {
       const sec = prev.sections[secIdx];
       if (!sec) return prev;
       const slotCount = countTrailingSMarkers(sec.body || "");
       if (!slotCount) return prev;
       const ordered = slotUrlsForSectionFrom(sec, prev.imageRoom, slotCount);
+      released = ordered[slotIdx] || null;
       ordered[slotIdx] = "";
-      const filled = ordered.filter(Boolean);
-      const { room } = upsertRoomUrls(prev.imageRoom, filled);
-      const refByUrl = new Map(
-        normalizeRoomItems(room).map((it) => [it.url, it.id])
-      );
-      const imageRefs = ordered.map((u) =>
-        u ? refByUrl.get(u) || "" : ""
+      const { room, section } = bindSectionSlotUrls(
+        sec,
+        prev.imageRoom,
+        ordered
       );
       const sections = [...prev.sections];
-      sections[secIdx] = {
-        ...sec,
-        imageUrl: undefined,
-        images: ordered,
-        imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
-      };
+      sections[secIdx] = section;
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
+    if (released) void releaseMediaUrls([released]);
     syncSectionEditorFigures(secIdx);
   }
 
   /** S 칸 자체 삭제 (빈 칸·이미지 칸 모두) */
   function deleteSSlot(secIdx: number, slotIdx: number) {
+    let released: string | null = null;
     updateDraft((prev) => {
       const cur = prev.sections[secIdx];
       if (!cur) return prev;
@@ -797,26 +806,19 @@ export function EditableReportPanel({
         prev.imageRoom,
         Math.max(slotIdx + 1, nextCount + 1)
       );
+      released = prevOrdered[slotIdx] || null;
       const ordered = prevOrdered.filter((_, i) => i !== slotIdx);
       while (ordered.length < nextCount) ordered.push("");
       const trimmed = ordered.slice(0, nextCount);
-      const filled = trimmed.filter(Boolean);
-      const { room } = upsertRoomUrls(prev.imageRoom, filled);
-      const refByUrl = new Map(
-        normalizeRoomItems(room).map((it) => [it.url, it.id])
-      );
-      const imageRefs = trimmed.map((u) => (u ? refByUrl.get(u) || "" : ""));
-      const sections = [...prev.sections];
-      sections[secIdx] = {
-        ...cur,
+      const { room, section } = bindSectionSlotUrls(cur, prev.imageRoom, trimmed, {
         body,
         rich: true,
-        imageUrl: undefined,
-        images: trimmed.length ? trimmed : undefined,
-        imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
-      };
+      });
+      const sections = [...prev.sections];
+      sections[secIdx] = section;
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
+    if (released) void releaseMediaUrls([released]);
     setArmedSSlot(null);
     setImagePasteHint(
       "칸을 삭제했습니다. 남은 칸 번호는 S1·S2… 순서로 다시 맞춰집니다."
@@ -830,22 +832,7 @@ export function EditableReportPanel({
     room: TypedReport["imageRoom"] | undefined,
     slotCount: number
   ): string[] {
-    const out: string[] = Array.from({ length: slotCount }, () => "");
-    const stored = sec.images;
-    if (stored && stored.length) {
-      for (let i = 0; i < slotCount; i++) {
-        out[i] = (stored[i] || "").trim();
-      }
-      return out;
-    }
-    const items = normalizeRoomItems(room);
-    const byId = new Map(items.map((it) => [it.id, it.url]));
-    const refs = sec.imageRefs ?? [];
-    for (let i = 0; i < slotCount; i++) {
-      const id = refs[i];
-      out[i] = (id && byId.get(id)) || "";
-    }
-    return out;
+    return orderedSlotUrls(sec, room, slotCount);
   }
 
   function slotUrlsForSection(
@@ -1044,21 +1031,12 @@ export function EditableReportPanel({
       const ordered = Array.from({ length: slotCount }, (_, i) =>
         (urls[i] || "").trim()
       );
-      const filled = ordered.filter(Boolean);
-      const up = upsertRoomUrls(imageRoom, filled);
-      imageRoom = up.room;
-      const refByUrl = new Map(
-        normalizeRoomItems(imageRoom).map((it) => [it.url, it.id])
-      );
-      const imageRefs = ordered.map((u) => (u ? refByUrl.get(u) || "" : ""));
-      return {
-        ...sec,
+      const bound = bindSectionSlotUrls(sec, imageRoom, ordered, {
         body,
         rich: true,
-        imageUrl: undefined,
-        images: ordered.length ? ordered : undefined,
-        imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
-      };
+      });
+      imageRoom = bound.room;
+      return bound.section;
     });
     if (!changed) return current;
     const next = { ...current, sections, imageRoom };
@@ -1193,7 +1171,7 @@ export function EditableReportPanel({
       if (!dataUrls.length) return;
       const uploaded = await uploadDataUrls(
         dataUrls,
-        `videos/${video.id}/report-room`
+        reportImagePrefix(video.id)
       );
       patchImageRoom(uploaded, "immediate");
     } catch (e) {
@@ -1204,19 +1182,39 @@ export function EditableReportPanel({
   }
 
   function removeImageFromRoom(src: string) {
+    const target = src.trim();
+    if (!target) return;
+    let affectedSecs: number[] = [];
     updateDraft((prev) => {
       const room = normalizeRoomItems(prev.imageRoom);
-      const removed = room.find((u) => u.url === src);
+      const removed = room.find((u) => u.url === target);
       if (!removed) return prev;
+      affectedSecs = [];
+      const sections = prev.sections.map((sec, idx) => {
+        const slotCount = sectionSlotCapacity(
+          sec,
+          countTrailingSMarkers(sec.body || "")
+        );
+        const before = orderedSlotUrls(sec, prev.imageRoom, slotCount);
+        const hadBefore =
+          before.includes(target) ||
+          (sec.imageRefs ?? []).includes(removed.id) ||
+          sec.imageUrl === target;
+        if (hadBefore) affectedSecs.push(idx);
+        const nextOrdered = before.map((u) => (u === target ? "" : u));
+        const { section } = bindSectionSlotUrls(sec, room, nextOrdered);
+        return section;
+      });
       return {
         ...prev,
-        imageRoom: room.filter((u) => u.url !== src),
-        sections: prev.sections.map((sec) => ({
-          ...sec,
-          imageRefs: sec.imageRefs?.filter((ref) => ref !== removed.id),
-        })),
+        imageRoom: room.filter((u) => u.url !== target),
+        sections,
       };
     });
+    void releaseMediaUrls([target]);
+    for (const idx of affectedSecs) {
+      syncSectionEditorFigures(idx);
+    }
   }
 
   function updateRoomMeta(src: string, patch: Partial<Pick<RoomImageItem, "tag" | "note">>) {
@@ -1232,6 +1230,27 @@ export function EditableReportPanel({
           : it
       ),
     }), { history: "debounced" });
+  }
+
+  function pruneUnusedRoomImages() {
+    if (!draft) return;
+    const n = countUnreferencedRoomItems(draft);
+    if (!n) {
+      alert("본문에서 쓰이지 않는 룸 이미지가 없습니다.");
+      return;
+    }
+    if (
+      !confirm(
+        `본문 S칸에 붙지 않은 이미지 ${n}개를 룸에서 제거할까요?\n(본문에 있는 그림은 그대로 둡니다.)`
+      )
+    ) {
+      return;
+    }
+    updateDraft((prev) => {
+      const { report: next, removedUrls } = pruneUnreferencedRoomItems(prev);
+      if (removedUrls.length) void releaseMediaUrls(removedUrls);
+      return next;
+    });
   }
 
   function addRoomImageToActiveSection(src: string) {
@@ -1401,23 +1420,14 @@ export function EditableReportPanel({
       while (ui < urls.length) {
         ordered.push(urls[ui++]!);
       }
-      const filled = ordered.filter(Boolean);
-      const { room } = upsertRoomUrls(prev.imageRoom, filled);
-      const refByUrl = new Map(
-        normalizeRoomItems(room).map((it) => [it.url, it.id])
-      );
-      const imageRefs = ordered.map((u) =>
-        u ? refByUrl.get(u) || "" : ""
+      const { room, section } = bindSectionSlotUrls(
+        sec,
+        prev.imageRoom,
+        ordered,
+        { body, rich: true }
       );
       const sections = [...prev.sections];
-      sections[secIdx] = {
-        ...sec,
-        body,
-        rich: true,
-        imageUrl: undefined,
-        images: ordered,
-        imageRefs: imageRefs.some(Boolean) ? imageRefs : undefined,
-      };
+      sections[secIdx] = section;
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
   }
@@ -1607,9 +1617,10 @@ export function EditableReportPanel({
 
   async function insertHandwriting(idx: number, dataUrl: string) {
     try {
+      const compressed = await compressDataUrl(dataUrl);
       const [url] = await uploadDataUrls(
-        [dataUrl],
-        `videos/${video.id}/report`
+        [compressed],
+        reportImagePrefix(video.id)
       );
       if (!url) return;
       applyUrlsToSSlots(idx, [url]);
@@ -1622,9 +1633,10 @@ export function EditableReportPanel({
 
   async function insertTextImage(idx: number, dataUrl: string) {
     try {
+      const compressed = await compressDataUrl(dataUrl);
       const [url] = await uploadDataUrls(
-        [dataUrl],
-        `videos/${video.id}/report`
+        [compressed],
+        reportImagePrefix(video.id)
       );
       if (!url) return;
       applyUrlsToSSlots(idx, [url]);
@@ -2147,6 +2159,17 @@ export function EditableReportPanel({
                   이미지 룸 · 재사용 보관함
                 </p>
                 <div className="flex flex-wrap gap-1.5">
+                  {unusedRoomCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={pruneUnusedRoomImages}
+                      className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600"
+                      title="본문 S칸에 붙지 않은 룸 항목만 제거"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      미사용 {unusedRoomCount} 정리
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() =>
@@ -2165,8 +2188,8 @@ export function EditableReportPanel({
                 </div>
               </div>
               <p className="text-[11px] text-ink-500">
-                파일을 올리거나 「현재 섹션에 넣기」로 본문에 붙입니다. 본문에서는
-                Ctrl+V / 아이폰 길게 누르기로도 넣을 수 있습니다.
+                같은 그림은 한 번만 저장됩니다. 본문에는 「현재 섹션에 넣기」로
+                붙이거나 Ctrl+V / 파일로 S칸에 넣으세요.
               </p>
               <input
                 id="report-room-upload"
@@ -2296,10 +2319,7 @@ export function EditableReportPanel({
                           const { body, urls } =
                             bodyAndUrlsFromEditorHtml(editorHtml);
                           const slotCount = countTrailingSMarkers(body);
-                          const figCount = (
-                            editorHtml.match(/report-s-image|data-s-slot/gi) ||
-                            []
-                          ).length;
+                          const figCount = countSSlotFigures(editorHtml);
                           if (slotCount <= figCount) return null;
                           // 문서 순서 URL 그대로 사용 (텍스트 S=빈 칸, figure=기존 이미지)
                           return bodyHtmlWithSSlotFigures(body, urls);
@@ -2347,31 +2367,14 @@ export function EditableReportPanel({
                               { length: slotCount },
                               (_, i) => (urls[i] || "").trim()
                             );
-                            const filled = ordered.filter(Boolean);
-                            const { room } = upsertRoomUrls(
+                            const { room, section } = bindSectionSlotUrls(
+                              cur,
                               prev.imageRoom,
-                              filled
-                            );
-                            const refByUrl = new Map(
-                              normalizeRoomItems(room).map((it) => [
-                                it.url,
-                                it.id,
-                              ])
-                            );
-                            const imageRefs = ordered.map((u) =>
-                              u ? refByUrl.get(u) || "" : ""
+                              ordered,
+                              { body, rich: true }
                             );
                             const sections = [...prev.sections];
-                            sections[idx] = {
-                              ...cur,
-                              body,
-                              rich: true,
-                              imageUrl: undefined,
-                              images: ordered.length ? ordered : undefined,
-                              imageRefs: imageRefs.some(Boolean)
-                                ? imageRefs
-                                : undefined,
-                            };
+                            sections[idx] = section;
                             return {
                               ...prev,
                               imageRoom: room,
@@ -2608,7 +2611,7 @@ export function EditableReportPanel({
             const sSlotCount = countTrailingSMarkers(sec.body || "");
             const slotUrls = slotUrlsForSection(
               sec,
-              Math.max(sSlotCount, (sec.images || []).length)
+              sectionSlotCapacity(sec, sSlotCount)
             );
             const sectionOwn = new Set(slotUrls.filter(Boolean));
             const reportFcImages = fcImages.filter((u) => !sectionOwn.has(u));

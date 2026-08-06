@@ -3,6 +3,10 @@ import {
   neonMediaStats,
   purgeUnusedNeonMedia,
 } from "@/lib/neon-media";
+import {
+  collectMediaUrlsFromValue,
+  purgeUnreferencedBlobs,
+} from "@/lib/media-gc";
 import { readAllVideos } from "@/lib/store";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -39,9 +43,11 @@ export async function GET(req: Request) {
     const stats = await neonMediaStats();
     const videos = await readAllVideos();
     const referenced = collectReferencedMediaIds(videos);
+    const allUrls = collectMediaUrlsFromValue(videos);
     return NextResponse.json({
       ...stats,
       referenced: referenced.size,
+      referencedUrls: allUrls.size,
       hasBlobToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim()),
       hint:
         stats.approxMb >= 450
@@ -54,7 +60,7 @@ export async function GET(req: Request) {
   }
 }
 
-/** 어떤 보고서에도 참조되지 않는 Neon 이미지 삭제 */
+/** 미사용 Neon + Vercel Blob 정리 */
 export async function POST(req: Request) {
   const rate = await checkRateLimit(req, "media-cleanup-post", 5, 10 * 60_000);
   if (!rate.ok) {
@@ -66,18 +72,23 @@ export async function POST(req: Request) {
   try {
     const before = await neonMediaStats();
     const videos = await readAllVideos();
-    const referenced = collectReferencedMediaIds(videos);
-    const result = await purgeUnusedNeonMedia(referenced);
+    const referencedIds = collectReferencedMediaIds(videos);
+    const referencedUrls = collectMediaUrlsFromValue(videos);
+    const neonResult = await purgeUnusedNeonMedia(referencedIds);
+    const blobResult = await purgeUnreferencedBlobs(referencedUrls, "videos/");
     const after = await neonMediaStats();
+    const deleted = neonResult.deleted + blobResult.deleted;
     return NextResponse.json({
       ok: true,
       before,
       after,
-      ...result,
+      neon: neonResult,
+      blob: blobResult,
+      deleted,
       message:
-        result.deleted > 0
-          ? `미사용 이미지 ${result.deleted}개를 삭제했습니다. (약 ${before.approxMb}MB → ${after.approxMb}MB)`
-          : "삭제할 미사용 이미지가 없습니다. Vercel Blob 스토어를 연결해 새 이미지를 Neon 밖에 저장하세요.",
+        deleted > 0
+          ? `미사용 이미지 Neon ${neonResult.deleted}개 · Blob ${blobResult.deleted}개를 삭제했습니다.`
+          : "삭제할 미사용 이미지가 없습니다.",
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -9,6 +9,7 @@ import { readLocalMedia } from "./media-store";
 import { getNeonMedia } from "./neon-media";
 import { reportBodyPlain } from "./report";
 import { parseBodySImageSlots } from "./report-body-s-slots";
+import { sectionSlotCapacity } from "./report-images";
 import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
 import type { VideoRecord } from "./types";
@@ -421,7 +422,7 @@ export async function buildReportPdf(
     const slotUrls = sectionViewSlotUrls(
       sec,
       report.imageRoom,
-      Math.max(slotCount, (sec.images || []).length)
+      sectionSlotCapacity(sec, slotCount)
     );
     let slotImg = 0;
     const drawn = new Set<string>();

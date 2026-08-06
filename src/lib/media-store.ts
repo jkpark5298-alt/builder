@@ -11,6 +11,7 @@ import type {
   TypedReport,
   VideoRecord,
 } from "./types";
+import { reportImagePrefix } from "./media-paths";
 
 function readEnv(name: string): string | undefined {
   const v = process.env[name];
@@ -90,10 +91,18 @@ export async function persistMediaDataUrl(
 
   const parsed = parseDataUrl(dataUrl);
   if (!parsed) return dataUrl;
+  return persistMediaBuffer(parsed.buffer, parsed.contentType, opts);
+}
 
+/** multipart 업로드용 — Buffer 직접 저장 */
+export async function persistMediaBuffer(
+  buffer: Buffer,
+  contentType: string,
+  opts?: { prefix?: string; filenameHint?: string }
+): Promise<string> {
   const prefix = (opts?.prefix || "media").replace(/[^a-zA-Z0-9/_-]/g, "");
-  const ext = extFromContentType(parsed.contentType);
-  const hash = contentHash(parsed.buffer);
+  const ext = extFromContentType(contentType || "image/jpeg");
+  const hash = contentHash(buffer);
   const key = `${prefix}/${hash}.${ext}`;
   const neonHint = `${prefix.replace(/\//g, "_")}_${hash}`;
 
@@ -102,7 +111,7 @@ export async function persistMediaDataUrl(
 
   const saveToNeon = async () => {
     const { putNeonMedia } = await import("./neon-media");
-    return putNeonMedia(parsed.buffer, parsed.contentType, neonHint);
+    return putNeonMedia(buffer, contentType || "image/jpeg", neonHint);
   };
 
   const formatMediaError = (msg: string) => {
@@ -118,12 +127,11 @@ export async function persistMediaDataUrl(
     return msg;
   };
 
-  // 1차: Blob (토큰 있고 Neon 강제 아님)
   if (token && !forceNeon) {
     try {
-      const blob = await put(key, parsed.buffer, {
+      const blob = await put(key, buffer, {
         access: "public",
-        contentType: parsed.contentType,
+        contentType: contentType || "image/jpeg",
         token,
         addRandomSuffix: false,
         allowOverwrite: true,
@@ -147,7 +155,6 @@ export async function persistMediaDataUrl(
     }
   }
 
-  // 2차: Neon (Blob 미연결·강제 Neon·Blob 실패 폴백)
   if (onVercel() || hasDatabase()) {
     try {
       return await saveToNeon();
@@ -155,9 +162,9 @@ export async function persistMediaDataUrl(
       const nmsg = neonErr instanceof Error ? neonErr.message : String(neonErr);
       if (token) {
         try {
-          const blob = await put(key, parsed.buffer, {
+          const blob = await put(key, buffer, {
             access: "public",
-            contentType: parsed.contentType,
+            contentType: contentType || "image/jpeg",
             token,
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -180,7 +187,7 @@ export async function persistMediaDataUrl(
   const safeName = key.replace(/\//g, "__");
   const filePath = path.join(dir, safeName);
   if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, parsed.buffer);
+    fs.writeFileSync(filePath, buffer);
   }
   return `/api/media/${encodeURIComponent(safeName)}`;
 }
@@ -267,37 +274,38 @@ async function persistReport(
   report: TypedReport,
   videoId: string
 ): Promise<TypedReport> {
+  const imgPrefix = reportImagePrefix(videoId);
   const imageRoom = [];
   for (const entry of report.imageRoom ?? []) {
     if (typeof entry === "string") {
       imageRoom.push(
-        await persistMediaDataUrl(entry, { prefix: `videos/${videoId}/report-room` })
+        await persistMediaDataUrl(entry, { prefix: imgPrefix })
       );
       continue;
     }
     imageRoom.push({
       ...entry,
       url: await persistMediaDataUrl(entry.url, {
-        prefix: `videos/${videoId}/report-room`,
+        prefix: imgPrefix,
       }),
     });
   }
   const sections = [];
   for (const s of report.sections) {
     const images = await persistMediaUrls(s.images, {
-      prefix: `videos/${videoId}/report`,
+      prefix: imgPrefix,
       keepEmptySlots: true,
     });
     const imageUrl = s.imageUrl
       ? await persistMediaDataUrl(s.imageUrl, {
-          prefix: `videos/${videoId}/report`,
+          prefix: imgPrefix,
         })
       : undefined;
     const entries = [];
     for (const e of s.entries ?? []) {
       const parts = await persistParts(
         e.answerParts,
-        `videos/${videoId}/report`
+        imgPrefix
       );
       const flat = (parts ?? []).flatMap((p) => p.imageUrls ?? []);
       const answerUrls = flat.length
@@ -307,14 +315,14 @@ async function persistReport(
               ...(e.answerImageUrl ? [e.answerImageUrl] : []),
               ...(e.answerImageUrls ?? []),
             ],
-            { prefix: `videos/${videoId}/report` }
+            { prefix: imgPrefix }
           );
       const [a0, ...arest] = answerUrls;
       entries.push({
         ...e,
         imageUrl: e.imageUrl
           ? await persistMediaDataUrl(e.imageUrl, {
-              prefix: `videos/${videoId}/report`,
+              prefix: imgPrefix,
             })
           : undefined,
         answerParts: parts,
@@ -328,7 +336,7 @@ async function persistReport(
       const matches = body.match(/data:image\/[a-zA-Z+]+;base64,[A-Za-z0-9+/=]+/g) ?? [];
       for (const dataUrl of matches) {
         const url = await persistMediaDataUrl(dataUrl, {
-          prefix: `videos/${videoId}/report-html`,
+          prefix: imgPrefix,
         });
         body = body.split(dataUrl).join(url);
       }

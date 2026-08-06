@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { Topic, VideoRecord } from "@/lib/types";
 import { formatTag, formatTagList, selectEntriesByTags } from "@/lib/tags";
+import { collectSectionImages } from "@/lib/report-images";
 
 export function TopicWorkspace({
   topic: initialTopic,
@@ -350,19 +351,23 @@ export function TopicWorkspace({
                     {sec.body}
                   </p>
                 )}
-                {!!sec.images?.length && (
-                  <div className="flex flex-wrap gap-2">
-                    {sec.images.map((src) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={src}
-                        src={src}
-                        alt=""
-                        className="max-h-40 rounded-lg border border-ink-200 object-contain"
-                      />
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  const imgs = collectSectionImages(sec, topic.report?.imageRoom);
+                  if (!imgs.length) return null;
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      {imgs.map((src) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          key={src}
+                          src={src}
+                          alt=""
+                          className="max-h-40 rounded-lg border border-ink-200 object-contain"
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
                 {!!sec.entries?.length && (
                   <div className="space-y-3 mt-2 pl-3 border-l-2 border-accent/40">
                     {sec.entries.map((en, ei) => (

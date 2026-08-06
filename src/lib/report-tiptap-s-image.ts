@@ -1,4 +1,5 @@
 import { Node, mergeAttributes } from "@tiptap/core";
+import { Plugin } from "@tiptap/pm/state";
 
 /**
  * 본문 S 자리 이미지 (figure.report-s-image).
@@ -76,6 +77,33 @@ export const ReportSImage = Node.create({
         ["strong", {}, `S${n} 이미지 입력칸`],
         " · 클릭 후 Ctrl+V",
       ],
+    ];
+  },
+
+  /** 문서 순서대로 S1·S2… 번호 재부여 (기본 slotIndex=0 중복 방지) */
+  addProseMirrorPlugins() {
+    const typeName = this.name;
+    return [
+      new Plugin({
+        appendTransaction(transactions, _oldState, newState) {
+          if (!transactions.some((tr) => tr.docChanged)) return null;
+          let index = 0;
+          let tr = newState.tr;
+          let modified = false;
+          newState.doc.descendants((node, pos) => {
+            if (node.type.name !== typeName) return;
+            if (node.attrs.slotIndex !== index) {
+              tr = tr.setNodeMarkup(pos, undefined, {
+                ...node.attrs,
+                slotIndex: index,
+              });
+              modified = true;
+            }
+            index += 1;
+          });
+          return modified ? tr : null;
+        },
+      }),
     ];
   },
 });

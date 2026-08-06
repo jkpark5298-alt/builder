@@ -20,6 +20,7 @@ import {
   wrapPlainPasteText,
 } from "@/lib/report-editor-format";
 import { extractImageFilesFromDataTransfer } from "@/lib/image-client";
+import { countSSlotFigures } from "@/lib/report-body-s-slots";
 
 function normalizeEditorHtml(html: string): string {
   const trimmed = normalizeStoredFcAnchors(html || "").trim();
@@ -27,10 +28,6 @@ function normalizeEditorHtml(html: string): string {
     return "<p></p>";
   }
   return trimmed;
-}
-
-function countSFigures(html: string): number {
-  return (html.match(/report-s-image|data-s-slot/gi) || []).length;
 }
 
 export function RichBody({
@@ -169,7 +166,7 @@ export function RichBody({
       let next = ed.getHTML();
       // S / S1… 텍스트가 있으면 즉시 빈 이미지 칸(figure)으로 바꿈
       const resolved = resolveSlotHtmlRef.current?.(next);
-      if (resolved && countSFigures(resolved) > countSFigures(next)) {
+      if (resolved && countSSlotFigures(resolved) > countSSlotFigures(next)) {
         applyingSlotRef.current = true;
         const from = ed.state.selection.from;
         ed.commands.setContent(normalizeEditorHtml(resolved), {
@@ -219,7 +216,7 @@ export function RichBody({
     // 포커스 중: figure 개수가 같을 땐 덮어쓰지 않음 (타이핑 보호)
     // 개수가 늘거나 줄면(S 추가·삭제·번호 재정렬) 반영
     if (editor.isFocused) {
-      if (countSFigures(next) === countSFigures(current)) return;
+      if (countSSlotFigures(next) === countSSlotFigures(current)) return;
     }
     const from = editor.state.selection.from;
     editor.commands.setContent(next, { emitUpdate: false });

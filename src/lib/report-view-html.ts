@@ -3,31 +3,19 @@ import {
   countTrailingSMarkers,
   htmlWithSImages,
 } from "@/lib/report-body-s-slots";
-import { normalizeRoomItems } from "@/lib/report-images";
+import {
+  orderedSlotUrls,
+  sectionSlotCapacity,
+} from "@/lib/report-images";
 import type { ReportSectionBlock, TypedReport } from "@/lib/types";
 
-/** 섹션 S 슬롯 URL (보기·PDF·인쇄 공통) */
+/** 섹션 S 슬롯 URL (보기·PDF·인쇄 공통) — refs→room 우선 */
 export function sectionViewSlotUrls(
   sec: ReportSectionBlock,
   room: TypedReport["imageRoom"] | undefined,
   slotCount: number
 ): string[] {
-  const out: string[] = Array.from({ length: slotCount }, () => "");
-  const stored = sec.images;
-  if (stored && stored.length) {
-    for (let i = 0; i < slotCount; i++) {
-      out[i] = (stored[i] || "").trim();
-    }
-    return out;
-  }
-  const items = normalizeRoomItems(room);
-  const byId = new Map(items.map((it) => [it.id, it.url]));
-  const refs = sec.imageRefs ?? [];
-  for (let i = 0; i < slotCount; i++) {
-    const id = refs[i];
-    out[i] = (id && byId.get(id)) || "";
-  }
-  return out;
+  return orderedSlotUrls(sec, room, slotCount);
 }
 
 /** 보기 탭과 동일한 섹션 본문 HTML (FC 뱃지 + S 이미지) */
@@ -47,7 +35,7 @@ export function buildSectionViewHtml(
   const slotUrls = sectionViewSlotUrls(
     sec,
     report.imageRoom,
-    Math.max(sSlotCount, (sec.images || []).length)
+    sectionSlotCapacity(sec, sSlotCount)
   );
   return {
     html: htmlWithSImages(markedHtml, slotUrls),

@@ -323,16 +323,40 @@ export async function upsertVideo(
 }
 
 export async function deleteVideo(id: string): Promise<boolean> {
+  const existing = await getVideo(id);
+  const candidateUrls = existing
+    ? Array.from(
+        (
+          await import("./media-gc")
+        ).collectMediaUrlsFromValue(existing)
+      )
+    : [];
+
+  let ok = false;
   if (hasDatabase()) {
     try {
-      return await dbDelete(id);
+      ok = await dbDelete(id);
     } catch (e) {
       if (onVercel()) throw e;
       console.warn("[store] db delete failed → local file fallback", e);
-      return deleteLocalVideo(id);
+      ok = deleteLocalVideo(id);
+    }
+  } else {
+    ok = deleteLocalVideo(id);
+  }
+
+  if (ok && candidateUrls.length) {
+    try {
+      const { collectMediaUrlsFromValue, purgeUnreferencedMediaUrls } =
+        await import("./media-gc");
+      const videos = await readAllVideos();
+      const referenced = collectMediaUrlsFromValue(videos);
+      await purgeUnreferencedMediaUrls(candidateUrls, referenced);
+    } catch (e) {
+      console.warn("[store] media GC after deleteVideo failed", e);
     }
   }
-  return deleteLocalVideo(id);
+  return ok;
 }
 
 export async function searchVideos(query: string): Promise<VideoRecord[]> {
