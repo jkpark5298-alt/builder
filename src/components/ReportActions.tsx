@@ -18,6 +18,10 @@ import { canExportArtifacts } from "@/lib/factcheck-client";
 import { compressImageFiles } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import {
+  downloadReportPdfFromDom,
+  prepareReportForPrint,
+} from "@/lib/report-dom-export";
+import {
   formatFactChecksText,
   formatReportText,
   formatReportWithFactChecksText,
@@ -36,6 +40,8 @@ export function ReportActions({
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [sharing, setSharing] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   if (!ready) return null;
   const report = video.report;
@@ -46,7 +52,6 @@ export function ReportActions({
   const editHref = `/videos/${video.id}#report-edit`;
   const fcHref = `/videos/${video.id}#report-fc`;
   const coverHref = `/videos/${video.id}#cover`;
-  const pdfHref = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
 
   async function share() {
     setSharing(true);
@@ -87,14 +92,43 @@ export function ReportActions({
     );
   }
 
-  function printReport() {
+  async function printReport() {
     if (!window.location.pathname.includes(`/videos/${video.id}`)) {
       router.push(`/videos/${video.id}?print=1#report`);
       return;
     }
-    const el = document.getElementById("report");
-    el?.scrollIntoView({ behavior: "auto", block: "start" });
-    window.setTimeout(() => window.print(), 200);
+    setPrintBusy(true);
+    try {
+      await prepareReportForPrint(video.id);
+      window.print();
+    } finally {
+      setPrintBusy(false);
+    }
+  }
+
+  async function savePdf() {
+    const onReportPage =
+      typeof window !== "undefined" &&
+      window.location.pathname.includes(`/videos/${video.id}`) &&
+      Boolean(document.getElementById("report-body-export") || document.getElementById("report"));
+    // 목록 등 보고서 DOM이 없으면 서버 PDF(본문 S 순서 반영)로 폴백
+    if (!onReportPage) {
+      window.location.href = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
+      return;
+    }
+    setPdfBusy(true);
+    try {
+      await downloadReportPdfFromDom({
+        videoId: video.id,
+        fileName: `factcheck-${video.videoId}.pdf`,
+      });
+    } catch (e) {
+      console.error(e);
+      // DOM 캡처 실패 시 서버 PDF
+      window.location.href = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
+    } finally {
+      setPdfBusy(false);
+    }
   }
 
   function startEdit(e: React.MouseEvent) {
@@ -273,12 +307,31 @@ export function ReportActions({
         )}
         공유
       </button>
-      <a href={pdfHref} className={`${btn} ${enabled}`}>
-        <FileDown className="h-3.5 w-3.5 shrink-0" />
-        PDF 저장
-      </a>
-      <button type="button" onClick={printReport} className={`${btn} ${enabled}`}>
-        <Printer className="h-3.5 w-3.5 shrink-0" />
+      <button
+        type="button"
+        disabled={pdfBusy}
+        onClick={() => void savePdf()}
+        title="보기 본문과 동일한 형식의 PDF"
+        className={`${btn} ${enabled}`}
+      >
+        {pdfBusy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+        ) : (
+          <FileDown className="h-3.5 w-3.5 shrink-0" />
+        )}
+        {pdfBusy ? "PDF 만드는 중…" : "PDF 저장"}
+      </button>
+      <button
+        type="button"
+        disabled={printBusy}
+        onClick={() => void printReport()}
+        className={`${btn} ${enabled}`}
+      >
+        {printBusy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+        ) : (
+          <Printer className="h-3.5 w-3.5 shrink-0" />
+        )}
         인쇄
       </button>
       {!compact && (

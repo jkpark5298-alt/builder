@@ -8,6 +8,8 @@ import { collectSectionImages } from "./report-images";
 import { readLocalMedia } from "./media-store";
 import { getNeonMedia } from "./neon-media";
 import { reportBodyPlain } from "./report";
+import { parseBodySImageSlots } from "./report-body-s-slots";
+import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
@@ -408,20 +410,47 @@ export async function buildReportPdf(
   writeWrapped("— 보고서 —", 13, 14);
   setFace("normal");
 
-  // 보고서 본문: 요약 서술 + 섹션 이미지 (팩트체크는 맨 뒤 부록)
+  // 보고서 본문: 보기와 같이 S 자리마다 이미지 삽입 (텍스트 후 몰아넣기 금지)
   for (const sec of report.sections) {
     ensureSpace(56);
     setFace("bold");
     writeWrapped(sec.heading, 13, 10);
     setFace("normal");
 
-    const plain = reportBodyPlain(sec.body, sec.rich);
-    if (plain) writeWrapped(plain, 10, 12);
-
-    const sectionImages = collectSectionImages(sec, report.imageRoom).filter(
-      (u) => !isYoutubeThumb(u)
+    const { segments, slotCount } = parseBodySImageSlots(sec.body || "");
+    const slotUrls = sectionViewSlotUrls(
+      sec,
+      report.imageRoom,
+      Math.max(slotCount, (sec.images || []).length)
     );
-    for (const src of sectionImages) {
+    let slotImg = 0;
+    const drawn = new Set<string>();
+
+    if (segments.length) {
+      for (const seg of segments) {
+        const plain = reportBodyPlain(seg.html, true)
+          .replace(/\bS\d{0,2}\.?\b/gi, "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+        if (plain) writeWrapped(plain, 10, 10);
+        if (seg.hasSlot) {
+          const src = (slotUrls[slotImg++] || "").trim();
+          if (src && !isYoutubeThumb(src)) {
+            await drawImage(src);
+            drawn.add(src);
+          }
+        }
+      }
+    } else {
+      const plain = reportBodyPlain(sec.body, sec.rich);
+      if (plain) writeWrapped(plain, 10, 12);
+    }
+
+    // 슬롯에 못 넣은 나머지 섹션 이미지만 뒤에 추가
+    const leftovers = collectSectionImages(sec, report.imageRoom).filter(
+      (u) => !isYoutubeThumb(u) && !drawn.has(u)
+    );
+    for (const src of leftovers) {
       await drawImage(src);
     }
 

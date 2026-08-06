@@ -340,6 +340,29 @@ h3,
     page-break-inside: avoid;
   }
 
+  #report-body-export,
+  #report-body-export .report-body {
+    display: block !important;
+  }
+
+  .report-export-offscreen {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: auto !important;
+  }
+
+  #report .report-body mark,
+  #report .report-body [style*="background"],
+  #report .hl-yellow {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   #fc-appendix {
     display: block !important;
     break-before: page;
@@ -365,4 +388,17 @@ h3,
 
 .print-only {
   display: none;
+}
+
+/* 편집 중에도 인쇄·PDF용 본문 DOM 유지 (화면 밖) */
+.report-export-offscreen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 794px;
+  max-width: 794px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: #fff;
 }

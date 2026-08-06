@@ -15,6 +15,11 @@ import { useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts, hasInfographic } from "@/lib/factcheck-client";
 import { shareInfographicToGoodNotes } from "@/lib/share-goodnotes";
+import {
+  downloadReportPdfFromDom,
+  prepareReportForPrint,
+  shareReportPdfToGoodNotes,
+} from "@/lib/report-dom-export";
 import { ReportActions } from "@/components/ReportActions";
 
 declare global {
@@ -33,6 +38,7 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [goodnotesBusy, setGoodnotesBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const ready = canExportArtifacts(video);
   const hasInfo = hasInfographic(video);
   const kakaoConfigured = Boolean(process.env.NEXT_PUBLIC_KAKAO_JS_KEY);
@@ -121,6 +127,27 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   async function shareGoodNotes() {
     setGoodnotesBusy(true);
     try {
+      const onReportPage =
+        typeof window !== "undefined" &&
+        window.location.pathname.includes(`/videos/${video.id}`) &&
+        Boolean(
+          document.getElementById("report-body-export") ||
+            document.getElementById("report")
+        );
+      if (onReportPage) {
+        const result = await shareReportPdfToGoodNotes({
+          videoId: video.videoId,
+          title: video.title,
+        });
+        void markShared("goodnotes");
+        if (result === "downloaded") {
+          alert(
+            "보고서 PDF를 저장했습니다.\nGoodnotes 앱에서 열어 필기하세요. (본문과 동일한 형식)"
+          );
+        }
+        return;
+      }
+      // 보고서 페이지가 아니면 인포그래픽 PNG 폴백
       const result = await shareInfographicToGoodNotes({
         videoId: video.videoId,
         title: video.title,
@@ -129,7 +156,7 @@ export function ActionBar({ video }: { video: VideoRecord }) {
       void markShared("goodnotes");
       if (result === "downloaded") {
         alert(
-          "PNG를 저장했습니다.\nGoodnotes 앱에서 「이미지 가져오기」로 열어 필기하세요."
+          "PNG를 저장했습니다.\nGoodnotes 앱에서 「이미지 가져오기」로 열어 필기하세요.\n(본문과 동일하게 공유하려면 보고서 상세에서 「굿노트 공유」를 누르세요.)"
         );
       }
     } catch (e) {
@@ -137,10 +164,46 @@ export function ActionBar({ video }: { video: VideoRecord }) {
       alert(
         e instanceof Error
           ? e.message
-          : "굿노트 공유에 실패했습니다. SVG 다운로드를 이용해 주세요."
+          : "굿노트 공유에 실패했습니다. PDF 저장 후 Goodnotes에서 열어 주세요."
       );
     } finally {
       setGoodnotesBusy(false);
+    }
+  }
+
+  async function savePdf() {
+    const onReportPage =
+      typeof window !== "undefined" &&
+      window.location.pathname.includes(`/videos/${video.id}`) &&
+      Boolean(
+        document.getElementById("report-body-export") ||
+          document.getElementById("report")
+      );
+    if (!onReportPage) {
+      window.location.href = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
+      return;
+    }
+    setPdfBusy(true);
+    try {
+      await downloadReportPdfFromDom({
+        videoId: video.id,
+        fileName: `factcheck-${video.videoId}.pdf`,
+      });
+    } catch (e) {
+      console.error(e);
+      window.location.href = `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`;
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
+  async function printReport() {
+    setBusy(true);
+    try {
+      await prepareReportForPrint(video.id);
+      window.print();
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -176,25 +239,20 @@ export function ActionBar({ video }: { video: VideoRecord }) {
       )}
 
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
-        <a
-          href={
-            ready
-              ? `/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`
-              : undefined
-          }
-          aria-disabled={!ready}
+        <button
+          type="button"
+          disabled={!ready || pdfBusy}
+          onClick={() => void savePdf()}
+          title="보기 본문과 동일한 형식의 PDF"
           className={`${btn} ${ready ? enabled : disabled}`}
         >
           <FileDown className="h-4 w-4 shrink-0" />
-          PDF 보고서
-        </a>
+          {pdfBusy ? "PDF 만드는 중…" : "PDF 보고서"}
+        </button>
         <button
           type="button"
-          disabled={!ready}
-          onClick={() => {
-            document.getElementById("report")?.scrollIntoView();
-            window.setTimeout(() => window.print(), 200);
-          }}
+          disabled={!ready || busy}
+          onClick={() => void printReport()}
           className={`${btn} ${ready ? enabled : disabled}`}
         >
           <Printer className="h-4 w-4 shrink-0" />

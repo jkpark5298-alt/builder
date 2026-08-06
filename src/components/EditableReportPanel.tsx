@@ -418,6 +418,14 @@ export function EditableReportPanel({
       });
     }
 
+    function enterView() {
+      setMode("view");
+      document.getElementById("report")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+
     function fromStorageOrHash() {
       try {
         const key = `edit-report:${video.id}`;
@@ -447,6 +455,7 @@ export function EditableReportPanel({
       const detail = (e as CustomEvent<{ id?: string; mode?: string }>).detail;
       if (detail?.id && detail.id !== video.id) return;
       if (detail?.mode === "factcheck") enterFactcheck();
+      else if (detail?.mode === "view") enterView();
       else enterBody();
     }
     function onHash() {
@@ -1902,7 +1911,7 @@ export function EditableReportPanel({
           </p>
         </div>
 
-        {editing ? (
+        {editing && (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
             <div className="sticky top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white/95 backdrop-blur-md px-3 py-2 space-y-2 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2607,8 +2616,13 @@ export function EditableReportPanel({
               </div>
             </div>
           </div>
-        ) : (
-          draft.sections.map((sec, idx) => {
+        )}
+        <div
+          id="report-body-export"
+          className={editing ? "report-export-offscreen" : undefined}
+          aria-hidden={editing || undefined}
+        >
+          {draft.sections.map((sec, idx) => {
             const { html: markedHtml, unmatched } = sectionBodyWithMarkers(
               sec,
               idx,
@@ -2829,8 +2843,8 @@ export function EditableReportPanel({
                 )}
               </div>
             );
-          })
-        )}
+          })}
+        </div>
 
         {handwritingFor !== null && (
           <HandwritingModal
