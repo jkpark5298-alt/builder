@@ -29,6 +29,10 @@ function normalizeEditorHtml(html: string): string {
   return trimmed;
 }
 
+function countSFigures(html: string): number {
+  return (html.match(/report-s-image|data-s-slot/gi) || []).length;
+}
+
 export function RichBody({
   id,
   editorKey,
@@ -37,6 +41,8 @@ export function RichBody({
   onFocus,
   onSaveSelection,
   onPasteImages,
+  /** S 텍스트 입력 직후 figure HTML 로 바꿔 칸을 바로 보여 줌 */
+  resolveSlotHtml,
   /** S 슬롯으로 쪼갠 연속 본문 — 테두리 없이 한 글처럼 보이게 */
   plainChrome = false,
 }: {
@@ -49,6 +55,7 @@ export function RichBody({
   onSaveSelection?: () => void;
   /** 본문에 이미지 Ctrl+V 시 섹션 첨부로 넘김 */
   onPasteImages?: (files: File[]) => void;
+  resolveSlotHtml?: (editorHtml: string) => string | null;
   plainChrome?: boolean;
 }) {
   const editorRef = useRef<Editor | null>(null);
@@ -56,8 +63,11 @@ export function RichBody({
   const onFocusRef = useRef(onFocus);
   const onSaveSelectionRef = useRef(onSaveSelection);
   const onPasteImagesRef = useRef(onPasteImages);
+  const resolveSlotHtmlRef = useRef(resolveSlotHtml);
   const lastEmittedRef = useRef(normalizeEditorHtml(html || "<p></p>"));
+  const applyingSlotRef = useRef(false);
   onPasteImagesRef.current = onPasteImages;
+  resolveSlotHtmlRef.current = resolveSlotHtml;
 
   onChangeRef.current = onChange;
   onFocusRef.current = onFocus;
@@ -155,7 +165,25 @@ export function RichBody({
       lastEmittedRef.current = ed.getHTML();
     },
     onUpdate: ({ editor: ed }) => {
-      const next = ed.getHTML();
+      if (applyingSlotRef.current) return;
+      let next = ed.getHTML();
+      // S / S1… 텍스트가 있으면 즉시 빈 이미지 칸(figure)으로 바꿈
+      const resolved = resolveSlotHtmlRef.current?.(next);
+      if (resolved && countSFigures(resolved) > countSFigures(next)) {
+        applyingSlotRef.current = true;
+        const from = ed.state.selection.from;
+        ed.commands.setContent(normalizeEditorHtml(resolved), {
+          emitUpdate: false,
+        });
+        next = ed.getHTML();
+        try {
+          const max = ed.state.doc.content.size;
+          ed.commands.setTextSelection(Math.min(from, Math.max(1, max - 1)));
+        } catch {
+          /* ignore */
+        }
+        applyingSlotRef.current = false;
+      }
       lastEmittedRef.current = next;
       onChangeRef.current(next);
     },
@@ -181,8 +209,6 @@ export function RichBody({
 
   useEffect(() => {
     if (!editor) return;
-    // 포커스 중에는 절대 덮어쓰지 않음 — S 입력 mid-flight 가 지워지는 문제 방지
-    if (editor.isFocused) return;
     const next = normalizeEditorHtml(html || "<p></p>");
     if (next === lastEmittedRef.current) return;
     const current = editor.getHTML();
@@ -190,8 +216,21 @@ export function RichBody({
       lastEmittedRef.current = next;
       return;
     }
+    // 포커스 중: S 칸(figure)이 늘어난 경우만 반영 — 타이핑 덮어쓰기 방지
+    if (editor.isFocused) {
+      if (countSFigures(next) <= countSFigures(current)) return;
+    }
+    const from = editor.state.selection.from;
     editor.commands.setContent(next, { emitUpdate: false });
     lastEmittedRef.current = editor.getHTML();
+    if (editor.isFocused) {
+      try {
+        const max = editor.state.doc.content.size;
+        editor.commands.setTextSelection(Math.min(from, Math.max(1, max - 1)));
+      } catch {
+        /* ignore */
+      }
+    }
   }, [html, editor]);
 
   return <EditorContent editor={editor} />;

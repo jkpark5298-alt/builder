@@ -2255,6 +2255,28 @@ export function EditableReportPanel({
                           sec.body || "<p></p>",
                           slotUrls
                         )}
+                        resolveSlotHtml={(editorHtml) => {
+                          const { body, urls } =
+                            bodyHtmlFromSSlotFigures(editorHtml);
+                          const slotCount = countTrailingSMarkers(body);
+                          const figCount = (
+                            editorHtml.match(/report-s-image|data-s-slot/gi) ||
+                            []
+                          ).length;
+                          if (slotCount <= figCount) return null;
+                          const cur = draftRef.current?.sections[idx];
+                          if (!cur) return null;
+                          const prevOrdered = slotUrlsForSectionFrom(
+                            cur,
+                            draftRef.current?.imageRoom,
+                            Math.max(slotCount, 1)
+                          );
+                          const ordered = Array.from(
+                            { length: slotCount },
+                            (_, i) => urls[i] || prevOrdered[i] || ""
+                          );
+                          return bodyHtmlWithSSlotFigures(body, ordered);
+                        }}
                         onSaveSelection={saveEditorSelection}
                         onFocus={() => setActiveSectionIdx(idx)}
                         onChange={(html) => {
