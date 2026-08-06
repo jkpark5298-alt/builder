@@ -80,6 +80,7 @@ import {
 import { FactCheckDetailPanel } from "@/components/FactCheckDetailPanel";
 import { FactCheckAppendix } from "@/components/FactCheckAppendix";
 import { FormatToolbar } from "@/components/ReportFormatToolbar";
+import { MobileFormatBubble } from "@/components/MobileFormatBubble";
 import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
@@ -1952,7 +1953,7 @@ export function EditableReportPanel({
                     className="md:hidden inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700"
                     aria-expanded={formatToolbarOpen}
                   >
-                    서식
+                    도구
                     {formatToolbarOpen ? (
                       <ChevronUp className="h-3.5 w-3.5" />
                     ) : (
@@ -2058,9 +2059,14 @@ export function EditableReportPanel({
               )}
               <div className="md:hidden space-y-1.5">
                 <p className="text-[11px] text-ink-500">
-                  아이폰: 텍스트·이미지는 아래를{" "}
+                  글자 색·굵기는 본문에서 글자 선택(또는 커서) 시{" "}
+                  <strong className="font-medium text-ink-700">근처 서식 바</strong>
+                  로 적용. 이미지·손글씨는 「도구」.
+                </p>
+                <p className="text-[11px] text-ink-500">
+                  붙여넣기: 아래를{" "}
                   <strong className="font-medium text-ink-700">길게 눌러 붙여넣기</strong>
-                  {" "}또는 「이미지 파일」(글자는 일반 텍스트로 붙습니다)
+                  {" "}또는 「이미지 파일」
                 </p>
                 <textarea
                   rows={2}
@@ -2977,6 +2983,37 @@ export function EditableReportPanel({
         draft={draft}
         fcByItem={fcByItem}
       />
+      {editing && mode === "body" && (
+        <MobileFormatBubble
+          active
+          onBold={() =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().toggleBold().run();
+            })
+          }
+          onUnderline={() =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().toggleUnderline().run();
+            })
+          }
+          onFontSize={applyFontSize}
+          onFontSizeStep={stepActiveFontSize}
+          onColor={(c) =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().setColor(c).run();
+            })
+          }
+          onHighlight={(c) =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().setHighlight({ color: c }).run();
+            })
+          }
+          onBeforeFontSizeSelect={() => {
+            focusActiveBodyEditor();
+            saveEditorSelection();
+          }}
+        />
+      )}
     </>
   );
 }
