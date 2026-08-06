@@ -3,6 +3,7 @@ import { Node, mergeAttributes } from "@tiptap/core";
 /**
  * 본문 S 자리 이미지 (figure.report-s-image).
  * 저장 HTML 에서는 S1·S2… 표시로 되돌리고, 편집기에서는 문장 바로 아래 그림으로 보여 줍니다.
+ * 아이폰: atom 블록이 커서·선택과 덜 충돌하도록 selectable은 유지하되 CSS로 컴팩트 표시.
  */
 export const ReportSImage = Node.create({
   name: "reportSImage",
@@ -10,6 +11,9 @@ export const ReportSImage = Node.create({
   atom: true,
   selectable: true,
   draggable: false,
+  // 주변 텍스트 편집과 분리 — iOS에서 선택·스크롤 점프 완화
+  isolating: true,
+  defining: true,
 
   addAttributes() {
     return {

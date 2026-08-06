@@ -140,6 +140,12 @@ h3,
   border-radius: 0.75rem;
   overflow: hidden;
   background: #fff;
+  /* 편집 중 레이아웃 점프·선택 간섭 완화 */
+  contain: layout style;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .report-s-image img {
@@ -149,25 +155,30 @@ h3,
   object-fit: contain;
   object-position: left center;
   background: #fff;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 
-.report-s-image .s-slot-badge {
+/* S1·S2 뱃지 — 아주 작은 알약 */
+.report-s-image .s-slot-badge,
+.report-body .report-s-image .s-slot-badge {
   position: absolute;
-  top: 0.4rem;
-  left: 0.4rem;
+  top: 0.2rem;
+  left: 0.2rem;
   z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.6rem;
-  padding: 0.12rem 0.4rem;
-  border-radius: 0.35rem;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  padding: 0 0.18rem;
+  border-radius: 0.2rem;
   background: rgb(194 65 12 / 0.92);
   color: #fff;
-  font-size: 0.65rem;
+  font-size: 0.5rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 1.2;
+  letter-spacing: 0;
+  line-height: 1;
   pointer-events: none;
   user-select: none;
 }
@@ -188,6 +199,49 @@ h3,
 .report-s-image .s-slot-ph strong {
   color: rgb(194 65 12);
   font-weight: 700;
+}
+
+/* TipTap 편집기: 이미지 블록은 본문 흐름과 분리된 느낌으로 */
+.ProseMirror .report-s-image {
+  cursor: default;
+}
+
+.ProseMirror .report-s-image.ProseMirror-selectednode,
+.ProseMirror-selectednode.report-s-image {
+  outline: 2px solid rgb(194 65 12 / 0.45);
+  outline-offset: 1px;
+}
+
+.ProseMirror .report-s-image:not(.report-s-slot-empty) {
+  /* 채워진 이미지는 텍스트 드래그 선택과 덜 섞이게 */
+  caret-color: transparent;
+}
+
+/* 터치(아이폰): 편집기 안 이미지는 작게·고정감 있게 — 본문 타이핑과 덜 흔들림 */
+@media (pointer: coarse) {
+  .ProseMirror .report-s-image {
+    margin: 0.2em 0 0.35em;
+    border-radius: 0.5rem;
+    max-width: 100%;
+  }
+
+  .ProseMirror .report-s-image img {
+    max-height: 6.5rem;
+  }
+
+  .ProseMirror .report-s-image.report-s-slot-empty .s-slot-ph {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.62rem;
+  }
+
+  .ProseMirror .report-s-image .s-slot-badge {
+    top: 0.15rem;
+    left: 0.15rem;
+    min-width: 0.85rem;
+    height: 0.85rem;
+    font-size: 0.45rem;
+    padding: 0 0.14rem;
+  }
 }
 
 /* FC 답변 서식 편집기 */

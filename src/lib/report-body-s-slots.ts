@@ -244,8 +244,8 @@ export function htmlWithSImages(
       base +
       filled
         .map(
-          (src) =>
-            `<figure class="report-s-image"><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+          (src, i) =>
+            `<figure class="report-s-image"><span class="s-slot-badge">S${i + 1}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
         )
         .join("")
     );
@@ -257,8 +257,9 @@ export function htmlWithSImages(
     if (seg.hasSlot) {
       const src = imageUrls[imgIdx++];
       if (src) {
+        const n = imgIdx;
         parts.push(
-          `<figure class="report-s-image"><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+          `<figure class="report-s-image"><span class="s-slot-badge">S${n}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
         );
       }
     }
@@ -267,8 +268,9 @@ export function htmlWithSImages(
   while (imgIdx < imageUrls.length) {
     const src = imageUrls[imgIdx++];
     if (!src) continue;
+    const n = imgIdx;
     parts.push(
-      `<figure class="report-s-image"><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+      `<figure class="report-s-image"><span class="s-slot-badge">S${n}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
     );
   }
   return parts.join("");
@@ -465,11 +467,42 @@ export function appendTrailingSMarker(html: string, slotN?: number): string {
   if (!trimmed || trimmed === "<p></p>" || trimmed === "<p><br></p>") {
     return `<p>${mark}</p>`;
   }
-  if (countTrailingSMarkers(trimmed) > 0) return trimmed;
-  if (/<\/p>\s*$/i.test(trimmed)) {
+  // 이미 S 가 있어도 새 슬롯이 필요하면 별도 문단으로 추가
+  if (countTrailingSMarkers(trimmed) > 0 && slotN == null) {
+    return trimmed;
+  }
+  if (
+    slotN != null &&
+    slotN > 0 &&
+    countTrailingSMarkers(trimmed) >= slotN
+  ) {
+    return trimmed;
+  }
+  if (/<\/p>\s*$/i.test(trimmed) && countTrailingSMarkers(trimmed) === 0) {
     return trimmed.replace(/<\/p>\s*$/i, ` ${mark}</p>`);
   }
   return `${trimmed}<p>${mark}</p>`;
+}
+
+/** 본문에 S 슬롯이 최소 count 개가 되도록 뒤에 채웁니다. */
+export function ensureTrailingSMarkers(html: string, count: number): string {
+  const need = Math.max(0, Math.floor(count));
+  if (need <= 0) return html || "<p></p>";
+  let body = (html || "").trim() || "<p></p>";
+  let n = countTrailingSMarkers(body);
+  let guard = 0;
+  while (n < need && guard < need + 3) {
+    guard += 1;
+    const before = n;
+    body = appendTrailingSMarker(body, n + 1);
+    n = countTrailingSMarkers(body);
+    if (n <= before) {
+      body = `${body}<p>S${before + 1}</p>`;
+      n = countTrailingSMarkers(body);
+      if (n <= before) break;
+    }
+  }
+  return body;
 }
 
 /**
