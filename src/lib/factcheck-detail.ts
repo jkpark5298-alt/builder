@@ -196,8 +196,8 @@ export async function saveFactCheckEditApi(
   }
 ): Promise<VideoRecord> {
   const explanation = normalizeAiAnswer(opts.explanation.trim());
-  if (explanation.length < 20) {
-    throw new Error("팩트체크 답변을 20자 이상 입력해 주세요.");
+  if (!explanation) {
+    throw new Error("팩트체크 답변을 입력해 주세요.");
   }
   if (!opts.statement.trim()) {
     throw new Error("주장을 입력해 주세요.");

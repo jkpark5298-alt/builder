@@ -216,9 +216,10 @@ export function RichBody({
       lastEmittedRef.current = next;
       return;
     }
-    // 포커스 중: S 칸(figure)이 늘어난 경우만 반영 — 타이핑 덮어쓰기 방지
+    // 포커스 중: figure 개수가 같을 땐 덮어쓰지 않음 (타이핑 보호)
+    // 개수가 늘거나 줄면(S 추가·삭제·번호 재정렬) 반영
     if (editor.isFocused) {
-      if (countSFigures(next) <= countSFigures(current)) return;
+      if (countSFigures(next) === countSFigures(current)) return;
     }
     const from = editor.state.selection.from;
     editor.commands.setContent(next, { emitUpdate: false });

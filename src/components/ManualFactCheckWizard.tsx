@@ -140,8 +140,8 @@ export function ManualFactCheckWizard({ video }: { video: VideoRecord }) {
       // 서식(HTML) 유지. 번호 분할용 평문은 parts에만 사용
       const plainExplanation =
         partsToExplanation(rawParts) || normalizeAiAnswer(plain);
-      if (plainExplanation.trim().length < 20 && plain.trim().length < 20) {
-        throw new Error("AI 답변을 조금 더 자세히 입력해 주세요. (20자 이상)");
+      if (!plainExplanation.trim() && !plain.trim()) {
+        throw new Error("AI 답변을 입력해 주세요.");
       }
       const safeVerdict = normalizeSimpleVerdict(
         verdict === "pending" ? "unverifiable" : verdict
@@ -1151,7 +1151,7 @@ function StepEditor({
 
       <button
         type="button"
-        disabled={saving || editing || answerPlainLength(answer) < 20}
+        disabled={saving || editing || !answerPlainLength(answer)}
         onClick={() => {
           void (async () => {
             setLocalSaveError(null);
@@ -1186,11 +1186,6 @@ function StepEditor({
       {localSaveError && (
         <p className="text-sm text-verify-false" role="alert">
           {localSaveError}
-        </p>
-      )}
-      {answerPlainLength(answer) > 0 && answerPlainLength(answer) < 20 && (
-        <p className="text-[11px] text-amber-800">
-          답변이 20자 이상이어야 저장할 수 있습니다.
         </p>
       )}
     </div>

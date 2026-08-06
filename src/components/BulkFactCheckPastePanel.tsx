@@ -581,7 +581,7 @@ export function countFilledFactChecks(
     if (!i.needsFactCheck) return false;
     const fc = map.get(i.id);
     return Boolean(
-      fc && fc.explanation.trim().length >= 20 && fc.verdict !== "pending"
+      fc && fc.explanation.trim().length > 0 && fc.verdict !== "pending"
     );
   }).length;
 }

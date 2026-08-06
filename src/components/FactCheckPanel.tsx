@@ -179,7 +179,7 @@ function EditCard({
 
       <button
         type="button"
-        disabled={saving || answer.trim().length < 20}
+        disabled={saving || !answer.trim()}
         onClick={() => onSave(item.id, answer, verdict)}
         className="w-full sm:w-auto min-h-11 rounded-lg bg-ink-900 text-white text-sm px-4 py-2.5 hover:bg-accent disabled:opacity-60"
       >

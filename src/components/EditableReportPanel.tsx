@@ -715,35 +715,36 @@ export function EditableReportPanel({
       }, { history: "immediate" });
       setArmedSSlot(null);
       setImagePasteHint(null);
-      // 아이폰: blur 하면 키보드·스크롤이 튀므로 에디터에 직접 figure 반영
-      queueMicrotask(() => {
-        const cur = draftRef.current?.sections[secIdx];
-        if (!cur) return;
-        const ed = getReportEditor(sectionEditKey(cur, secIdx));
-        if (!ed) return;
-        const n = countTrailingSMarkers(cur.body || "");
-        const urls = slotUrlsForSectionFrom(
-          cur,
-          draftRef.current?.imageRoom,
-          Math.max(n, 1)
-        );
-        const nextHtml = bodyHtmlWithSSlotFigures(cur.body || "<p></p>", urls);
-        const wasFocused = ed.isFocused;
-        const pos = ed.state.selection.from;
-        ed.commands.setContent(nextHtml, { emitUpdate: false });
-        if (wasFocused) {
-          try {
-            const max = ed.state.doc.content.size;
-            ed.commands.setTextSelection(Math.min(pos, Math.max(1, max - 1)));
-            ed.commands.focus();
-          } catch {
-            ed.commands.focus("end");
-          }
-        }
-      });
+      syncSectionEditorFigures(secIdx);
     } catch (e) {
       alert(e instanceof Error ? e.message : "이미지 추가에 실패했습니다.");
     }
+  }
+
+  /** 에디터 figure 뱃지를 S1·S2… 순서로 다시 맞춤 */
+  function syncSectionEditorFigures(secIdx: number) {
+    queueMicrotask(() => {
+      const draftNow = draftRef.current;
+      const cur = draftNow?.sections[secIdx];
+      if (!cur) return;
+      const ed = getReportEditor(sectionEditKey(cur, secIdx));
+      if (!ed) return;
+      const n = countTrailingSMarkers(cur.body || "");
+      const urls = slotUrlsForSectionFrom(cur, draftNow?.imageRoom, n);
+      const nextHtml = bodyHtmlWithSSlotFigures(cur.body || "<p></p>", urls);
+      const wasFocused = ed.isFocused;
+      const pos = ed.state.selection.from;
+      ed.commands.setContent(nextHtml, { emitUpdate: false });
+      if (wasFocused) {
+        try {
+          const max = ed.state.doc.content.size;
+          ed.commands.setTextSelection(Math.min(pos, Math.max(1, max - 1)));
+          ed.commands.focus();
+        } catch {
+          ed.commands.focus("end");
+        }
+      }
+    });
   }
 
   function clearSSlotImage(secIdx: number, slotIdx: number) {
@@ -771,6 +772,7 @@ export function EditableReportPanel({
       };
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
+    syncSectionEditorFigures(secIdx);
   }
 
   /** S 칸 자체 삭제 (빈 칸·이미지 칸 모두) */
@@ -806,7 +808,10 @@ export function EditableReportPanel({
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
     setArmedSSlot(null);
-    setImagePasteHint(null);
+    setImagePasteHint(
+      "칸을 삭제했습니다. 남은 칸 번호는 S1·S2… 순서로 다시 맞춰집니다."
+    );
+    syncSectionEditorFigures(secIdx);
     (document.activeElement as HTMLElement | null)?.blur?.();
   }
 
@@ -838,6 +843,29 @@ export function EditableReportPanel({
     slotCount: number
   ): string[] {
     return slotUrlsForSectionFrom(sec, draft?.imageRoom, slotCount);
+  }
+
+  /**
+   * S 칸이 늘어날 때: 기존 칸 이미지만 유지, 새 칸은 비움.
+   * (이미지룸·고아 images[] 가 새 S에 자동으로 붙는 것 방지)
+   */
+  function orderedUrlsForGrowingSlots(
+    prevOrdered: string[],
+    slotCount: number,
+    opts?: { figureUrls?: string[]; hadFigures?: boolean }
+  ): string[] {
+    const figs = opts?.figureUrls;
+    const hadFigures = Boolean(opts?.hadFigures);
+    return Array.from({ length: slotCount }, (_, i) => {
+      if (hadFigures) {
+        const fromFig = (figs?.[i] || "").trim();
+        if (fromFig) return fromFig;
+        if (i < prevOrdered.length) return (prevOrdered[i] || "").trim();
+        return "";
+      }
+      if (i < prevOrdered.length) return (prevOrdered[i] || "").trim();
+      return "";
+    });
   }
 
   const resolveActiveTipTap = useCallback(() => {
@@ -1004,14 +1032,16 @@ export function EditableReportPanel({
       changed = true;
       const hadFigures = /report-s-image|data-s-slot/i.test(html);
       const slotCount = countTrailingSMarkers(body);
+      const prevSlotCount = countTrailingSMarkers(sec.body || "");
       const prevOrdered = slotUrlsForSectionFrom(
         sec,
         imageRoom,
-        Math.max(slotCount, 1)
+        prevSlotCount
       );
-      const ordered = Array.from({ length: slotCount }, (_, i) =>
-        hadFigures ? urls[i] || "" : prevOrdered[i] || ""
-      );
+      const ordered = orderedUrlsForGrowingSlots(prevOrdered, slotCount, {
+        figureUrls: urls,
+        hadFigures,
+      });
       const filled = ordered.filter(Boolean);
       const up = upsertRoomUrls(imageRoom, filled);
       imageRoom = up.room;
@@ -1793,8 +1823,8 @@ export function EditableReportPanel({
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2 flex flex-wrap items-center gap-2">
             <span>
               {draftPhase
-                ? "본문 탭 · 이미지 파일·붙여넣기로 넣을 수 있습니다. 문장 끝 S 도 사용 가능합니다."
-                : "본문 탭 · 이미지 파일·붙여넣기로 넣을 수 있습니다. 문장 끝 S 도 사용 가능합니다."}
+                ? "문장 끝 S → 다음 번호 빈 칸(S1·S2…) → Ctrl+V로 이미지. 칸 삭제 시 번호는 자동 재정렬됩니다."
+                : "문장 끝 S → 다음 번호 빈 칸(S1·S2…) → Ctrl+V로 이미지. 칸 삭제 시 번호는 자동 재정렬됩니다."}
             </span>
             {autoSaveStatus === "pending" && (
               <span className="text-ink-400">저장 대기…</span>
@@ -2271,14 +2301,18 @@ export function EditableReportPanel({
                           if (slotCount <= figCount) return null;
                           const cur = draftRef.current?.sections[idx];
                           if (!cur) return null;
+                          const prevSlotCount = countTrailingSMarkers(
+                            cur.body || ""
+                          );
                           const prevOrdered = slotUrlsForSectionFrom(
                             cur,
                             draftRef.current?.imageRoom,
-                            Math.max(slotCount, 1)
+                            prevSlotCount
                           );
-                          const ordered = Array.from(
-                            { length: slotCount },
-                            (_, i) => urls[i] || prevOrdered[i] || ""
+                          const ordered = orderedUrlsForGrowingSlots(
+                            prevOrdered,
+                            slotCount,
+                            { figureUrls: urls, hadFigures: true }
                           );
                           return bodyHtmlWithSSlotFigures(body, ordered);
                         }}
@@ -2308,21 +2342,29 @@ export function EditableReportPanel({
                           }
                           const hadFigures =
                             /report-s-image|data-s-slot/i.test(html);
+                          let grewFrom: number | null = null;
+                          let shrunk = false;
                           updateDraft((prev) => {
                             const cur = prev.sections[idx];
                             if (!cur) return prev;
                             const slotCount = countTrailingSMarkers(body);
+                            const prevSlotCount = countTrailingSMarkers(
+                              cur.body || ""
+                            );
+                            if (slotCount > prevSlotCount) {
+                              grewFrom = prevSlotCount;
+                            } else if (slotCount < prevSlotCount) {
+                              shrunk = true;
+                            }
                             const prevOrdered = slotUrlsForSectionFrom(
                               cur,
                               prev.imageRoom,
-                              Math.max(slotCount, 1)
+                              prevSlotCount
                             );
-                            const ordered = Array.from(
-                              { length: slotCount },
-                              (_, i) =>
-                                hadFigures
-                                  ? urls[i] || ""
-                                  : prevOrdered[i] || ""
+                            const ordered = orderedUrlsForGrowingSlots(
+                              prevOrdered,
+                              slotCount,
+                              { figureUrls: urls, hadFigures }
                             );
                             const filled = ordered.filter(Boolean);
                             const { room } = upsertRoomUrls(
@@ -2355,6 +2397,31 @@ export function EditableReportPanel({
                               sections,
                             };
                           }, { history: "debounced" });
+                          if (grewFrom != null) {
+                            const n = grewFrom + 1;
+                            setActiveSectionIdx(idx);
+                            setArmedSSlot({
+                              secIdx: idx,
+                              slotIdx: grewFrom,
+                            });
+                            setImagePasteHint(
+                              `S${n} 칸 추가 · Ctrl+V로 이미지 넣기 (번호는 순서대로 자동)`
+                            );
+                            syncSectionEditorFigures(idx);
+                          } else if (shrunk) {
+                            setArmedSSlot((prev) => {
+                              if (!prev || prev.secIdx !== idx) return prev;
+                              const n = countTrailingSMarkers(
+                                draftRef.current?.sections[idx]?.body || ""
+                              );
+                              if (prev.slotIdx >= n) return null;
+                              return prev;
+                            });
+                            setImagePasteHint(
+                              "칸 삭제 · 번호가 S1부터 다시 맞춰집니다."
+                            );
+                            syncSectionEditorFigures(idx);
+                          }
                         }}
                         onPasteImages={(files) => {
                           const sec = draftRef.current?.sections[idx];
@@ -2533,10 +2600,10 @@ export function EditableReportPanel({
 
             <div className="border-t border-ink-100 p-3">
               <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
-                본문은 하나의 글로 편집합니다. 이미지가 필요하면 문장 끝에{" "}
-                <strong>S</strong> 를 붙이세요.{" "}
-                <strong>그 문장 바로 아래</strong>에 <strong>S1·S2…</strong>{" "}
-                칸이 번호로 열립니다.
+                이미지가 필요하면 문장 끝에 <strong>S</strong>만 붙이세요.
+                이미 S1·S2가 있으면 자동으로 <strong>S3</strong> 빈 칸이
+                열립니다. 칸을 지워도 번호는 <strong>S1부터 순서대로</strong>{" "}
+                다시 맞춰집니다. 빈 칸을 선택한 뒤 Ctrl+V로 이미지를 넣습니다.
               </div>
             </div>
           </div>

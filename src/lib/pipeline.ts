@@ -1654,7 +1654,7 @@ function hasRealFcAnswer(
   const fc = factChecks.find((f) => f.itemId === itemId);
   if (!fc) return false;
   const answer = fc.explanation.trim();
-  if (answer.length < 20) return false;
+  if (!answer) return false;
   if (/^다음 주장을/.test(answer) && /팩트체크해 주세요/.test(answer)) {
     return false;
   }

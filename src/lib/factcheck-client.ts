@@ -19,7 +19,7 @@ export function isItemChecked(
   if (!fc) return false;
   const answer = htmlToPlainText(fc.explanation).trim();
   // AI 질문(프롬프트)만 있고 답변이 없으면 미완료
-  if (answer.length < 20) return false;
+  if (!answer) return false;
   if (/^다음 주장을/.test(answer) && /팩트체크해 주세요/.test(answer)) {
     return false;
   }
