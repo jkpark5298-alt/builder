@@ -90,13 +90,13 @@ export default async function VideoDetailPage({
           on: (awaiting && progress.gateComplete) || ready,
         },
         { n: "4", t: "확정 보고서·이미지", on: ready },
-        { n: "5", t: "인포·공유", on: ready },
+        { n: "5", t: "인포 이미지·공유", on: ready },
       ]
     : [
         { n: "1", t: summaryStepLabel, on: true },
         { n: "2", t: "팩트체크 정리", on: awaiting || ready },
         { n: "3", t: "유형 보고서", on: ready },
-        { n: "4", t: "인포·공유", on: ready },
+        { n: "4", t: "인포 이미지·공유", on: ready },
       ];
 
   return (
@@ -303,13 +303,14 @@ export default async function VideoDetailPage({
                   {historyFlow ? (
                     <>
                       이제 할 일: 아래 <strong>확정 보고서</strong>에서 본문을
-                      확인하고, 이미지 룸에서 붙인 뒤 인포·공유하세요.
+                      확인하고, 이미지 룸·인포 이미지를 붙인 뒤 공유하세요.
                     </>
                   ) : (
                     <>
                       이제 할 일: 아래 보고서에서{" "}
                       <strong>보기 / 본문</strong>으로 문장을 다듬고, 이미지는
-                      보고서 이미지 룸에서 붙인 뒤 인포·공유로 마무리하세요.
+                      보고서 이미지 룸·인포 이미지(붙여넣기·사진첩)를 붙인 뒤
+                      공유로 마무리하세요.
                     </>
                   )}
                 </p>

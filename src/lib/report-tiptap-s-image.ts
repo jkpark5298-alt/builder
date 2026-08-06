@@ -73,8 +73,8 @@ export const ReportSImage = Node.create({
       [
         "p",
         { class: "s-slot-ph" },
-        ["strong", {}, `S${n}`],
-        " · 클릭해서 선택 · DELETE로 삭제 · Ctrl+V로 넣기",
+        ["strong", {}, `S${n} 이미지 입력칸`],
+        " · 클릭 후 Ctrl+V",
       ],
     ];
   },

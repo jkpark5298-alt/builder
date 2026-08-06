@@ -1,5 +1,4 @@
 import { v4 as uuid } from "uuid";
-import { buildInfographic } from "./infographic";
 import { autoFactCheck, hasLlm, summarizeContent } from "./pipeline";
 import {
   buildReportDocument,
@@ -602,10 +601,10 @@ export async function finalizeReport(
     pendingReportFinalize: null,
     reportSkeletonEdited: undefined,
   };
-  const infographic = await buildInfographic(withReport);
+  // 인포그래픽은 자동 생성하지 않음 — 사용자가 붙여넣기·사진첩으로 추가
   const next: VideoRecord = {
     ...withReport,
-    infographic,
+    infographic: video.infographic ?? null,
     status: "ready",
     tags: Array.from(
       new Set([

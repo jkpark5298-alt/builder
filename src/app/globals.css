@@ -185,15 +185,20 @@ h3,
 
 .report-s-image.report-s-slot-empty {
   border-style: dashed;
-  background: rgb(248 250 252 / 0.9);
+  border-width: 2px;
+  border-color: rgb(194 65 12 / 0.45);
+  background: rgb(255 247 237 / 0.95);
   cursor: pointer;
+  min-height: 4.5rem;
 }
 
 .report-s-image .s-slot-ph {
   margin: 0;
-  padding: 0.65rem 0.75rem;
-  font-size: 0.7rem;
+  padding: 1rem 0.85rem;
+  font-size: 0.8rem;
   color: rgb(100 116 139);
+  text-align: center;
+  line-height: 1.45;
 }
 
 .report-s-image .s-slot-ph strong {
@@ -401,4 +406,20 @@ h3,
   pointer-events: none;
   z-index: -1;
   background: #fff;
+}
+
+/* PDF 캡처용 복제본 — object-fit 미지원 대비 비율 유지 */
+.report-pdf-capture img {
+  width: auto !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  display: block !important;
+}
+
+.report-pdf-capture .report-s-image,
+.report-pdf-capture figure.report-s-image {
+  height: auto !important;
+  overflow: visible !important;
 }

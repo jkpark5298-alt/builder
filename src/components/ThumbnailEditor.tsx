@@ -165,7 +165,7 @@ export function ThumbnailEditor({
           )}
           {!error && (
             <p className="mt-2 text-[11px] text-white/80">
-              목록 카드·상세 상단·인포그래픽 표지에 함께 반영됩니다.
+              목록 카드·상세 상단 표지에 함께 반영됩니다.
             </p>
           )}
         </div>

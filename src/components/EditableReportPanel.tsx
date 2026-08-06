@@ -89,6 +89,7 @@ import {
 } from "@/lib/report";
 import {
   bodyHtmlFromSSlotFigures,
+  bodyAndUrlsFromEditorHtml,
   bodyHtmlWithSSlotFigures,
   countTrailingSMarkers,
   dedupeRepeatedReportBodyHtml,
@@ -1036,21 +1037,13 @@ export function EditableReportPanel({
       const ed = getReportEditor(sectionEditKey(sec, idx));
       if (!ed) return sec;
       const html = ed.getHTML();
-      const { body, urls } = bodyHtmlFromSSlotFigures(html);
+      const { body, urls } = bodyAndUrlsFromEditorHtml(html);
       if (body === (sec.body || "")) return sec;
       changed = true;
-      const hadFigures = /report-s-image|data-s-slot/i.test(html);
       const slotCount = countTrailingSMarkers(body);
-      const prevSlotCount = countTrailingSMarkers(sec.body || "");
-      const prevOrdered = slotUrlsForSectionFrom(
-        sec,
-        imageRoom,
-        prevSlotCount
+      const ordered = Array.from({ length: slotCount }, (_, i) =>
+        (urls[i] || "").trim()
       );
-      const ordered = orderedUrlsForGrowingSlots(prevOrdered, slotCount, {
-        figureUrls: urls,
-        hadFigures,
-      });
       const filled = ordered.filter(Boolean);
       const up = upsertRoomUrls(imageRoom, filled);
       imageRoom = up.room;
@@ -2301,34 +2294,20 @@ export function EditableReportPanel({
                         )}
                         resolveSlotHtml={(editorHtml) => {
                           const { body, urls } =
-                            bodyHtmlFromSSlotFigures(editorHtml);
+                            bodyAndUrlsFromEditorHtml(editorHtml);
                           const slotCount = countTrailingSMarkers(body);
                           const figCount = (
                             editorHtml.match(/report-s-image|data-s-slot/gi) ||
                             []
                           ).length;
                           if (slotCount <= figCount) return null;
-                          const cur = draftRef.current?.sections[idx];
-                          if (!cur) return null;
-                          const prevSlotCount = countTrailingSMarkers(
-                            cur.body || ""
-                          );
-                          const prevOrdered = slotUrlsForSectionFrom(
-                            cur,
-                            draftRef.current?.imageRoom,
-                            prevSlotCount
-                          );
-                          const ordered = orderedUrlsForGrowingSlots(
-                            prevOrdered,
-                            slotCount,
-                            { figureUrls: urls, hadFigures: true }
-                          );
-                          return bodyHtmlWithSSlotFigures(body, ordered);
+                          // 문서 순서 URL 그대로 사용 (텍스트 S=빈 칸, figure=기존 이미지)
+                          return bodyHtmlWithSSlotFigures(body, urls);
                         }}
                         onSaveSelection={saveEditorSelection}
                         onFocus={() => setActiveSectionIdx(idx)}
                         onChange={(html) => {
-                          const { body, urls } = bodyHtmlFromSSlotFigures(html);
+                          const { body, urls } = bodyAndUrlsFromEditorHtml(html);
                           const plainOf = (h: string) =>
                             h
                               .replace(/<[^>]+>/g, " ")
@@ -2349,8 +2328,6 @@ export function EditableReportPanel({
                           if (prevPlain.length > 80 && nextPlain.length < 8) {
                             return;
                           }
-                          const hadFigures =
-                            /report-s-image|data-s-slot/i.test(html);
                           let grewFrom: number | null = null;
                           let shrunk = false;
                           updateDraft((prev) => {
@@ -2365,15 +2342,10 @@ export function EditableReportPanel({
                             } else if (slotCount < prevSlotCount) {
                               shrunk = true;
                             }
-                            const prevOrdered = slotUrlsForSectionFrom(
-                              cur,
-                              prev.imageRoom,
-                              prevSlotCount
-                            );
-                            const ordered = orderedUrlsForGrowingSlots(
-                              prevOrdered,
-                              slotCount,
-                              { figureUrls: urls, hadFigures }
+                            // urls 는 문서 순서 (새 S=빈 문자열)
+                            const ordered = Array.from(
+                              { length: slotCount },
+                              (_, i) => (urls[i] || "").trim()
                             );
                             const filled = ordered.filter(Boolean);
                             const { room } = upsertRoomUrls(
@@ -2408,13 +2380,17 @@ export function EditableReportPanel({
                           }, { history: "debounced" });
                           if (grewFrom != null) {
                             const n = grewFrom + 1;
+                            // 새로 생긴 빈 칸 인덱스 (문서 순 첫 빈 URL)
+                            const emptyIdx = urls.findIndex((u) => !u);
+                            const slotIdx =
+                              emptyIdx >= 0 ? emptyIdx : grewFrom;
                             setActiveSectionIdx(idx);
                             setArmedSSlot({
                               secIdx: idx,
-                              slotIdx: grewFrom,
+                              slotIdx,
                             });
                             setImagePasteHint(
-                              `S${n} 칸 추가 · Ctrl+V로 이미지 넣기 (번호는 순서대로 자동)`
+                              `S${slotIdx + 1} 이미지 입력칸 · Ctrl+V로 붙여넣기`
                             );
                             syncSectionEditorFigures(idx);
                           } else if (shrunk) {
@@ -2609,10 +2585,10 @@ export function EditableReportPanel({
 
             <div className="border-t border-ink-100 p-3">
               <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
-                이미지가 필요하면 문장 끝에 <strong>S</strong>만 붙이세요.
-                이미 S1·S2가 있으면 자동으로 <strong>S3</strong> 빈 칸이
-                열립니다. 칸을 지워도 번호는 <strong>S1부터 순서대로</strong>{" "}
-                다시 맞춰집니다. 빈 칸을 선택한 뒤 Ctrl+V로 이미지를 넣습니다.
+                문장 끝에 <strong>S</strong>만 입력하세요. 기존 이미지가 있으면
+                다음 번호(S3…) <strong>빈 이미지 입력칸</strong>이 열립니다.
+                칸을 클릭한 뒤 Ctrl+V로 넣으세요. 칸을 지우면 번호는 S1부터
+                다시 맞춰집니다.
               </div>
             </div>
           </div>

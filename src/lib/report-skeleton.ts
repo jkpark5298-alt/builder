@@ -1,5 +1,4 @@
 import { buildTypedReport } from "./report";
-import { buildInfographic } from "./infographic";
 import { stabilizeReportFcAnchors } from "./fc-markers";
 import type { TypedReport, VideoRecord } from "./types";
 
@@ -23,7 +22,7 @@ export function buildSkeletonReport(
   };
 }
 
-/** report가 없으면 골격 보고서·인포그래픽을 채운다 */
+/** report가 없으면 골격 보고서를 채운다 (인포그래픽 자동 생성 없음) */
 export async function ensureSkeletonReport(
   video: VideoRecord
 ): Promise<VideoRecord> {
@@ -32,16 +31,12 @@ export async function ensureSkeletonReport(
     return video;
   }
   const report = buildSkeletonReport(video);
-  const withReport: VideoRecord = {
+  return {
     ...video,
     report,
     reportSource: "assembled",
     reportWriteNotice: SKELETON_REPORT_NOTICE,
     updatedAt: new Date().toISOString(),
-  };
-  return {
-    ...withReport,
-    infographic: await buildInfographic(withReport),
   };
 }
 

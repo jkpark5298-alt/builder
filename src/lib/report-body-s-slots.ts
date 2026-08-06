@@ -300,7 +300,7 @@ export function bodyHtmlWithSSlotFigures(
         );
       } else {
         parts.push(
-          `<figure class="report-s-image report-s-slot-empty" data-s-slot="${idx}"><p class="s-slot-ph"><strong>S${n}</strong> · 클릭해서 선택 · DELETE로 삭제 · Ctrl+V로 넣기</p></figure>`
+          `<figure class="report-s-image report-s-slot-empty" data-s-slot="${idx}"><p class="s-slot-ph"><strong>S${n} 이미지 입력칸</strong><br/>클릭 후 Ctrl+V · 또는 아래 「파일」</p></figure>`
         );
       }
     }
@@ -331,6 +331,67 @@ export function bodyHtmlFromSSlotFigures(html: string): {
     }
   );
   return { body, urls };
+}
+
+/**
+ * 문서 순서대로 슬롯 추출.
+ * 텍스트 S → 빈 URL(새 입력칸), figure → 해당 이미지.
+ * (텍스트 S를 앞에 치면 기존 이미지가 새 칸을 채우던 문제 방지)
+ */
+export function bodyAndUrlsFromEditorHtml(html: string): {
+  body: string;
+  urls: string[];
+} {
+  const raw = html || "";
+  const figRe =
+    /<figure\b[^>]*(?:report-s-image|data-s-slot)[^>]*>[\s\S]*?<\/figure>/gi;
+  const urls: string[] = [];
+  const bodyParts: string[] = [];
+  let slotN = 0;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const re = new RegExp(figRe.source, "gi");
+
+  const flushTextChunk = (chunk: string) => {
+    if (!chunk) return;
+    if (!chunk.trim()) {
+      bodyParts.push(chunk);
+      return;
+    }
+    const { segments, slotCount } = parseBodySImageSlots(chunk);
+    if (!slotCount) {
+      bodyParts.push(chunk);
+      return;
+    }
+    for (const seg of segments) {
+      if (seg.html) bodyParts.push(seg.html);
+      if (seg.hasSlot) {
+        slotN += 1;
+        urls.push("");
+        bodyParts.push(`<p>S${slotN}</p>`);
+      }
+    }
+  };
+
+  while ((m = re.exec(raw))) {
+    flushTextChunk(raw.slice(last, m.index));
+    const fig = m[0];
+    const srcMatch = /<img\b[^>]*\bsrc=["']([^"']*)["']/i.exec(fig);
+    const src = (srcMatch?.[1] || "")
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, "&")
+      .trim();
+    slotN += 1;
+    urls.push(src);
+    bodyParts.push(`<p>S${slotN}</p>`);
+    last = m.index + m[0].length;
+  }
+  flushTextChunk(raw.slice(last));
+
+  if (!slotN) {
+    return bodyHtmlFromSSlotFigures(raw);
+  }
+  return { body: bodyParts.join("") || "<p></p>", urls };
 }
 
 export function countTrailingSMarkers(html: string): number {

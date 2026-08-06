@@ -5,16 +5,13 @@ import {
   Mail,
   MessageCircle,
   FileDown,
-  ImageDown,
   Trash2,
-  Share2,
   Printer,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { VideoRecord } from "@/lib/types";
-import { canExportArtifacts, hasInfographic } from "@/lib/factcheck-client";
-import { shareInfographicToGoodNotes } from "@/lib/share-goodnotes";
+import { canExportArtifacts } from "@/lib/factcheck-client";
 import {
   downloadReportPdfFromDom,
   prepareReportForPrint,
@@ -40,7 +37,6 @@ export function ActionBar({ video }: { video: VideoRecord }) {
   const [goodnotesBusy, setGoodnotesBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const ready = canExportArtifacts(video);
-  const hasInfo = hasInfographic(video);
   const kakaoConfigured = Boolean(process.env.NEXT_PUBLIC_KAKAO_JS_KEY);
 
   async function markShared(channel: "email" | "kakao" | "goodnotes") {
@@ -64,7 +60,6 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         "",
         `상세: ${window.location.href}`,
         `PDF: ${window.location.origin}/api/videos/${video.id}/pdf?t=${encodeURIComponent(video.updatedAt)}`,
-        `인포그래픽: ${window.location.origin}/api/videos/${video.id}/infographic`,
       ].join("\n")
     );
     void markShared("email");
@@ -108,20 +103,9 @@ export function ActionBar({ video }: { video: VideoRecord }) {
             webUrl: `${origin}/videos/${video.id}#report`,
           },
         },
-        {
-          title: "인포그래픽",
-          link: {
-            mobileWebUrl: `${origin}/api/videos/${video.id}/infographic`,
-            webUrl: `${origin}/api/videos/${video.id}/infographic`,
-          },
-        },
       ],
     });
     void markShared("kakao");
-  }
-
-  function downloadSvg() {
-    window.location.href = `/api/videos/${video.id}/infographic?download=1`;
   }
 
   async function shareGoodNotes() {
@@ -134,29 +118,21 @@ export function ActionBar({ video }: { video: VideoRecord }) {
           document.getElementById("report-body-export") ||
             document.getElementById("report")
         );
-      if (onReportPage) {
-        const result = await shareReportPdfToGoodNotes({
-          videoId: video.videoId,
-          title: video.title,
-        });
-        void markShared("goodnotes");
-        if (result === "downloaded") {
-          alert(
-            "보고서 PDF를 저장했습니다.\nGoodnotes 앱에서 열어 필기하세요. (본문과 동일한 형식)"
-          );
-        }
+      if (!onReportPage) {
+        router.push(`/videos/${video.id}#report`);
+        alert(
+          "보고서 상세에서 「굿노트 공유」를 누르면 본문 PDF를 공유합니다."
+        );
         return;
       }
-      // 보고서 페이지가 아니면 인포그래픽 PNG 폴백
-      const result = await shareInfographicToGoodNotes({
+      const result = await shareReportPdfToGoodNotes({
         videoId: video.videoId,
         title: video.title,
-        svgUrl: `/api/videos/${video.id}/infographic?t=${encodeURIComponent(video.updatedAt)}`,
       });
       void markShared("goodnotes");
       if (result === "downloaded") {
         alert(
-          "PNG를 저장했습니다.\nGoodnotes 앱에서 「이미지 가져오기」로 열어 필기하세요.\n(본문과 동일하게 공유하려면 보고서 상세에서 「굿노트 공유」를 누르세요.)"
+          "보고서 PDF를 저장했습니다.\nGoodnotes 앱에서 열어 필기하세요."
         );
       }
     } catch (e) {
@@ -260,16 +236,6 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         </button>
         <button
           type="button"
-          disabled={!ready}
-          onClick={downloadSvg}
-          className={`${btn} ${ready ? enabled : disabled}`}
-          title={hasInfo ? undefined : "없으면 자동으로 생성합니다"}
-        >
-          <ImageDown className="h-4 w-4 shrink-0" />
-          SVG 다운로드
-        </button>
-        <button
-          type="button"
           disabled={!ready || goodnotesBusy}
           onClick={() => void shareGoodNotes()}
           className={`${btn} ${
@@ -304,17 +270,6 @@ export function ActionBar({ video }: { video: VideoRecord }) {
           <MessageCircle className="h-4 w-4 shrink-0" />
           카톡{kakaoConfigured ? "" : " (키 필요)"}
         </button>
-        {ready && (
-          <a
-            href={`/api/videos/${video.id}/infographic`}
-            target="_blank"
-            rel="noreferrer"
-            className={`${btn} ${enabled} col-span-2 sm:col-span-1`}
-          >
-            <Share2 className="h-4 w-4 shrink-0" />
-            인포그래픽 보기
-          </a>
-        )}
         <button
           type="button"
           disabled={busy}

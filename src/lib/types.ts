@@ -255,8 +255,8 @@ export interface VideoRecord {
   legacyReport?: ReportSection | null;
   infographic: InfographicData | null;
   /**
-   * 인포그래픽 「관련 이미지」 갤러리.
-   * 없으면 보고서·팩트체크에서 자동 수집(최대 6장).
+   * 인포그래픽 이미지 갤러리 (붙여넣기·사진첩).
+   * 자동 SVG 생성은 하지 않음.
    */
   infographicBridgeImages?: string[] | null;
   status: PipelineStatus;

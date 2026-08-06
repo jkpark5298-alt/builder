@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { factCheckProgress } from "@/lib/factcheck";
-import { buildInfographic } from "@/lib/infographic";
 import {
   rebuildFactChecksFromOverview,
   redraftPendingFactChecks,
@@ -794,7 +793,6 @@ async function patchVideo(req: Request, ctx: Ctx) {
     if (next.status === "awaiting_factcheck") {
       next.reportSkeletonEdited = true;
     }
-    next.infographic = await buildInfographic(next);
   }
 
   if (typeof body.updateOverview?.overview === "string") {
@@ -872,12 +870,11 @@ async function patchVideo(req: Request, ctx: Ctx) {
       updatedAt: new Date().toISOString(),
     };
 
-    // 변경된 요약 기준으로 조립 보고서·인포그래픽 골격 (답변 비어 있음)
+    // 변경된 요약 기준으로 조립 보고서 골격 (답변 비어 있음)
     next.report = buildSkeletonReport(next);
     next.reportSource = "assembled";
     next.reportWriteNotice = SKELETON_REPORT_NOTICE;
     next.reportSkeletonEdited = undefined;
-    next.infographic = await buildInfographic(next);
     // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
     next.status = "awaiting_factcheck";
 
@@ -1154,7 +1151,6 @@ async function patchVideo(req: Request, ctx: Ctx) {
     next.report = built.report;
     next.reportSource = built.source;
     next.reportWriteNotice = built.notice;
-    next.infographic = await buildInfographic(next);
     next.tags = Array.from(
       new Set([
         ...next.tags.filter(

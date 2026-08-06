@@ -66,6 +66,8 @@ export function canExportArtifacts(video: VideoRecord): boolean {
 }
 
 export function hasInfographic(video: VideoRecord): boolean {
+  const bridge = video.infographicBridgeImages?.filter(Boolean) ?? [];
+  if (bridge.length > 0) return true;
   return Boolean(
     video.infographic?.svgUrl || video.infographic?.svgMarkup?.trim()
   );
