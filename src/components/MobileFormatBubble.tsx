@@ -2,11 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { Bold, Minus, Plus, Underline } from "lucide-react";
-import {
-  FONT_SIZES,
-  HIGHLIGHT_COLORS,
-  TEXT_COLORS,
-} from "@/lib/report-editor-utils";
+import { HIGHLIGHT_COLORS, TEXT_COLORS } from "@/lib/report-editor-utils";
+
+const CIRCLED_NUMBERS = [
+  "①",
+  "②",
+  "③",
+  "④",
+  "⑤",
+  "⑥",
+  "⑦",
+  "⑧",
+  "⑨",
+  "⑩",
+] as const;
 
 type Pos = { top: number; left: number };
 
@@ -18,7 +27,11 @@ function selectionAnchorRect(): DOMRect | null {
     range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? (range.commonAncestorContainer as Element)
       : range.commonAncestorContainer.parentElement;
-  if (!node?.closest?.(".ProseMirror.report-body, .report-body.ProseMirror, .ProseMirror")) {
+  if (
+    !node?.closest?.(
+      ".ProseMirror.report-body, .report-body.ProseMirror, .ProseMirror"
+    )
+  ) {
     return null;
   }
   const rects = range.getClientRects();
@@ -34,26 +47,23 @@ function selectionAnchorRect(): DOMRect | null {
 
 /**
  * 아이폰 등: 커서/선택 바로 위에 붙는 글자 서식 바.
- * 상단 「서식」까지 스크롤하지 않아도 됨.
  */
 export function MobileFormatBubble({
   active,
   onBold,
   onUnderline,
-  onFontSize,
   onFontSizeStep,
+  onInsertChar,
   onColor,
   onHighlight,
-  onBeforeFontSizeSelect,
 }: {
   active: boolean;
   onBold: () => void;
   onUnderline: () => void;
-  onFontSize: (px: number) => void;
   onFontSizeStep: (delta: number) => void;
+  onInsertChar: (ch: string) => void;
   onColor: (c: string) => void;
   onHighlight: (c: string) => void;
-  onBeforeFontSizeSelect?: () => void;
 }) {
   const [pos, setPos] = useState<Pos | null>(null);
   const [visible, setVisible] = useState(false);
@@ -74,11 +84,10 @@ export function MobileFormatBubble({
           setVisible(false);
           return;
         }
-        const barW = Math.min(340, window.innerWidth - 16);
+        const barW = Math.min(360, window.innerWidth - 16);
         const barH = 44;
         const gap = 8;
         let top = rect.top - barH - gap;
-        // 화면/키보드 위쪽이면 선택 아래로
         const vv = window.visualViewport;
         const viewTop = vv?.offsetTop ?? 0;
         const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
@@ -115,7 +124,7 @@ export function MobileFormatBubble({
     e.preventDefault();
   };
 
-  const barW = Math.min(340, window.innerWidth - 16);
+  const barW = Math.min(360, window.innerWidth - 16);
 
   return (
     <div
@@ -132,35 +141,33 @@ export function MobileFormatBubble({
         </BubbleBtn>
         <BubbleBtn
           onClick={() => onFontSizeStep(-1)}
-          title="작게"
+          title="글자 작게"
           onMouseDown={keep}
         >
           <Minus className="h-4 w-4" />
         </BubbleBtn>
-        <div className="flex items-center gap-0.5 shrink-0">
-          {FONT_SIZES.filter((s) => [12, 14, 16, 18].includes(s)).map((size) => (
-            <button
-              key={size}
-              type="button"
-              title={`${size}px`}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onBeforeFontSizeSelect?.();
-              }}
-              onClick={() => onFontSize(size)}
-              className="min-h-8 min-w-8 rounded-md text-[11px] font-medium text-ink-700 hover:bg-accent-muted"
-            >
-              {size}
-            </button>
-          ))}
-        </div>
         <BubbleBtn
           onClick={() => onFontSizeStep(1)}
-          title="크게"
+          title="글자 크게"
           onMouseDown={keep}
         >
           <Plus className="h-4 w-4" />
         </BubbleBtn>
+        <span className="w-px h-5 bg-ink-200 shrink-0" aria-hidden />
+        <div className="flex items-center gap-0.5 shrink-0">
+          {CIRCLED_NUMBERS.map((ch) => (
+            <button
+              key={ch}
+              type="button"
+              title={`${ch} 삽입`}
+              onMouseDown={keep}
+              onClick={() => onInsertChar(ch)}
+              className="min-h-8 min-w-7 rounded-md px-0.5 text-[13px] font-medium text-ink-800 hover:bg-accent-muted"
+            >
+              {ch}
+            </button>
+          ))}
+        </div>
         <span className="w-px h-5 bg-ink-200 shrink-0" aria-hidden />
         {TEXT_COLORS.map((c) => (
           <button

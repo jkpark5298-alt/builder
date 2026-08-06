@@ -2996,8 +2996,12 @@ export function EditableReportPanel({
               ed.chain().focus().toggleUnderline().run();
             })
           }
-          onFontSize={applyFontSize}
           onFontSizeStep={stepActiveFontSize}
+          onInsertChar={(ch) =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().insertContent(ch).run();
+            })
+          }
           onColor={(c) =>
             runFormatCommand((ed) => {
               ed.chain().focus().setColor(c).run();
@@ -3008,10 +3012,6 @@ export function EditableReportPanel({
               ed.chain().focus().setHighlight({ color: c }).run();
             })
           }
-          onBeforeFontSizeSelect={() => {
-            focusActiveBodyEditor();
-            saveEditorSelection();
-          }}
         />
       )}
     </>
