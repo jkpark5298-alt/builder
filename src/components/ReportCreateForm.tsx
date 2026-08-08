@@ -343,7 +343,7 @@ export function ReportCreateForm({
             <img
               src={previewThumb}
               alt="표지 미리보기"
-              className="w-full aspect-video object-cover"
+              className="w-full aspect-video object-contain bg-ink-900"
             />
           </div>
           <div className="flex flex-wrap gap-2">
