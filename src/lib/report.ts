@@ -467,6 +467,10 @@ export function normalizeAiReportPaste(raw: string): string {
   let t = sanitizeAiPasteText(raw);
   if (!t) return "";
 
+  // ### 1. 제목 → 1. 제목 (이후 ## 섹션으로 변환). 그 외 ### 제목 → ## 제목
+  t = t.replace(/^#{1,6}[ \t]+(?=\d+[.)][ \t])/gm, "");
+  t = t.replace(/^(?!##[ \t])#{1,6}[ \t]+/gm, "## ");
+
   const lines = t.split("\n");
   const out: string[] = [];
   type PendingClaim = {

@@ -1,5 +1,15 @@
 import { unwrapSoftLineBreaks } from "./paste";
 
+/** `### 1. 제목` → `1. 제목`, 그 외 줄머리 `#`/`##`/`###` 기호만 제거 */
+export function stripMarkdownHeadingMarkers(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    // 숫자 섹션: ### 1. / ## 2) → 1. / 2)
+    .replace(/^#{1,6}[ \t]+(?=\d+[.)][ \t])/gm, "")
+    // 번호 없는 제목: ### 결론 → 결론
+    .replace(/^#{1,6}[ \t]+/gm, "");
+}
+
 /** HTML 답변 → 평문 (길이·번호 분할·저장 게이트용) */
 export function htmlToPlainText(html: string): string {
   if (!html) return "";
@@ -66,7 +76,9 @@ export function buildFactCheckPrompt(statement: string, detail?: string): string
 
 /** AI 답변: ** 제거, 목록은 1. 2. 번호로 */
 export function normalizeAiAnswer(text: string): string {
-  let t = text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*/g, "");
+  let t = stripMarkdownHeadingMarkers(text)
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*/g, "");
   const lines = t.split("\n");
   let n = 0;
   const out: string[] = [];

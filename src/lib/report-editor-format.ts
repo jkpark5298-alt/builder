@@ -1,4 +1,5 @@
 import { unwrapSoftLineBreaks } from "@/lib/paste";
+import { stripMarkdownHeadingMarkers } from "@/lib/text-format";
 
 export const MIN_REPORT_FONT_PX = 8;
 export const MAX_REPORT_FONT_PX = 28;
@@ -552,7 +553,9 @@ export function escapeHtmlText(text: string): string {
 }
 
 export function wrapPlainPasteText(text: string): string {
-  const unwrapped = unwrapSoftLineBreaks(text.replace(/\r\n/g, "\n"));
+  const unwrapped = unwrapSoftLineBreaks(
+    stripMarkdownHeadingMarkers(text.replace(/\r\n/g, "\n"))
+  );
   const blocks = unwrapped.split(/\n{2,}/);
   return blocks
     .map((block) => {
