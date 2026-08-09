@@ -11,9 +11,11 @@ import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
 import { stabilizeReportFcAnchors } from "./fc-markers";
 import { unwrapSoftLineBreaks } from "./paste";
+import { verdictLabel } from "./labels";
 import {
   buildFactCheckPrompt,
   dedupeTexts,
+  htmlToPlainText,
   normalizeAiAnswer,
 } from "./text-format";
 
@@ -96,6 +98,75 @@ export function formatReportWithFactChecksText(report: TypedReport): string {
     report.meta.title ? `# ${report.meta.title}` : "",
     reportText ? `## 보고서\n\n${reportText}` : "",
     fcText ? `## 팩트체크\n\n${fcText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function isUsableFcExplanation(raw: string | undefined | null): string {
+  if (!raw?.trim()) return "";
+  if (/^다음 주장을/.test(raw) && /팩트체크해 주세요/.test(raw)) return "";
+  return htmlToPlainText(raw).trim();
+}
+
+/** 요약(overview) + 팩트체크 전체 — 외부 AI·재작성용 복사 */
+export function formatOverviewWithFactChecksText(
+  video: Pick<
+    VideoRecord,
+    "title" | "overview" | "summaryBullets" | "items" | "factChecks" | "report"
+  >
+): string {
+  const title = video.report?.meta?.title?.trim() || video.title?.trim() || "";
+  const overview =
+    video.overview?.trim() ||
+    (video.summaryBullets?.length
+      ? video.summaryBullets.map((b) => `• ${b.trim()}`).filter(Boolean).join("\n")
+      : "") ||
+    video.report?.summaryExcerpt?.trim() ||
+    "";
+
+  const targets = video.items.filter((i) => i.needsFactCheck);
+  const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
+  const reportFcs = video.report?.factChecks ?? [];
+
+  const fcBlocks: string[] = [];
+  if (targets.length > 0) {
+    targets.forEach((item, i) => {
+      const fc = fcMap.get(item.id);
+      const reportFc =
+        reportFcs.find((r) => r.itemId === item.id) ??
+        reportFcs.find((r) => r.statement === item.statement);
+      const verdRaw = fc?.verdict ?? reportFc?.verdict;
+      const verd =
+        verdRaw && verdRaw !== "pending" ? verdictLabel(verdRaw) : "";
+      const expl =
+        isUsableFcExplanation(fc?.explanation) ||
+        reportFc?.checkGuide?.trim() ||
+        "";
+      const lines = [`${i + 1}. ${item.statement}`];
+      if (verd) lines.push(`판정: ${verd}`);
+      if (expl) lines.push(`근거(출처): ${expl}`);
+      fcBlocks.push(lines.join("\n"));
+    });
+  } else {
+    reportFcs.forEach((fc, i) => {
+      const verd =
+        fc.verdict && fc.verdict !== "pending"
+          ? verdictLabel(fc.verdict)
+          : "";
+      const expl = fc.checkGuide?.trim() || "";
+      const lines = [`${i + 1}. ${fc.statement}`];
+      if (verd) lines.push(`판정: ${verd}`);
+      if (expl) lines.push(`근거(출처): ${expl}`);
+      fcBlocks.push(lines.join("\n"));
+    });
+  }
+
+  return [
+    title ? `# ${title}` : "",
+    overview ? `## 요약\n\n${overview}` : "",
+    fcBlocks.length ? `## 팩트체크\n\n${fcBlocks.join("\n\n")}` : "",
   ]
     .filter(Boolean)
     .join("\n\n")

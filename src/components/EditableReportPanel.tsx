@@ -87,6 +87,7 @@ import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
   formatFactChecksText,
+  formatOverviewWithFactChecksText,
   formatReportText,
   formatReportWithFactChecksText,
   formatSectionText,
@@ -633,6 +634,14 @@ export function EditableReportPanel({
             ? "초안+팩트체크"
             : "보고서+팩트체크";
     await copyToClipboard(text, label);
+  }
+
+  async function copyOverviewWithFactChecks() {
+    const text = formatOverviewWithFactChecksText({
+      ...localVideo,
+      report: draftRef.current ?? localVideo.report,
+    });
+    await copyToClipboard(text, "요약+팩트체크");
   }
 
   function applyImportedReportText(mode: "merge" | "replaceAll" = "merge") {
@@ -1730,6 +1739,15 @@ export function EditableReportPanel({
             >
               <ClipboardCopy className="h-4 w-4" />
               {draftPhase ? "초안+FC 복사" : "전체 복사"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyOverviewWithFactChecks()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+              title="일반 요약과 팩트체크(주장·판정·근거) 전체를 복사합니다"
+            >
+              <ClipboardCopy className="h-4 w-4" />
+              요약+FC 전체 복사
             </button>
             {editing && (
               <>
