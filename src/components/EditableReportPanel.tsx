@@ -39,6 +39,7 @@ import {
 import { compressDataUrl, compressImageFiles, extractImageFilesFromDataTransfer, readImagesFromClipboard } from "@/lib/image-client";
 import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { preferPlainPaste } from "@/lib/device";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
@@ -148,6 +149,12 @@ export function EditableReportPanel({
     slotIdx: number;
   } | null>(null);
   const [imagePasteHint, setImagePasteHint] = useState<string | null>(null);
+  /** iPhone 등 자동 복사 실패 시 — 길게 눌러 복사할 텍스트 */
+  const [manualCopy, setManualCopy] = useState<{
+    label: string;
+    text: string;
+  } | null>(null);
+  const manualCopyRef = useRef<HTMLTextAreaElement | null>(null);
   /** 모바일: 서식 툴바 기본 접힘 (입력 공간 확보) */
   const [formatToolbarOpen, setFormatToolbarOpen] = useState(false);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
@@ -300,6 +307,19 @@ export function EditableReportPanel({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!manualCopy) return;
+    const el = manualCopyRef.current;
+    if (!el) return;
+    // iPhone: 시트 연 뒤 전체 선택 → 길게 눌러 복사
+    const t = window.setTimeout(() => {
+      el.focus();
+      el.select();
+      el.setSelectionRange(0, el.value.length);
+    }, 50);
+    return () => window.clearTimeout(t);
+  }, [manualCopy]);
 
   useEffect(() => {
     if (!editing) return;
@@ -603,8 +623,13 @@ export function EditableReportPanel({
       alert(`복사할 ${label} 텍스트가 없습니다.`);
       return;
     }
-    await navigator.clipboard.writeText(text);
-    alert(`${label} 텍스트를 복사했습니다.`);
+    const ok = await copyTextToClipboard(text);
+    if (ok) {
+      alert(`${label} 텍스트를 복사했습니다.`);
+      return;
+    }
+    // iPhone Safari 등: 자동 복사 불가 → 선택 가능한 시트
+    setManualCopy({ label, text });
   }
 
   async function copyDraftReport(
@@ -3031,6 +3056,65 @@ export function EditableReportPanel({
             })
           }
         />
+      )}
+      {manualCopy && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/40 p-3 print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${manualCopy.label} 수동 복사`}
+          onClick={() => setManualCopy(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-ink-200 bg-white p-4 shadow-xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium text-ink-900">
+                  {manualCopy.label} · 수동 복사
+                </p>
+                <p className="text-xs text-ink-500 mt-0.5">
+                  자동 복사가 막혔습니다. 아래 텍스트를{" "}
+                  <strong>길게 눌러 복사</strong>하세요.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setManualCopy(null)}
+                className="shrink-0 min-h-9 min-w-9 rounded-lg border border-ink-200 text-ink-600"
+                aria-label="닫기"
+              >
+                <X className="h-4 w-4 mx-auto" />
+              </button>
+            </div>
+            <textarea
+              ref={manualCopyRef}
+              readOnly
+              value={manualCopy.text}
+              rows={12}
+              className="w-full rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-sm text-ink-900 outline-none focus:border-accent"
+              onFocus={(e) => {
+                const el = e.currentTarget;
+                el.select();
+                el.setSelectionRange(0, el.value.length);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const el = manualCopyRef.current;
+                if (!el) return;
+                el.focus();
+                el.select();
+                el.setSelectionRange(0, el.value.length);
+              }}
+              className="w-full min-h-11 rounded-xl border border-accent/40 bg-accent text-white text-sm font-medium"
+            >
+              전체 선택
+            </button>
+          </div>
+        </div>
       )}
     </>
   );
