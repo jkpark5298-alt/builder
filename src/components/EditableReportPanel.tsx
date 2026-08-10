@@ -100,6 +100,11 @@ import {
   sanitizeAiPasteText,
 } from "@/lib/report";
 import {
+  organizePaste,
+  type OrganizePasteResult,
+} from "@/lib/paste-organize";
+import { parseBulkFactCheckPasteRobust } from "@/lib/bulk-factcheck-paste";
+import {
   bodyHtmlFromSSlotFigures,
   bodyAndUrlsFromEditorHtml,
   bodyHtmlWithSSlotFigures,
@@ -143,6 +148,15 @@ export function EditableReportPanel({
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [organizeResult, setOrganizeResult] =
+    useState<OrganizePasteResult | null>(null);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
+  /** 분류 후 적용 대상 */
+  const [applyTargets, setApplyTargets] = useState({
+    report: true,
+    overview: false,
+    factcheck: false,
+  });
   /** 툴바·S슬롯 Ctrl+V 대기: 섹션 + S 슬롯 인덱스 */
   const [armedSSlot, setArmedSSlot] = useState<{
     secIdx: number;
@@ -720,12 +734,170 @@ export function EditableReportPanel({
       return;
     }
     setImportText(cleaned);
+    setOrganizeResult(null);
     const info = inspectImportedReportText(cleaned);
     alert(
       info.count > 0
         ? `AI 답변 정리 완료 · 섹션 ${info.count}개 인식: ${info.headings.join(" / ")}`
         : "정리했습니다. `## 섹션 제목`이 보이는지 확인한 뒤 반영하세요."
     );
+  }
+
+  function runOrganizePaste() {
+    const result = organizePaste(importText);
+    if (!result.cleaned.trim()) {
+      alert("정리할 내용이 없습니다.");
+      setOrganizeResult(null);
+      return;
+    }
+    setOrganizeResult(result);
+    setImportText(result.cleaned);
+    setApplyTargets({
+      report: Boolean(result.parts.reportSections) || result.kind === "report" || result.kind === "unknown" || result.kind === "mixed",
+      overview: Boolean(result.parts.overview),
+      factcheck: Boolean(result.parts.factChecks),
+    });
+    alert(result.summary);
+  }
+
+  async function applyOrganizedPaste() {
+    if (!importText.trim() && !organizeResult) {
+      alert("먼저 텍스트를 붙여넣고 「내용 정리·분류」를 눌러 주세요.");
+      return;
+    }
+    const organized = organizeResult ?? organizePaste(importText);
+    if (!organized.cleaned.trim()) {
+      alert("적용할 내용이 없습니다.");
+      return;
+    }
+
+    const wantReport = applyTargets.report;
+    const wantOverview =
+      applyTargets.overview && Boolean(organized.parts.overview);
+    const wantFc =
+      applyTargets.factcheck && Boolean(organized.parts.factChecks);
+
+    if (!wantReport && !wantOverview && !wantFc) {
+      alert("적용할 대상을 선택해 주세요. (본문 / 요약 / 팩트체크)");
+      return;
+    }
+
+    setOrganizeBusy(true);
+    try {
+      const notices: string[] = [];
+
+      if (wantReport) {
+        const reportText =
+          organized.parts.reportSections?.trim() ||
+          organized.cleaned.trim();
+        const current = draftRef.current;
+        if (!current) {
+          alert("보고서가 없습니다.");
+          return;
+        }
+        let next = importReportText(current, reportText);
+        if (next === current) {
+          const cleaned = normalizeAiReportPaste(reportText);
+          next = importReportText(current, cleaned);
+          if (next === current) {
+            next = replaceAllReportBodies(current, cleaned || reportText);
+          }
+        }
+        if (next === current) {
+          const info = inspectImportedReportText(reportText);
+          alert(
+            info.count > 0
+              ? `본문 반영 실패. 섹션 ${info.count}개만 읽힘: ${info.headings.join(" / ")}`
+              : "본문으로 반영하지 못했습니다. `## 제목` 형식을 확인해 주세요."
+          );
+        } else {
+          setDraft(mergeReportSectionsToSingleBody(next));
+          setActiveSectionIdx(0);
+          setMode("body");
+          notices.push("본문 반영");
+        }
+      }
+
+      if (wantOverview && organized.parts.overview) {
+        const overview = organized.parts.overview.trim();
+        if (overview.length < 40) {
+          notices.push("요약 너무 짧음(40자↓) · 건너뜀");
+        } else {
+          const res = await fetch(`/api/videos/${video.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              draft: true,
+              updateOverview: {
+                overview,
+                preserveFactChecks: true,
+              },
+            }),
+          });
+          const data = (await res.json()) as {
+            error?: string;
+            video?: VideoRecord;
+          };
+          if (!res.ok || !data.video) {
+            throw new Error(data.error || "요약 저장 실패");
+          }
+          setLocalVideo(data.video);
+          notices.push("요약 저장");
+        }
+      }
+
+      if (wantFc && organized.parts.factChecks) {
+        const parsed = parseBulkFactCheckPasteRobust(
+          organized.parts.factChecks,
+          localVideo.items
+        );
+        if (!parsed.entries.length) {
+          notices.push(`FC 인식 실패: ${parsed.notice}`);
+        } else {
+          const res = await fetch(`/api/videos/${video.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              draft: true,
+              bulkFactChecks: parsed.entries.map((e) => ({
+                itemId: e.itemId,
+                verdict: e.verdict,
+                explanation: e.explanation,
+                statement: e.statement,
+                isNew: e.isNew,
+                sources: [],
+              })),
+            }),
+          });
+          const data = (await res.json()) as {
+            error?: string;
+            video?: VideoRecord;
+          };
+          if (!res.ok || !data.video) {
+            throw new Error(data.error || "팩트체크 저장 실패");
+          }
+          setLocalVideo(data.video);
+          if (data.video.report) {
+            setDraft(normalizeReportImageRefs(data.video.report));
+          }
+          notices.push(`FC ${parsed.entries.length}건 저장`);
+        }
+      }
+
+      setImportOpen(false);
+      setImportText("");
+      setOrganizeResult(null);
+      router.refresh();
+      alert(
+        notices.length
+          ? `적용 완료 · ${notices.join(" · ")}`
+          : "적용할 변경이 없었습니다."
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "적용 실패");
+    } finally {
+      setOrganizeBusy(false);
+    }
   }
 
   /** 본문 S 슬롯(0-based)에 이미지 설정 — 섹션 분할 없음 */
@@ -1774,6 +1946,20 @@ export function EditableReportPanel({
               <ClipboardCopy className="h-4 w-4" />
               요약+FC 전체 복사
             </button>
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => {
+                  goBodyMode();
+                  setImportOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
+                title="본문 편집을 열고 붙여넣기 정리·분류 패널을 표시합니다"
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                보고서 편집
+              </button>
+            )}
             {editing && (
               <>
                 <button
@@ -2011,7 +2197,7 @@ export function EditableReportPanel({
                     }}
                     className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 hover:border-accent hover:text-accent"
                   >
-                    정리본 붙여넣기
+                    붙여넣기 정리·분류
                   </button>
                 </div>
               </div>
@@ -2168,35 +2354,116 @@ export function EditableReportPanel({
             {importOpen && (
               <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
                 <p className="text-xs text-ink-700">
-                  여기는 텍스트만 붙입니다. 이미지 넣을 문장{" "}
-                  <strong>끝에 S</strong> 를 적어 두고(예:{" "}
-                  <code className="text-[11px]">…기원이다. S</code>
-                  ) 「전체 본문 교체」한 뒤, 본문 아래 칸 또는 이미지 룸의
-                  「현재 섹션에 넣기」로 그림을 넣으세요. 보기 화면에는 S 가
-                  보이지 않습니다.
+                  외부 AI 답을 붙인 뒤 <strong>내용 정리·분류</strong>하면
+                  불필요 기호를 지우고 요약·FC·본문으로 나눕니다. 이미지 넣을
+                  문장 <strong>끝에 S</strong>를 적어 두세요.
                 </p>
                 <textarea
                   value={importText}
-                  onChange={(e) => setImportText(e.target.value)}
+                  onChange={(e) => {
+                    setImportText(e.target.value);
+                    setOrganizeResult(null);
+                  }}
                   rows={10}
                   placeholder={
-                    "## 핵심 결론\n정리된 본문...\n\n## 항목별 팩트체크\n1. 주장 (판정: 사실)\n- 근거(출처): …"
+                    "AI 답변 전체 붙여넣기…\n\n예)\n### 1. 대주제\n* 내용…\n\n또는\n## 요약\n…\n## 팩트체크\n1. …\n판정: …\n## 보고서\n…"
                   }
                   className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent"
                 />
+                {organizeResult && (
+                  <div className="rounded-lg border border-amber-200 bg-white/80 px-3 py-2 space-y-2">
+                    <p className="text-xs text-ink-800">{organizeResult.summary}</p>
+                    <div className="flex flex-wrap gap-3 text-xs text-ink-700">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.report}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              report: e.target.checked,
+                            }))
+                          }
+                        />
+                        본문
+                        {organizeResult.parts.reportSections ? "" : " (추정)"}
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.overview}
+                          disabled={!organizeResult.parts.overview}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              overview: e.target.checked,
+                            }))
+                          }
+                        />
+                        요약
+                        {!organizeResult.parts.overview ? " (없음)" : ""}
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.factcheck}
+                          disabled={!organizeResult.parts.factChecks}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              factcheck: e.target.checked,
+                            }))
+                          }
+                        />
+                        팩트체크
+                        {!organizeResult.parts.factChecks ? " (없음)" : ""}
+                      </label>
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={!importText.trim()}
-                    onClick={normalizeImportPaste}
+                    disabled={!importText.trim() || organizeBusy}
+                    onClick={runOrganizePaste}
                     className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/40 px-3 py-1.5 text-sm font-medium text-ink-900 hover:bg-accent-muted disabled:opacity-50"
                   >
                     <Sparkles className="h-3.5 w-3.5" />
-                    AI 답변 정리
+                    내용 정리·분류
                   </button>
                   <button
                     type="button"
-                    disabled={!importText.trim()}
+                    disabled={
+                      !importText.trim() ||
+                      organizeBusy ||
+                      (!applyTargets.report &&
+                        !applyTargets.overview &&
+                        !applyTargets.factcheck)
+                    }
+                    onClick={() => void applyOrganizedPaste()}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {organizeBusy ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        적용 중…
+                      </>
+                    ) : (
+                      "분류 결과 적용"
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importText.trim() || organizeBusy}
+                    onClick={normalizeImportPaste}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 disabled:opacity-50"
+                    title="보고서 ## 섹션만 정리 (기존)"
+                  >
+                    AI 답변 정리(본문만)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importText.trim() || organizeBusy}
                     onClick={() => applyImportedReportText("merge")}
                     className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 disabled:opacity-50"
                   >
@@ -2204,7 +2471,7 @@ export function EditableReportPanel({
                   </button>
                   <button
                     type="button"
-                    disabled={!importText.trim()}
+                    disabled={!importText.trim() || organizeBusy}
                     onClick={() => {
                       if (
                         !confirm(
@@ -2215,7 +2482,7 @@ export function EditableReportPanel({
                       }
                       applyImportedReportText("replaceAll");
                     }}
-                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 disabled:opacity-50"
                   >
                     전체 본문 교체
                   </button>
@@ -2224,6 +2491,7 @@ export function EditableReportPanel({
                     onClick={() => {
                       setImportOpen(false);
                       setImportText("");
+                      setOrganizeResult(null);
                     }}
                     className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700"
                   >
