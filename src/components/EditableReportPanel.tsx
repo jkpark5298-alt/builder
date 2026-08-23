@@ -1721,11 +1721,16 @@ export function EditableReportPanel({
     const emptyIdx = urls.findIndex((u) => !u);
     const slotIdx =
       emptyIdx >= 0 ? emptyIdx : slotCount > 0 ? 0 : 0;
+    if (!slotCount) {
+      setArmedSSlot(null);
+      setImagePasteHint(
+        "먼저 문장 끝에 S를 입력하세요. S 자리에 이미지 칸이 생깁니다."
+      );
+      return;
+    }
     setArmedSSlot({ secIdx: idx, slotIdx });
     setImagePasteHint(
-      slotCount
-        ? "이미지를 복사한 뒤 지금 붙여넣기하세요. (PC: Ctrl+V · 아이폰: 아래 칸 길게 누르기 또는 파일)"
-        : "S 표시가 없어도 됩니다. 이미지를 붙여넣거나 파일로 넣으면 칸이 자동으로 생깁니다."
+      "이미지를 복사한 뒤 지금 붙여넣기하세요. (PC: Ctrl+V · 아이폰: 아래 칸 길게 누르기 또는 파일)"
     );
     window.setTimeout(() => {
       (
@@ -1762,15 +1767,20 @@ export function EditableReportPanel({
       e.stopPropagation();
       const sec = draftRef.current?.sections[idx];
       const slotCount = countTrailingSMarkers(sec?.body || "");
-      const urls =
-        slotCount > 0 ? slotUrlsForSection(sec!, slotCount) : [];
+      if (!slotCount) {
+        setImagePasteHint(
+          "먼저 문장 끝에 S를 입력하세요. S 자리에 이미지 칸이 생깁니다."
+        );
+        return;
+      }
+      const urls = slotUrlsForSection(sec!, slotCount);
       const emptyIdx = urls.findIndex((u) => !u);
       const slotIdx =
         armedSSlot?.secIdx === idx
           ? armedSSlot.slotIdx
           : emptyIdx >= 0
             ? emptyIdx
-            : Math.max(0, slotCount);
+            : 0;
       void addImagesToSSlot(idx, slotIdx, files);
       return;
     }
@@ -2139,10 +2149,48 @@ export function EditableReportPanel({
             </div>
           )}
           <div className={`min-w-0 space-y-5 ${factcheckMode ? "order-2" : ""}`}>
-        <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-1 print:hidden">
-          <p>
-            <span className="text-ink-500">영상 제목</span> · {draft.meta.title}
-          </p>
+        <div className="rounded-xl bg-ink-50 border border-ink-100 p-3 text-sm space-y-2 print:hidden">
+          <label className="block space-y-1">
+            <span className="text-ink-500">보고서 제목</span>
+            <input
+              type="text"
+              value={draft.meta.title}
+              onChange={(e) => {
+                const title = e.target.value;
+                updateDraft(
+                  (prev) => ({
+                    ...prev,
+                    meta: { ...prev.meta, title },
+                  }),
+                  { history: editing ? "debounced" : "none" }
+                );
+                if (!editing) {
+                  setMode("body");
+                }
+              }}
+              onBlur={() => {
+                const t = (draftRef.current?.meta.title ?? "").trim();
+                if (t.length < 2) {
+                  updateDraft(
+                    (prev) => ({
+                      ...prev,
+                      meta: {
+                        ...prev.meta,
+                        title: localVideo.title || prev.meta.title,
+                      },
+                    }),
+                    { history: "none" }
+                  );
+                  return;
+                }
+                if (t !== (localVideo.title || "").trim()) {
+                  void persistReport({ exit: false });
+                }
+              }}
+              placeholder="보고서 제목 (2자 이상)"
+              className="w-full rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm text-ink-900 outline-none focus:border-accent"
+            />
+          </label>
           <p>
             <span className="text-ink-500">채널명</span> · {draft.meta.channel}
           </p>
@@ -2242,22 +2290,21 @@ export function EditableReportPanel({
                   focusActiveBodyEditor();
                   const sec = draftRef.current?.sections[activeSectionIdx];
                   const slotCount = countTrailingSMarkers(sec?.body || "");
-                  const urls =
-                    slotCount > 0
-                      ? slotUrlsForSection(sec!, slotCount)
-                      : [];
+                  if (!slotCount) {
+                    setArmedSSlot(null);
+                    setImagePasteHint(
+                      "먼저 문장 끝에 S를 입력하세요. S 자리에 이미지 칸이 생깁니다."
+                    );
+                    return;
+                  }
+                  const urls = slotUrlsForSection(sec!, slotCount);
                   const emptyIdx = urls.findIndex((u) => !u);
-                  const target =
-                    emptyIdx >= 0 ? emptyIdx : Math.max(0, slotCount);
+                  const target = emptyIdx >= 0 ? emptyIdx : 0;
                   setArmedSSlot({
                     secIdx: activeSectionIdx,
                     slotIdx: target,
                   });
-                  setImagePasteHint(
-                    slotCount
-                      ? `S${target + 1} 자리에 파일을 고르세요.`
-                      : "파일을 고르면 이미지 칸이 자동으로 생깁니다."
-                  );
+                  setImagePasteHint(`S${target + 1} 자리에 파일을 고르세요.`);
                   (
                     document.getElementById(
                       `s-slot-img-${activeSectionIdx}`
@@ -2293,7 +2340,8 @@ export function EditableReportPanel({
                   로 적용. 이미지·손글씨는 「도구」.
                 </p>
                 <p className="text-[11px] text-ink-500">
-                  붙여넣기: 아래를{" "}
+                  이미지: 문장 끝 <strong className="font-medium text-ink-700">S</strong>
+                  {" "}후 칸에서{" "}
                   <strong className="font-medium text-ink-700">길게 눌러 붙여넣기</strong>
                   {" "}또는 「이미지 파일」
                 </p>
@@ -2312,13 +2360,16 @@ export function EditableReportPanel({
                       const slotCount = countTrailingSMarkers(
                         sec?.body || ""
                       );
-                      const urls =
-                        slotCount > 0
-                          ? slotUrlsForSection(sec!, slotCount)
-                          : [];
+                      if (!slotCount) {
+                        setImagePasteHint(
+                          "먼저 문장 끝에 S를 입력하세요. S 자리에 이미지 칸이 생깁니다."
+                        );
+                        (e.target as HTMLTextAreaElement).value = "";
+                        return;
+                      }
+                      const urls = slotUrlsForSection(sec!, slotCount);
                       const emptyIdx = urls.findIndex((u) => !u);
-                      const slotIdx =
-                        emptyIdx >= 0 ? emptyIdx : Math.max(0, slotCount);
+                      const slotIdx = emptyIdx >= 0 ? emptyIdx : 0;
                       void addImagesToSSlot(
                         activeSectionIdx,
                         slotIdx,
@@ -2765,23 +2816,27 @@ export function EditableReportPanel({
                           const slotCount = countTrailingSMarkers(
                             sec.body || ""
                           );
-                          const urls =
-                            slotCount > 0
-                              ? slotUrlsForSection(sec, slotCount)
-                              : [];
+                          if (!slotCount) {
+                            setImagePasteHint(
+                              "먼저 문장 끝에 S를 입력하세요. S 자리에 이미지 칸이 생깁니다."
+                            );
+                            return;
+                          }
+                          const urls = slotUrlsForSection(sec, slotCount);
                           const emptyIdx = urls.findIndex((u) => !u);
                           const slotIdx =
                             armedSSlot?.secIdx === idx
                               ? armedSSlot.slotIdx
                               : emptyIdx >= 0
                                 ? emptyIdx
-                                : slotCount; // 없으면 새 S 칸(본문 끝에 자동 생성)
+                                : 0;
                           void addImagesToSSlot(idx, slotIdx, files);
                         }}
                       />
                     </div>
 
-                    {/* S 없어도 파일·붙여넣기 가능 (칸 자동 생성) */}
+                    {/* S 표시가 있을 때만 파일·붙여넣기 (없으면 칸·버튼 숨김) */}
+                    {sSlotCount > 0 && (
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                         <input
                           id={`s-slot-img-${idx}`}
@@ -2789,15 +2844,13 @@ export function EditableReportPanel({
                           accept="image/*"
                           className="hidden"
                           onChange={(e) => {
+                            const emptyIdx = slotUrls.findIndex((u) => !u);
                             const slotIdx =
                               armedSSlot?.secIdx === idx
                                 ? armedSSlot.slotIdx
-                                : Math.max(
-                                    0,
-                                    slotUrls.findIndex((u) => !u) >= 0
-                                      ? slotUrls.findIndex((u) => !u)
-                                      : sSlotCount
-                                  );
+                                : emptyIdx >= 0
+                                  ? emptyIdx
+                                  : 0;
                             void addImagesToSSlot(
                               idx,
                               slotIdx,
@@ -2808,21 +2861,15 @@ export function EditableReportPanel({
                         />
                         <button
                           type="button"
-                          title={
-                            sSlotCount
-                              ? `S${armedSlotN} 자리에 파일 이미지`
-                              : "이미지 파일 추가"
-                          }
+                          title={`S${armedSlotN} 자리에 파일 이미지`}
                           onClick={() => {
+                            const emptyIdx = slotUrls.findIndex((u) => !u);
                             const slotIdx =
                               armedSSlot?.secIdx === idx
                                 ? armedSSlot.slotIdx
-                                : Math.max(
-                                    0,
-                                    slotUrls.findIndex((u) => !u) >= 0
-                                      ? slotUrls.findIndex((u) => !u)
-                                      : sSlotCount
-                                  );
+                                : emptyIdx >= 0
+                                  ? emptyIdx
+                                  : 0;
                             setArmedSSlot({ secIdx: idx, slotIdx });
                             (
                               document.getElementById(
@@ -2833,28 +2880,20 @@ export function EditableReportPanel({
                           className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-[11px] text-ink-700 hover:border-accent"
                         >
                           <ImagePlus className="h-3.5 w-3.5" />
-                          {sSlotCount ? `S${armedSlotN} 자리 파일` : "이미지 파일"}
+                          {`S${armedSlotN} 자리 파일`}
                         </button>
                         <textarea
                           id={`s-slot-paste-${idx}-${armedSSlot?.secIdx === idx ? armedSSlot.slotIdx : 0}`}
-                          aria-label={
-                            sSlotCount
-                              ? `S${armedSlotN} 자리 이미지 붙여넣기`
-                              : "이미지 붙여넣기"
-                          }
+                          aria-label={`S${armedSlotN} 자리 이미지 붙여넣기`}
                           rows={1}
-                          placeholder={
-                            sSlotCount
-                              ? `S${armedSlotN} · Ctrl+V / 길게 눌러 붙여넣기`
-                              : "이미지 Ctrl+V / 길게 눌러 붙여넣기"
-                          }
+                          placeholder={`S${armedSlotN} · Ctrl+V / 길게 눌러 붙여넣기`}
                           className="min-w-[12rem] flex-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs text-ink-500 outline-none focus:border-accent"
                           onFocus={() => {
                             setActiveSectionIdx(idx);
                             if (armedSSlot?.secIdx !== idx) {
                               setArmedSSlot({
                                 secIdx: idx,
-                                slotIdx: Math.max(0, sSlotCount),
+                                slotIdx: 0,
                               });
                             }
                           }}
@@ -2868,14 +2907,14 @@ export function EditableReportPanel({
                             const slotIdx =
                               armedSSlot?.secIdx === idx
                                 ? armedSSlot.slotIdx
-                                : Math.max(0, sSlotCount);
+                                : 0;
                             void addImagesToSSlot(idx, slotIdx, files);
                           }}
                           onInput={(e) => {
                             (e.target as HTMLTextAreaElement).value = "";
                           }}
                         />
-                        {armedSSlot?.secIdx === idx && sSlotCount > 0 && (
+                        {armedSSlot?.secIdx === idx && (
                           <button
                             type="button"
                             onClick={() =>
@@ -2888,6 +2927,7 @@ export function EditableReportPanel({
                           </button>
                         )}
                       </div>
+                    )}
 
                     {sectionMarkers.length > 0 && (
                       <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2">

@@ -778,10 +778,17 @@ async function patchVideo(req: Request, ctx: Ctx) {
     const summaryPlain = summarySec
       ? reportBodyPlain(summarySec.body, summarySec.rich).trim()
       : "";
+    const reportTitle = (updated.meta?.title ?? "").trim();
     next = {
       ...next,
+      // 본문에서 제목을 고치면 목록·표지·PDF용 video.title 도 맞춤
+      ...(reportTitle.length >= 2 ? { title: reportTitle } : {}),
       report: {
         ...updated,
+        meta: {
+          ...updated.meta,
+          title: reportTitle.length >= 2 ? reportTitle : next.title,
+        },
         summaryExcerpt:
           summaryPlain ||
           updated.summaryExcerpt ||
