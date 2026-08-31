@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
+import { isFactCheckPass } from "@/lib/input-mode";
 import { compressImageFiles } from "@/lib/image-client";
 import { uploadDataUrls } from "@/lib/media-upload-client";
 import {
@@ -42,6 +43,7 @@ export function ReportActions({
   const [coverBusy, setCoverBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
+  const hideFactCheck = isFactCheckPass(video);
 
   if (!ready) return null;
   const report = video.report;
@@ -73,7 +75,7 @@ export function ReportActions({
 
   async function copyText(kind: "report" | "factchecks" | "all") {
     const text =
-      kind === "report"
+      kind === "report" || hideFactCheck
         ? formatReportText(readyReport)
         : kind === "factchecks"
           ? formatFactChecksText(readyReport)
@@ -88,7 +90,9 @@ export function ReportActions({
         ? "보고서 텍스트를 복사했습니다."
         : kind === "factchecks"
           ? "팩트체크 텍스트를 복사했습니다."
-          : "보고서+팩트체크 텍스트를 복사했습니다."
+          : hideFactCheck
+            ? "전체 텍스트를 복사했습니다."
+            : "보고서+팩트체크 텍스트를 복사했습니다."
     );
   }
 
@@ -262,14 +266,16 @@ export function ReportActions({
         <Pencil className="h-3.5 w-3.5 shrink-0" />
         본문
       </button>
-      <button
-        type="button"
-        onClick={startFactcheck}
-        className={`${btn} ${enabled}`}
-      >
-        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-        팩트체크
-      </button>
+      {!hideFactCheck && (
+        <button
+          type="button"
+          onClick={startFactcheck}
+          className={`${btn} ${enabled}`}
+        >
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+          팩트체크
+        </button>
+      )}
       <button
         type="button"
         onClick={() => void copyText("report")}
@@ -278,14 +284,16 @@ export function ReportActions({
         <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
         보고서 text
       </button>
-      <button
-        type="button"
-        onClick={() => void copyText("factchecks")}
-        className={`${btn} ${enabled}`}
-      >
-        <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
-        팩트체크 text
-      </button>
+      {!hideFactCheck && (
+        <button
+          type="button"
+          onClick={() => void copyText("factchecks")}
+          className={`${btn} ${enabled}`}
+        >
+          <ClipboardCopy className="h-3.5 w-3.5 shrink-0" />
+          팩트체크 text
+        </button>
+      )}
       <button
         type="button"
         onClick={() => void copyText("all")}

@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { factCheckProgress } from "@/lib/factcheck-client";
+import { isFactCheckPass, isYoutubeInput } from "@/lib/input-mode";
 import { normalizeAiOverviewPaste } from "@/lib/text-format";
 
 /** API와 동일 — 클라이언트에서 unpdf를 끌어오지 않도록 상수만 둠 */
@@ -65,7 +66,10 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const hasExistingFc = video.items.some((i) => i.needsFactCheck);
-  const [preserveFactChecks, setPreserveFactChecks] = useState(hasExistingFc);
+  const fcPass = isFactCheckPass(video);
+  const [preserveFactChecks, setPreserveFactChecks] = useState(
+    hasExistingFc && !fcPass
+  );
 
   const charCount = useMemo(() => draft.trim().length, [draft]);
   const fcProgress = useMemo(() => factCheckProgress(video), [video]);
@@ -154,28 +158,40 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
   async function completeManualOverview() {
     setError(null);
     setHint(null);
-    if (draft.trim().length < 40) {
+    const text = (editing ? draft : video.overview || draft).trim();
+    if (text.length < 40) {
       setError("요약을 40자 이상 입력해 주세요.");
       return;
     }
     setSaving(true);
     try {
-      const keepFc = hasExistingFc && preserveFactChecks;
+      const keepFc = hasExistingFc && preserveFactChecks && !fcPass;
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           updateOverview: {
-            overview: draft.trim(),
+            overview: text,
             complete: true,
             preserveFactChecks: keepFc,
           },
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as {
+        error?: string;
+        progress?: { total?: number };
+        video?: { items?: unknown[] };
+        mode?: string;
+      };
       if (!res.ok) throw new Error(data.error || "완료 처리 실패");
       if (keepFc) {
         setHint("요약만 저장했습니다. 기존 팩트체크는 유지됩니다.");
+      } else if (fcPass || data.mode === "overview_pass_finalize") {
+        setHint("요약 완료. 보고서를 만들었습니다.");
+      } else if (isYoutubeInput(video)) {
+        setHint(
+          "요약 완료. 아래에서 팩트체크 실시 또는 pass를 고르세요."
+        );
       } else {
         const n = data.progress?.total ?? data.video?.items?.length ?? 0;
         setHint(
@@ -185,16 +201,27 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       setEditing(false);
       router.refresh();
       window.setTimeout(() => {
-        if (keepFc && video.status === "ready") {
+        if (
+          (keepFc && video.status === "ready") ||
+          fcPass
+        ) {
           document
             .getElementById("report")
             ?.scrollIntoView({ behavior: "smooth", block: "start" });
           return;
         }
         document
-          .getElementById("manual-factcheck")
+          .getElementById("fc-decision")
           ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        if (!document.getElementById("manual-factcheck")) {
+        if (!document.getElementById("fc-decision")) {
+          document
+            .getElementById("manual-factcheck")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        if (
+          !document.getElementById("fc-decision") &&
+          !document.getElementById("manual-factcheck")
+        ) {
           document
             .getElementById("report")
             ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -309,6 +336,21 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             )}
             {pdfButton}
           </div>
+          {fcPass && video.status === "awaiting_factcheck" && video.overview.trim().length >= 40 && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void completeManualOverview()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl bg-ink-900 px-4 text-sm font-medium text-white hover:bg-accent disabled:opacity-60"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              {saving ? "보고서 만드는 중…" : "이 요약으로 보고서 만들기"}
+            </button>
+          )}
         </>
       ) : (
         <div className="space-y-2">
@@ -351,8 +393,10 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
           <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
             <strong>AI 답변 정리</strong>는 마크다운·군더더기를 걷어{" "}
             <code className="text-[11px]">1. 대주제 / • 소주제</code> 형으로
-            맞춥니다. <strong>완료</strong>를 누르면 저장하고 팩트체크·보고서를
-            새 요약에 맞춥니다.
+            맞춥니다. <strong>완료</strong>를 누르면 저장하고{" "}
+            {fcPass
+              ? "바로 보고서를 만듭니다."
+              : "팩트체크·보고서를 새 요약에 맞춥니다."}
           </p>
           {error && (
             <p className="text-sm text-verify-false" role="alert">
@@ -364,7 +408,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               {hint}
             </p>
           )}
-          {hasExistingFc && (
+          {hasExistingFc && !fcPass && (
             <fieldset className="space-y-2 rounded-xl border border-ink-200 bg-ink-50/80 p-3">
               <legend className="text-xs font-medium text-ink-700 px-1">
                 요약 저장 방식

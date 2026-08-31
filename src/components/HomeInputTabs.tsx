@@ -88,7 +88,7 @@ export function HomeInputTabs({
   }
 
   const items: Array<{ id: Tab; label: string; hint: string }> = [
-    { id: "youtube", label: "유튜브", hint: "URL · 자막 자동 가져오기" },
+    { id: "youtube", label: "유튜브", hint: "URL · 자막 · 요약 후 pass" },
     {
       id: "factcheck",
       label: "팩트체크 보고서",

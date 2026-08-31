@@ -6,6 +6,7 @@ import { ActionBar } from "@/components/ActionBar";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
 import { InfographicPanel } from "@/components/InfographicPanel";
 import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
+import { FactCheckDecisionPanel, PassReportConfirmBar } from "@/components/FactCheckDecisionPanel";
 import { OverviewSummaryPanel } from "@/components/OverviewSummaryPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { PrintOnLoad } from "@/components/PrintOnLoad";
@@ -18,7 +19,7 @@ import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
 import { isHistoryFactCheckFlow } from "@/lib/history-flow";
-import { isYoutubeInput } from "@/lib/input-mode";
+import { isYoutubeInput, isFactCheckPass, needsFactCheckDecision } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { formatTagList } from "@/lib/tags";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
@@ -78,9 +79,24 @@ export default async function VideoDetailPage({
   const stage = libraryStage(video);
   const stageLabel = libraryCardLabel(video);
   const isYoutube = isYoutubeInput(video);
+  const fcPass = isFactCheckPass(video);
+  const showFcChoice = needsFactCheckDecision(video);
   const summaryStepLabel = isYoutube ? "유튜브 내용 요약" : "내용 요약";
 
-  const stepItems = historyFlow
+  const stepItems = fcPass
+    ? [
+        { n: "1", t: summaryStepLabel, on: true },
+        { n: "2", t: "유형 보고서", on: ready || Boolean(video.report) },
+        { n: "3", t: "인포 이미지·공유", on: ready },
+      ]
+    : showFcChoice
+    ? [
+        { n: "1", t: summaryStepLabel, on: true },
+        { n: "2", t: "팩트체크 또는 pass", on: true },
+        { n: "3", t: "유형 보고서", on: false },
+        { n: "4", t: "인포 이미지·공유", on: false },
+      ]
+    : historyFlow
     ? [
         { n: "1", t: summaryStepLabel, on: true },
         { n: "2", t: "팩트체크", on: awaiting || ready },
@@ -108,9 +124,13 @@ export default async function VideoDetailPage({
       />
       <ol
         className={`grid gap-2 text-center text-xs sm:text-sm ${
-          historyFlow
-            ? "grid-cols-2 sm:grid-cols-5"
-            : "grid-cols-2 sm:grid-cols-4"
+          fcPass
+            ? "grid-cols-3"
+            : showFcChoice
+              ? "grid-cols-2 sm:grid-cols-4"
+            : historyFlow
+              ? "grid-cols-2 sm:grid-cols-5"
+              : "grid-cols-2 sm:grid-cols-4"
         }`}
       >
         {stepItems.map((s) => (
@@ -158,7 +178,7 @@ export default async function VideoDetailPage({
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-ink-500">
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-              {isYoutube ? "유튜브" : "팩트체크보고서"}
+              {isYoutube ? (fcPass ? "유튜브 · 팩트체크 pass" : "유튜브") : "팩트체크보고서"}
             </span>
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {REPORT_TYPE_LABELS[video.reportType]}
@@ -194,7 +214,9 @@ export default async function VideoDetailPage({
               }`}
             >
               {stage === "factcheck_draft"
-                ? `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
+                ? fcPass
+                  ? "임시 저장 · 요약 입력"
+                  : `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
                 : stage === "report_pending"
                   ? "작성 대기"
                   : stageLabel}
@@ -218,10 +240,10 @@ export default async function VideoDetailPage({
             />
           )}
           <div className="flex flex-wrap gap-2">
-            <ReprocessButton videoId={video.id} />
+            <ReprocessButton videoId={video.id} skipFactCheck={fcPass} />
           </div>
           <SavedTranscriptPanel video={video} />
-          {ready && <ReopenAsDraftButton videoId={video.id} />}
+          {ready && !fcPass && <ReopenAsDraftButton videoId={video.id} />}
           <ActionBar video={video} />
           {ready && (
             <a
@@ -257,9 +279,28 @@ export default async function VideoDetailPage({
         </div>
       </section>
 
-      {awaiting && <ManualFactCheckWizard video={video} />}
+      {showFcChoice && <FactCheckDecisionPanel video={video} />}
 
-      {showReportDraft && (
+      {awaiting && !fcPass && !showFcChoice && (
+        <ManualFactCheckWizard video={video} />
+      )}
+
+      {fcPass && awaiting && video.report && (
+        <section
+          id="report-draft"
+          className="space-y-3 scroll-mt-20 print:hidden"
+        >
+          <PassReportConfirmBar video={video} />
+          {video.reportWriteNotice ? (
+            <div className="rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-700">
+              {video.reportWriteNotice}
+            </div>
+          ) : null}
+          <EditableReportPanel video={video} draftPhase />
+        </section>
+      )}
+
+      {showReportDraft && !fcPass && !showFcChoice && (
         <section
           id="report-draft"
           className="space-y-3 scroll-mt-20 print:hidden"
@@ -290,6 +331,7 @@ export default async function VideoDetailPage({
 
       {ready && (
         <>
+          {!fcPass && (
           <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden">
             <div className="bg-accent px-4 sm:px-5 py-3.5">
               <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
@@ -322,6 +364,7 @@ export default async function VideoDetailPage({
               <ReopenAsDraftButton videoId={video.id} />
             </div>
           </section>
+          )}
 
           {video.report && (
             <div className="space-y-3">
@@ -338,7 +381,7 @@ export default async function VideoDetailPage({
               ) : null}
               <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
                 <h2 className="font-display text-lg sm:text-xl mb-3">
-                  {historyFlow ? "4. 확정 보고서" : "보고서"}
+                  {fcPass ? "2. 보고서" : historyFlow ? "4. 확정 보고서" : "보고서"}
                 </h2>
                 <ReportActions video={video} />
               </div>

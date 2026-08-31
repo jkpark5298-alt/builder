@@ -10,7 +10,7 @@ import {
 } from "./report-skeleton";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
-import type { ReportType, VideoRecord } from "./types";
+import type { ReportType, SummaryItem, VideoRecord } from "./types";
 import {
   extractVideoId,
   fetchYoutubeMeta,
@@ -23,11 +23,16 @@ import { hasUsablePastedScript, normalizePastedText } from "./paste";
 import { reportThumbnailUrl } from "./input-mode";
 import type { YoutubeMeta } from "./youtube";
 
+function withoutFactCheckTargets(items: SummaryItem[]): SummaryItem[] {
+  return items.map((item) => ({ ...item, needsFactCheck: false }));
+}
+
 export async function createManualOverviewJob(
   youtubeUrl: string,
-  pastedScript: string
+  pastedScript: string,
+  opts?: { skipFactCheck?: boolean }
 ): Promise<VideoRecord> {
-  const job = await createVideoJob(youtubeUrl);
+  const job = await createVideoJob(youtubeUrl, opts);
   const script = normalizePastedText(pastedScript);
   let title = job.title;
   let channel = job.channel;
@@ -46,23 +51,34 @@ export async function createManualOverviewJob(
     channel: channel || "알 수 없음",
     transcript: script,
     transcriptSource: "pasted",
-    scriptNotice:
-      "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
+    scriptNotice: opts?.skipFactCheck
+      ? "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다."
+      : "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
     summarySource: "none",
     summaryBullets: [],
     items: [],
     factChecks: [],
+    skipFactCheck: Boolean(opts?.skipFactCheck),
     status: "awaiting_factcheck",
     errorMessage: undefined,
-    tags: [channel || "youtube", "youtube", "has-script", "manual-overview"],
+    tags: [
+      channel || "youtube",
+      "youtube",
+      "has-script",
+      "manual-overview",
+      ...(opts?.skipFactCheck ? ["fc-pass"] : []),
+    ],
     updatedAt: new Date().toISOString(),
   };
   await upsertVideo(record);
   return record;
 }
 
-export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
+export async function createVideoJob(
+  youtubeUrl: string,
+  opts?: { skipFactCheck?: boolean }
+): Promise<VideoRecord> {
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
     throw new Error("유효한 유튜브 URL이 아닙니다.");
@@ -72,6 +88,7 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
   const record: VideoRecord = {
     id: uuid(),
     inputMode: "youtube",
+    skipFactCheck: Boolean(opts?.skipFactCheck),
     youtubeUrl: normalizeUrl(videoId, youtubeUrl),
     videoId,
     title: "불러오는 중…",
@@ -91,7 +108,7 @@ export async function createVideoJob(youtubeUrl: string): Promise<VideoRecord> {
     report: null,
     infographic: null,
     status: "queued",
-    tags: [],
+    tags: opts?.skipFactCheck ? ["fc-pass"] : [],
     createdAt: now,
     updatedAt: now,
   };
@@ -428,6 +445,7 @@ export async function runVideoPipeline(
           ...(source === "none" || source === "creator_meta"
             ? ["no-script"]
             : ["has-script"]),
+          ...(record.skipFactCheck ? ["fc-pass"] : []),
         ])
       ).filter(Boolean),
       updatedAt: new Date().toISOString(),
@@ -456,6 +474,45 @@ export async function runVideoPipeline(
       updatedAt: new Date().toISOString(),
     };
     await upsertVideo(record);
+
+    if (record.skipFactCheck) {
+      record = {
+        ...record,
+        items: withoutFactCheckTargets(summary.items),
+        factChecks: [],
+        factCheckSource: undefined,
+        factCheckNotice: undefined,
+        report: null,
+        infographic: null,
+        reportSource: undefined,
+        reportWriteNotice: undefined,
+        reportSkeletonEdited: undefined,
+        tags: Array.from(
+          new Set([
+            ...record.tags.filter(
+              (t) =>
+                t !== "fc-llm-draft" &&
+                t !== "auto-factcheck" &&
+                t !== "heuristic-factcheck" &&
+                t !== "manual-review"
+            ),
+            "fc-pass",
+          ])
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      if ((record.overview ?? "").trim().length >= 40) {
+        return finalizeReport(record);
+      }
+      record = {
+        ...record,
+        status: "awaiting_factcheck",
+        updatedAt: new Date().toISOString(),
+      };
+      record = await ensureSkeletonReport(record);
+      await upsertVideo(record);
+      return record;
+    }
 
     record = {
       ...record,
@@ -519,7 +576,9 @@ export async function runVideoPipeline(
         errorMessage: undefined,
         scriptNotice: isReport
           ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`
-          : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
+          : record.skipFactCheck
+            ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다.`
+            : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
         updatedAt: new Date().toISOString(),
       };
       await upsertVideo(record);
@@ -539,9 +598,10 @@ export async function runVideoPipeline(
 export async function createAndProcessVideo(
   youtubeUrl: string,
   creatorNotes?: string,
-  pastedScript?: string
+  pastedScript?: string,
+  opts?: { skipFactCheck?: boolean }
 ): Promise<VideoRecord> {
-  const job = await createVideoJob(youtubeUrl);
+  const job = await createVideoJob(youtubeUrl, opts);
   return runVideoPipeline(job.id, creatorNotes, pastedScript);
 }
 
@@ -612,8 +672,56 @@ export async function finalizeReport(
           (t) => t !== "report-llm" && t !== "report-assembled"
         ),
         built.source === "llm" ? "report-llm" : "report-assembled",
+        ...(video.skipFactCheck ? ["fc-pass"] : []),
       ])
     ),
+    updatedAt: new Date().toISOString(),
+  };
+  return upsertVideo(next, expectedUpdatedAt);
+}
+
+/** 유튜브 요약 이후 팩트체크 pass → AI가 요약으로 상세 보고서 초안 작성 */
+export async function applyFactCheckPass(
+  video: VideoRecord,
+  expectedUpdatedAt?: string
+): Promise<VideoRecord> {
+  if ((video.overview ?? "").trim().length < 40) {
+    throw new Error("요약을 먼저 완료한 뒤 팩트체크 pass를 선택할 수 있습니다.");
+  }
+
+  const prepared: VideoRecord = {
+    ...video,
+    skipFactCheck: true,
+    factCheckDecision: "pass",
+    items: withoutFactCheckTargets(video.items),
+    factChecks: [],
+    pendingReportFinalize: "keep_body",
+    reportSkeletonEdited: undefined,
+    tags: Array.from(
+      new Set([
+        ...video.tags.filter(
+          (t) =>
+            t !== "fc-llm-draft" &&
+            t !== "auto-factcheck" &&
+            t !== "heuristic-factcheck" &&
+            t !== "manual-review"
+        ),
+        "fc-pass",
+      ])
+    ),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const built = await buildReportDocument(prepared);
+  const next: VideoRecord = {
+    ...prepared,
+    report: built.report,
+    reportSource: built.source,
+    reportWriteNotice:
+      built.source === "llm"
+        ? "유튜브 요약을 바탕으로 글쓰기 AI가 상세 보고서 초안을 작성했습니다. 본문을 다듬은 뒤 「보고서 확정」을 누르세요."
+        : built.notice,
+    status: "awaiting_factcheck",
     updatedAt: new Date().toISOString(),
   };
   return upsertVideo(next, expectedUpdatedAt);
@@ -667,6 +775,9 @@ export async function prepareReprocess(
     infographic: null,
     pendingReportFinalize: null,
     reportSkeletonEdited: undefined,
+    skipFactCheck: false,
+    factCheckDecision: undefined,
+    tags: existing.tags.filter((t) => t !== "fc-pass"),
     status: "queued",
     errorMessage: undefined,
     ...(script

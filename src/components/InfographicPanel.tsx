@@ -74,7 +74,7 @@ export function InfographicPanel({ video }: { video: VideoRecord }) {
     <section className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 print:hidden">
       <div className="mb-3">
         <h2 className="font-display text-lg sm:text-xl">
-          4. 인포그래픽 이미지
+          {video.skipFactCheck ? "3. 인포그래픽 이미지" : "4. 인포그래픽 이미지"}
         </h2>
         <p className="mt-1.5 text-xs sm:text-sm text-ink-600 leading-relaxed">
           자동 생성하지 않습니다.{" "}

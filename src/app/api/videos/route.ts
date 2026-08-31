@@ -46,6 +46,8 @@ export async function POST(req: Request) {
       thumbnailUrl?: string;
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
+      /** 유튜브 팩트체크 pass — 검증 없이 바로 보고서 */
+      skipFactCheck?: boolean;
     };
 
     if (body.mode === "report_draft") {
@@ -115,6 +117,7 @@ export async function POST(req: Request) {
     const pastedScript = hasUsablePastedScript(body.pastedScript)
       ? normalizePastedText(body.pastedScript!)
       : undefined;
+    const skipFactCheck = body.skipFactCheck === true;
 
     if (body.manualOverview) {
       if (!pastedScript) {
@@ -126,29 +129,34 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
-      const video = await createManualOverviewJob(youtubeUrl, pastedScript);
+      const video = await createManualOverviewJob(youtubeUrl, pastedScript, {
+        skipFactCheck,
+      });
       return NextResponse.json({
         video,
         processing: false,
         storage: storageMode(),
-        scriptNotice:
-          "AI 요약 없이 열었습니다. 요약란에 직접 입력한 뒤 완료를 누르세요.",
+        scriptNotice: skipFactCheck
+          ? "AI 요약 없이 열었습니다. 요약란에 직접 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다."
+          : "AI 요약 없이 열었습니다. 요약란에 직접 입력한 뒤 완료를 누르세요.",
       });
     }
 
     // 붙여넣은 스크립트: 저장·요약을 끝까지 기다린 뒤 이동 (404 방지)
     if (pastedScript) {
-      const job = await createVideoJob(youtubeUrl);
+      const job = await createVideoJob(youtubeUrl, { skipFactCheck });
       const video = await runVideoPipeline(job.id, creatorNotes, pastedScript);
       return NextResponse.json({
         video,
         processing: false,
         storage: storageMode(),
-        scriptNotice: "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다.",
+        scriptNotice: skipFactCheck
+          ? "붙여넣은 스크립트를 기준으로 요약하고 바로 보고서를 만듭니다."
+          : "붙여넣은 스크립트(텍스트)를 기준으로 요약합니다.",
       });
     }
 
-    const video = await createVideoJob(youtubeUrl);
+    const video = await createVideoJob(youtubeUrl, { skipFactCheck });
 
     after(async () => {
       try {

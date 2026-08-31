@@ -41,6 +41,7 @@ import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { preferPlainPaste } from "@/lib/device";
+import { isFactCheckPass } from "@/lib/input-mode";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
   bindSectionSlotUrls,
@@ -133,6 +134,7 @@ export function EditableReportPanel({
   const [localVideo, setLocalVideo] = useState(video);
   /** 저장 직후·자동저장 반영은 props보다 localVideo 를 우선 */
   const report = localVideo.report;
+  const hideFactCheck = isFactCheckPass(localVideo);
   const [mode, setMode] = useState<ReportWorkMode>("view");
   const editing = mode === "body";
   const factcheckMode = mode === "factcheck";
@@ -465,6 +467,10 @@ export function EditableReportPanel({
     }
 
     function enterFactcheck() {
+      if (isFactCheckPass(video)) {
+        enterView();
+        return;
+      }
       setMode("factcheck");
       document.getElementById("report")?.scrollIntoView({
         behavior: "smooth",
@@ -523,7 +529,7 @@ export function EditableReportPanel({
       window.removeEventListener("factcheck:edit-report", onCustom);
       window.removeEventListener("hashchange", onHash);
     };
-  }, [video.id]);
+  }, [video.id, video.skipFactCheck]);
 
   useEffect(() => {
     if (!video.report || video.report.format === "general_v5") return;
@@ -775,10 +781,16 @@ export function EditableReportPanel({
     const wantOverview =
       applyTargets.overview && Boolean(organized.parts.overview);
     const wantFc =
-      applyTargets.factcheck && Boolean(organized.parts.factChecks);
+      !hideFactCheck &&
+      applyTargets.factcheck &&
+      Boolean(organized.parts.factChecks);
 
     if (!wantReport && !wantOverview && !wantFc) {
-      alert("적용할 대상을 선택해 주세요. (본문 / 요약 / 팩트체크)");
+      alert(
+        hideFactCheck
+          ? "적용할 대상을 선택해 주세요. (본문 / 요약)"
+          : "적용할 대상을 선택해 주세요. (본문 / 요약 / 팩트체크)"
+      );
       return;
     }
 
@@ -1939,23 +1951,36 @@ export function EditableReportPanel({
               <ClipboardCopy className="h-4 w-4" />
               {draftPhase ? "초안 전체 복사" : "보고서 복사"}
             </button>
-            <button
-              type="button"
-              onClick={() => void copyDraftReport("all")}
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
-            >
-              <ClipboardCopy className="h-4 w-4" />
-              {draftPhase ? "초안+FC 복사" : "전체 복사"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void copyOverviewWithFactChecks()}
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
-              title="일반 요약과 팩트체크(주장·판정·근거) 전체를 복사합니다"
-            >
-              <ClipboardCopy className="h-4 w-4" />
-              요약+FC 전체 복사
-            </button>
+            {hideFactCheck ? (
+              <button
+                type="button"
+                onClick={() => void copyDraftReport("report")}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+              >
+                <ClipboardCopy className="h-4 w-4" />
+                전체 복사
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void copyDraftReport("all")}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+              >
+                <ClipboardCopy className="h-4 w-4" />
+                {draftPhase ? "초안+FC 복사" : "전체 복사"}
+              </button>
+            )}
+            {!hideFactCheck && (
+              <button
+                type="button"
+                onClick={() => void copyOverviewWithFactChecks()}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+                title="일반 요약과 팩트체크(주장·판정·근거) 전체를 복사합니다"
+              >
+                <ClipboardCopy className="h-4 w-4" />
+                요약+FC 전체 복사
+              </button>
+            )}
             {!editing && (
               <button
                 type="button"
@@ -2003,13 +2028,13 @@ export function EditableReportPanel({
           role="tablist"
           aria-label="보고서 작업 모드"
         >
-          {(
-            [
-              { id: "view" as const, label: "보기" },
-              { id: "body" as const, label: "본문" },
-              { id: "factcheck" as const, label: "팩트체크" },
-            ] as const
-          ).map((tab) => (
+          {([
+            { id: "view" as ReportWorkMode, label: "보기" },
+            { id: "body" as ReportWorkMode, label: "본문" },
+            ...(!hideFactCheck
+              ? [{ id: "factcheck" as ReportWorkMode, label: "팩트체크" }]
+              : []),
+          ]).map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -2073,7 +2098,9 @@ export function EditableReportPanel({
         {/* 인쇄·PDF용 보고서 표지 메타 */}
         <div className="print-only space-y-1 mb-6 pb-4 border-b border-ink-200">
           <h1 className="font-display text-xl text-ink-900">
-            유튜브 요약 · 팩트체크 보고서
+            {hideFactCheck
+              ? "유튜브 요약 보고서"
+              : "유튜브 요약 · 팩트체크 보고서"}
           </h1>
           <p className="text-sm">제목 · {draft.meta.title}</p>
           <p className="text-sm">채널 · {draft.meta.channel}</p>
@@ -2105,7 +2132,7 @@ export function EditableReportPanel({
             )}
           </p>
         )}
-        {factcheckMode && (
+        {factcheckMode && !hideFactCheck && (
           <div className="print:hidden space-y-3">
             <p className="text-xs text-ink-500 rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
               팩트체크 탭입니다. DETAIL을 열어 답변·판정을 고칠 수 있습니다.
@@ -2126,7 +2153,7 @@ export function EditableReportPanel({
                 : "lg:grid-cols-[minmax(0,1fr)_minmax(16rem,20rem)]"
           }`}
         >
-          {factcheckMode && (
+          {factcheckMode && !hideFactCheck && (
             <div className="mt-0 lg:sticky lg:top-[calc(env(safe-area-inset-top,0px)+5rem)] print:hidden order-1">
               <ReportFactCheckToolbox
                 video={localVideo}
@@ -2454,6 +2481,7 @@ export function EditableReportPanel({
                         요약
                         {!organizeResult.parts.overview ? " (없음)" : ""}
                       </label>
+                      {!hideFactCheck && (
                       <label className="inline-flex items-center gap-1.5 cursor-pointer">
                         <input
                           type="checkbox"
@@ -2469,6 +2497,7 @@ export function EditableReportPanel({
                         팩트체크
                         {!organizeResult.parts.factChecks ? " (없음)" : ""}
                       </label>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2660,8 +2689,9 @@ export function EditableReportPanel({
                 </div>
               ) : (
                 <p className="text-xs text-ink-500">
-                  본문/팩트체크에서 사용한 이미지가 자동으로 모이며, 여기서 현재
-                  섹션으로 다시 넣을 수 있습니다.
+                  {hideFactCheck
+                    ? "본문에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."
+                    : "본문/팩트체크에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."}
                 </p>
               )}
             </div>
@@ -2929,7 +2959,7 @@ export function EditableReportPanel({
                       </div>
                     )}
 
-                    {sectionMarkers.length > 0 && (
+                    {sectionMarkers.length > 0 && !hideFactCheck && (
                       <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/80 p-3 space-y-2">
                         <p className="text-xs font-medium text-ink-500">
                           연결된 팩트체크 — 클릭하면 내용 확인·수정
@@ -3013,32 +3043,37 @@ export function EditableReportPanel({
               >
                 <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
                   <div className="flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void copyToClipboard(
-                          formatSectionText(draft, idx),
-                          "현재 섹션"
-                        )
-                      }
-                      className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
-                    >
-                      본문 복사
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void copyToClipboard(
-                          [formatSectionText(draft, idx), formatFactChecksText(draft)]
-                            .filter(Boolean)
-                            .join("\n\n"),
-                          "본문+팩트체크"
-                        )
-                      }
-                      className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
-                    >
-                      본문+FC 복사
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void copyToClipboard(
+                            formatSectionText(draft, idx),
+                            "현재 섹션"
+                          )
+                        }
+                        className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
+                      >
+                        본문 복사
+                      </button>
+                      {!hideFactCheck && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyToClipboard(
+                              [
+                                formatSectionText(draft, idx),
+                                formatFactChecksText(draft),
+                              ]
+                                .filter(Boolean)
+                                .join("\n\n"),
+                              "본문+팩트체크"
+                            )
+                          }
+                          className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-600 hover:border-accent hover:text-accent"
+                        >
+                          본문+FC 복사
+                        </button>
+                      )}
                     {draft.sections.length > 1 && (
                       <button
                         type="button"
@@ -3059,7 +3094,7 @@ export function EditableReportPanel({
                   />
                 )}
 
-                {unmatched.length > 0 && (
+                {unmatched.length > 0 && !hideFactCheck && (
                   <ul className="space-y-2 print:hidden">
                     {unmatched.map((m) => {
                       const isOpen = openFcKey === m.key;
@@ -3175,7 +3210,7 @@ export function EditableReportPanel({
                     </div>
                   )}
 
-                {unmatched.length > 0 && (
+                {unmatched.length > 0 && !hideFactCheck && (
                   <ul className="hidden print:block space-y-1 text-sm">
                     {unmatched.map((m) => (
                       <li key={`print-${m.key}`}>
@@ -3238,7 +3273,7 @@ export function EditableReportPanel({
         )}
 
         {/* 편집 모드: F 상세 모달 / 보기 모드는 인라인 DETAIL */}
-        {openMarker && (editing || factcheckMode) && (
+        {openMarker && (editing || factcheckMode) && !hideFactCheck && (
           <FactCheckDetailPanel
             presentation="modal"
             label={`F${openMarker.n}`}
@@ -3304,7 +3339,7 @@ export function EditableReportPanel({
         )}
           </div>
 
-          {editing && (
+          {editing && !hideFactCheck && (
           <div className="mt-4 lg:mt-0 lg:sticky lg:top-[calc(env(safe-area-inset-top,0px)+5rem)] print:hidden">
             <ReportFactCheckToolbox
               video={localVideo}
@@ -3329,11 +3364,13 @@ export function EditableReportPanel({
       </section>
 
       {/* 인쇄·PDF용 부록 — 화면에서는 숨김 */}
+      {!hideFactCheck && (
       <FactCheckAppendix
         markers={markers}
         draft={draft}
         fcByItem={fcByItem}
       />
+      )}
       {editing && mode === "body" && (
         <MobileFormatBubble
           active

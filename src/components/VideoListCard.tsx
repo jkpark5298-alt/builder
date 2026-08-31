@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
 import { canExportArtifacts } from "@/lib/factcheck-client";
-import { isReportInput } from "@/lib/input-mode";
+import { isFactCheckPass, isReportInput } from "@/lib/input-mode";
 import { isReportInputDraft, libraryCardLabel, libraryStage } from "@/lib/library";
 import { formatTagList } from "@/lib/tags";
 import { ReportActions } from "@/components/ReportActions";
@@ -80,6 +80,11 @@ export function VideoListCard({
             >
               {libraryCardLabel(video)}
             </span>
+            {isFactCheckPass(video) && (
+              <span className="text-xs px-2 py-0.5 rounded-md bg-ink-100 text-ink-700">
+                팩트체크 pass
+              </span>
+            )}
             {isReportInput(video) && (
               <span className="text-xs px-2 py-0.5 rounded-md bg-ink-900/90 text-white">
                 팩트체크보고서
@@ -104,12 +109,19 @@ export function VideoListCard({
           <p className="text-xs text-ink-400 mt-2">
             {inputDraft
               ? `스크립트 ${(video.transcript?.length ?? 0).toLocaleString()}자 · 입력 중`
-              : `항목 ${video.items.length} · 검증 ${video.factChecks.length}${
-                  listKind === "draft" &&
-                  video.status === "awaiting_factcheck"
-                    ? " · 팩트체크 진행 중"
-                    : ""
-                }`}
+              : isFactCheckPass(video)
+                ? `요약 ${(video.overview?.length ?? 0).toLocaleString()}자${
+                    listKind === "draft" &&
+                    video.status === "awaiting_factcheck"
+                      ? " · 요약 입력"
+                      : ""
+                  }`
+                : `항목 ${video.items.length} · 검증 ${video.factChecks.length}${
+                    listKind === "draft" &&
+                    video.status === "awaiting_factcheck"
+                      ? " · 팩트체크 진행 중"
+                      : ""
+                  }`}
           </p>
         </div>
       </a>

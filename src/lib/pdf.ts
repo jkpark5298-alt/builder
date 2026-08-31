@@ -378,7 +378,13 @@ export async function buildReportPdf(
 
   const report = video.report;
   setFace("bold");
-  writeWrapped("유튜브 요약 · 팩트체크 보고서", 16, 4);
+  writeWrapped(
+    video.skipFactCheck
+      ? "유튜브 요약 보고서"
+      : "유튜브 요약 · 팩트체크 보고서",
+    16,
+    4
+  );
   setFace("normal");
 
   writeWrapped(`제목: ${video.title}`, 12, 6);
@@ -402,7 +408,9 @@ export async function buildReportPdf(
 
   if (!report) {
     writeWrapped(
-      "보고서가 아직 준비되지 않았습니다. 팩트체크를 먼저 완료해 주세요."
+      video.skipFactCheck
+        ? "보고서가 아직 준비되지 않았습니다. 요약을 완료한 뒤 다시 시도하세요."
+        : "보고서가 아직 준비되지 않았습니다. 팩트체크를 먼저 완료해 주세요."
     );
     return new Uint8Array(doc.output("arraybuffer"));
   }
@@ -459,7 +467,7 @@ export async function buildReportPdf(
   }
 
   const fcMarkers = collectFcMarkers(report);
-  if (fcMarkers.length > 0) {
+  if (fcMarkers.length > 0 && !video.skipFactCheck) {
     doc.addPage();
     y = margin + 18;
     setFace("bold");

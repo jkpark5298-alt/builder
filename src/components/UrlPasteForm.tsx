@@ -231,7 +231,7 @@ export function UrlPasteForm() {
       }
 
       cacheVideoSnapshot(data.video);
-      setStatus("완료. 팩트체크 화면으로 이동합니다…");
+      setStatus("완료. 요약 화면으로 이동합니다…");
       goToVideo(data.video.id);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -410,7 +410,8 @@ export function UrlPasteForm() {
                     3. 스크립트로 요약 · 검증
                   </p>
                   <p className="text-xs text-ink-600 mt-0.5">
-                    하단 초록/주황 버튼을 누르면 요약이 시작됩니다
+                    하단 버튼을 누르면 요약이 시작됩니다. 요약 후 팩트체크
+                    실시 또는 pass를 고릅니다
                   </p>
                 </div>
               </li>

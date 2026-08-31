@@ -75,7 +75,7 @@ export function libraryStage(
 }
 
 export function libraryCardLabel(
-  video: Pick<VideoRecord, "status" | "items" | "factChecks">
+  video: Pick<VideoRecord, "status" | "items" | "factChecks" | "skipFactCheck">
 ): string {
   switch (libraryStage(video)) {
       case "complete":
@@ -85,7 +85,7 @@ export function libraryCardLabel(
     case "report_input_draft":
       return "입력 중";
     case "factcheck_draft":
-      return "임시 저장";
+      return video.skipFactCheck ? "요약 입력" : "임시 저장";
     case "error":
       return "오류";
     case "processing":

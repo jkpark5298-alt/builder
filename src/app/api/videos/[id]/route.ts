@@ -2,10 +2,12 @@ import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { factCheckProgress } from "@/lib/factcheck";
 import {
+  itemsFromManualOverview,
   rebuildFactChecksFromOverview,
   redraftPendingFactChecks,
 } from "@/lib/pipeline";
 import {
+  applyFactCheckPass,
   finalizeReport,
   saveReportInputDraft,
   startReportFromDraft,
@@ -222,6 +224,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
      */
     keepReportBody?: boolean;
     completeManual?: boolean;
+    /** 유튜브 요약 이후: 팩트체크 실시 | pass(AI 보고서 초안) */
+    factCheckDecision?: "do" | "pass";
     /** true면 필수 미완료 항목이 있어도 완료 1건 이상이면 보고서 생성 */
     allowPartialFactCheck?: boolean;
     /** 미완료 FC만 인앱 LLM 초안 재생성 */
@@ -842,6 +846,43 @@ async function patchVideo(req: Request, ctx: Ctx) {
       return jsonVideo(saved, { mode: "overview_preserve_fc" });
     }
 
+    if (next.skipFactCheck) {
+      const parsed = itemsFromManualOverview(overview, next.videoId);
+      next = {
+        ...next,
+        overview,
+        summaryBullets: parsed.summaryBullets.length
+          ? parsed.summaryBullets
+          : body.updateOverview.summaryBullets
+              ?.map((b) => b.trim())
+              .filter(Boolean) ?? next.summaryBullets,
+        summarySource: "manual",
+        items: parsed.items.map((i) => ({ ...i, needsFactCheck: false })),
+        factChecks: [],
+        factCheckNotice: undefined,
+        factCheckRevisionNotice: null,
+        errorMessage: undefined,
+        tags: Array.from(new Set([...next.tags, "fc-pass"])),
+        updatedAt: new Date().toISOString(),
+      };
+      if ((next.status === "ready" || next.status === "awaiting_factcheck") && next.report) {
+        next.report = {
+          ...next.report,
+          summaryExcerpt:
+            overview
+              .split(/\n+/)
+              .map((l) => l.trim())
+              .filter(Boolean)
+              .slice(0, 8)
+              .join("\n") || next.report.summaryExcerpt,
+        };
+        const saved = await upsertVideo(next, expectedUpdatedAt);
+        return jsonVideo(saved, { mode: "overview_pass" });
+      }
+      next = await finalizeReport(next, undefined, expectedUpdatedAt);
+      return jsonVideo(next, { mode: "overview_pass_finalize" });
+    }
+
     // 수동 요약 완료: 팩트체크·보고서를 새 요약에 맞춰 자동 갱신
     const rebuilt = rebuildFactChecksFromOverview(
       overview,
@@ -1123,11 +1164,40 @@ async function patchVideo(req: Request, ctx: Ctx) {
     return jsonVideo(saved);
   }
 
+  if (body.factCheckDecision === "do" || body.factCheckDecision === "pass") {
+    if (next.status !== "awaiting_factcheck") {
+      return NextResponse.json(
+        { error: "요약이 끝난 뒤에 팩트체크 여부를 선택할 수 있습니다." },
+        { status: 400 }
+      );
+    }
+    if ((next.overview ?? "").trim().length < 40) {
+      return NextResponse.json(
+        { error: "요약을 먼저 완료해 주세요." },
+        { status: 400 }
+      );
+    }
+    if (body.factCheckDecision === "do") {
+      next = {
+        ...next,
+        factCheckDecision: "do",
+        skipFactCheck: false,
+        updatedAt: new Date().toISOString(),
+      };
+      const saved = await upsertVideo(next, expectedUpdatedAt);
+      return jsonVideo(saved, { mode: "factcheck_do" });
+    }
+    next = await applyFactCheckPass(next, expectedUpdatedAt);
+    return jsonVideo(next, { mode: "factcheck_pass" });
+  }
+
   if (body.completeManual) {
     const progress = factCheckProgress(next);
     const allowPartial = body.allowPartialFactCheck === true;
+    const skipFc =
+      next.skipFactCheck === true || next.factCheckDecision === "pass";
 
-    if (!progress.gateComplete) {
+    if (!skipFc && !progress.gateComplete) {
       if (!allowPartial || progress.doneCount < 1) {
         const msg =
           progress.doneCount < 1
@@ -1140,9 +1210,16 @@ async function patchVideo(req: Request, ctx: Ctx) {
       }
     }
 
-    const incompleteCount = progress.complete
-      ? 0
-      : progress.total - progress.doneCount;
+    if (skipFc) {
+      next = {
+        ...next,
+        items: next.items.map((i) => ({ ...i, needsFactCheck: false })),
+        factChecks: [],
+      };
+    }
+
+    const incompleteCount =
+      skipFc || progress.complete ? 0 : progress.total - progress.doneCount;
 
     next = await finalizeReport(
       next,

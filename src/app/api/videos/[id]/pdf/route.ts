@@ -17,8 +17,9 @@ export async function GET(req: Request, ctx: Ctx) {
   if (video.status !== "ready" || !video.report) {
     return NextResponse.json(
       {
-        error:
-          "보고서가 아직 없습니다. 수동 팩트체크를 완료한 뒤 다시 시도하세요.",
+        error: video.skipFactCheck
+          ? "보고서가 아직 없습니다. 요약을 완료한 뒤 다시 시도하세요."
+          : "보고서가 아직 없습니다. 수동 팩트체크를 완료한 뒤 다시 시도하세요.",
       },
       { status: 400 }
     );

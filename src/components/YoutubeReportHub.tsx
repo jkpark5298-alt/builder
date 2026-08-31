@@ -123,7 +123,7 @@ export function YoutubeReportHub({
               정보/요약 입력
             </h2>
             <p className="text-sm text-ink-500 mt-0.5">
-              유튜브 URL · 자막 자동 가져오기 (기존 기능 그대로)
+              유튜브 URL · 자막 자동 가져오기 · 요약 후 팩트체크 또는 pass
             </p>
           </div>
         </div>
@@ -224,7 +224,7 @@ export function YoutubeReportHub({
             정보/요약 입력
           </span>
           <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            URL 붙여넣기 · 자막 자동 가져오기 · 기존 입력 화면
+            URL 붙여넣기 · 자막 자동 가져오기 · 요약 후 팩트체크 또는 pass
           </span>
           {latestWorkFive.length > 0 ? (
             <ol className="mt-3 space-y-1 text-xs font-medium text-accent">

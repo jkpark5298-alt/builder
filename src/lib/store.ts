@@ -82,6 +82,13 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
   return {
     ...raw,
     inputMode,
+    skipFactCheck: raw.skipFactCheck === true,
+    factCheckDecision:
+      raw.factCheckDecision === "pass" || raw.factCheckDecision === "do"
+        ? raw.factCheckDecision
+        : raw.skipFactCheck === true
+          ? "pass"
+          : undefined,
     description: raw.description ?? "",
     chapters: raw.chapters ?? [],
     summaryBullets: raw.summaryBullets ?? [],

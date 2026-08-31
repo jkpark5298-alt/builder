@@ -14,6 +14,32 @@ export function isReportInput(
   return video.inputMode === "report";
 }
 
+/** 유튜브 팩트체크 pass — 검증 UI·게이트를 건너뛴다 */
+export function isFactCheckPass(
+  video: Pick<VideoRecord, "skipFactCheck" | "factCheckDecision">
+): boolean {
+  return video.skipFactCheck === true || video.factCheckDecision === "pass";
+}
+
+/** 유튜브 요약 이후, 팩트체크 실시 vs pass 를 아직 고르지 않음 */
+export function needsFactCheckDecision(
+  video: Pick<
+    VideoRecord,
+    | "inputMode"
+    | "status"
+    | "overview"
+    | "skipFactCheck"
+    | "factCheckDecision"
+  >
+): boolean {
+  if ((video.inputMode ?? "youtube") !== "youtube") return false;
+  if (video.status !== "awaiting_factcheck") return false;
+  if ((video.overview ?? "").trim().length < 40) return false;
+  if (isFactCheckPass(video)) return false;
+  if (video.factCheckDecision === "do") return false;
+  return true;
+}
+
 /** 팩트체크보고서 항목용 썸네일 (외부 URL 없음) */
 export function reportThumbnailUrl(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><rect fill="#1a2430" width="480" height="270"/><rect x="40" y="50" width="400" height="170" rx="12" fill="#2a3648"/><text x="240" y="125" text-anchor="middle" fill="#f4f6f8" font-family="system-ui,sans-serif" font-size="20" font-weight="600">팩트체크보고서</text><text x="240" y="155" text-anchor="middle" fill="#c45c26" font-family="system-ui,sans-serif" font-size="14">직접 입력 · 요약 · 팩트체크</text></svg>`;

@@ -84,14 +84,40 @@ export async function writeReportWithLlm(
     | "updatedAt"
     | "createdAt"
     | "inputMode"
+    | "skipFactCheck"
+    | "transcript"
   >
 ): Promise<TypedReport | null> {
   if (!hasLlm()) return null;
 
-  const fcItems = video.items.filter((i) => i.needsFactCheck);
+  const skipFc = video.skipFactCheck === true;
+  const fcItems = skipFc
+    ? []
+    : video.items.filter((i) => i.needsFactCheck);
   const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
 
-  const system = `당신은 한국어 보고서 작성자입니다.
+  const system = skipFc
+    ? `당신은 한국어 보고서 작성자입니다.
+유튜브 영상의 **상세 요약**을 바탕으로, 독자가 영상 전체를 이해하도록
+논리 흐름이 분명하고 구체적인 보고서를 작성하세요.
+
+규칙:
+- 요약의 대주제·소주제·수치·고유명사·인과·결론을 빠짐없이 반영하세요.
+- 요약에 없는 사실을 새로 만들지 마세요. 원문 발췌가 있으면 요약과 맞춰 보강만 하세요.
+- 팩트체크·검증 판정·출처 부록은 쓰지 마세요.
+- 섹션은 내용에 맞게 4~8개. 각 body는 3~8문장으로 상세하고 명확하게 쓰세요.
+- 첫 섹션은 "결론"(핵심을 먼저). 이후는 요약의 대주제 순서를 따르세요.
+- body는 평문(마크다운 ### 금지). 문단은 빈 줄로 구분.
+- relatedItemIds는 항상 빈 배열 [] 로 두세요.
+
+JSON:
+{
+  "summaryExcerpt": string,
+  "sections": [
+    { "heading": string, "body": string, "relatedItemIds": string[] }
+  ]
+}`
+    : `당신은 한국어 보고서 작성자입니다.
 입력된 **요약**과 **팩트체크 결과**만 근거로, 고정 양식(역사/주식 템플릿)에 억지로 맞추지 말고
 이번 내용에 맞는 목차·서술 깊이의 보고서를 작성하세요.
 
@@ -126,18 +152,28 @@ JSON:
         channel: video.channel,
         overview: video.overview?.slice(0, 12_000),
         summaryBullets: video.summaryBullets?.slice(0, 16),
-        factChecks: fcItems.map((i) => {
-          const fc = fcMap.get(i.id);
-          return {
-            itemId: i.id,
-            statement: i.statement,
-            detail: i.detail,
-            verdict: fc?.verdict ?? "pending",
-            answer: normalizeAiAnswer(fc?.explanation || "").slice(0, 2_500),
-          };
-        }),
+        ...(skipFc
+          ? {
+              transcriptExcerpt: (video.transcript ?? "").slice(0, 8_000),
+            }
+          : {
+              factChecks: fcItems.map((i) => {
+                const fc = fcMap.get(i.id);
+                return {
+                  itemId: i.id,
+                  statement: i.statement,
+                  detail: i.detail,
+                  verdict: fc?.verdict ?? "pending",
+                  answer: normalizeAiAnswer(fc?.explanation || "").slice(0, 2_500),
+                };
+              }),
+            }),
       }),
-      { maxTokens: 7_000, temperature: 0.35, timeoutMs: 120_000 }
+      {
+        maxTokens: skipFc ? 8_000 : 7_000,
+        temperature: skipFc ? 0.4 : 0.35,
+        timeoutMs: 120_000,
+      }
     );
 
     const rawSections = llm?.sections?.filter(
@@ -401,7 +437,8 @@ export function syncFactChecksIntoExistingReport(
  * 1순위: 글쓰기 AI → 실패 시 요약·FC 조립(내용 적응형, 기존 buildTypedReport)
  */
 export async function buildReportDocument(
-  video: Parameters<typeof buildTypedReport>[0]
+  video: Parameters<typeof buildTypedReport>[0] &
+    Pick<VideoRecord, "skipFactCheck" | "transcript">
 ): Promise<ReportBuildResult> {
   const llmReport = await writeReportWithLlm(video);
   if (llmReport?.sections?.length) {
@@ -413,11 +450,16 @@ export async function buildReportDocument(
     };
   }
 
+  const skipFc = video.skipFactCheck === true;
   return {
     report: buildTypedReport(video),
     source: "assembled",
-    notice: !hasLlm()
-      ? "OPENAI_API_KEY가 없어 글쓰기 AI를 쓰지 못했습니다. 요약·팩트체크 결과로 보고서를 조립했습니다."
-      : "글쓰기 AI 작성에 실패해, 요약·팩트체크 결과로 내용 적응형 보고서를 조립했습니다. (추가 LLM 비용 없음)",
+    notice: skipFc
+      ? !hasLlm()
+        ? "OPENAI_API_KEY가 없어 글쓰기 AI를 쓰지 못했습니다. 요약으로 보고서 초안을 조립했습니다."
+        : "글쓰기 AI 작성에 실패해, 요약으로 상세 보고서 초안을 조립했습니다. (추가 LLM 비용 없음)"
+      : !hasLlm()
+        ? "OPENAI_API_KEY가 없어 글쓰기 AI를 쓰지 못했습니다. 요약·팩트체크 결과로 보고서를 조립했습니다."
+        : "글쓰기 AI 작성에 실패해, 요약·팩트체크 결과로 내용 적응형 보고서를 조립했습니다. (추가 LLM 비용 없음)",
   };
 }

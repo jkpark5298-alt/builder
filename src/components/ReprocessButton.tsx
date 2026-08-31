@@ -4,14 +4,22 @@ import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export function ReprocessButton({ videoId }: { videoId: string }) {
+export function ReprocessButton({
+  videoId,
+  skipFactCheck = false,
+}: {
+  videoId: string;
+  skipFactCheck?: boolean;
+}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
   async function onClick() {
     if (
       !confirm(
-        "저장된 스크립트로 상세 요약을 다시 만들까요?\n1~3분 걸릴 수 있습니다. (기존 팩트체크·보고서는 초기됩니다)"
+        skipFactCheck
+          ? "저장된 스크립트로 상세 요약을 다시 만들까요?\n1~3분 걸릴 수 있습니다. (기존 보고서는 초기됩니다)"
+          : "저장된 스크립트로 상세 요약을 다시 만들까요?\n1~3분 걸릴 수 있습니다. (기존 팩트체크·보고서는 초기됩니다)"
       )
     ) {
       return;
