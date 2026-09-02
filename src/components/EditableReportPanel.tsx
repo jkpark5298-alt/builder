@@ -127,39 +127,126 @@ const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "�
 
 function UrlArticleImageGallery({
   urls,
-  onRemove,
+  onRemoveMany,
 }: {
   urls: string[];
-  onRemove?: (src: string) => void;
+  onRemoveMany?: (srcs: string[]) => void;
 }) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [preview, setPreview] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((u) => urls.includes(u)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [urls]);
+
+  useEffect(() => {
+    if (preview == null) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setPreview(null);
+      if (e.key === "ArrowRight") {
+        setPreview((i) =>
+          i == null ? i : Math.min(urls.length - 1, i + 1)
+        );
+      }
+      if (e.key === "ArrowLeft") {
+        setPreview((i) => (i == null ? i : Math.max(0, i - 1)));
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [preview, urls.length]);
+
+  function toggle(src: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(src)) next.delete(src);
+      else next.add(src);
+      return next;
+    });
+  }
+
+  const allOn = urls.length > 0 && urls.every((u) => selected.has(u));
+
   return (
     <div className="rounded-xl border border-ink-200 bg-white p-3 space-y-2">
-      <p className="text-sm font-medium text-ink-900">
-        가져온 본문 이미지
-        {urls.length ? ` · ${urls.length}장` : ""}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-ink-900">
+          가져온 본문 이미지
+          {urls.length ? ` · ${urls.length}장` : ""}
+          {selected.size ? ` · ${selected.size}장 선택` : ""}
+        </p>
+        {urls.length > 0 && onRemoveMany && (
+          <div className="flex flex-wrap gap-1.5 print:hidden">
+            <button
+              type="button"
+              onClick={() =>
+                setSelected(allOn ? new Set() : new Set(urls))
+              }
+              className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700"
+            >
+              {allOn ? "선택 해제" : "모두 선택"}
+            </button>
+            <button
+              type="button"
+              disabled={!selected.size}
+              onClick={() => onRemoveMany([...selected])}
+              className="inline-flex items-center gap-1 rounded-md border border-verify-false/40 bg-white px-2 py-1 text-xs font-medium text-verify-false disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              선택 삭제
+            </button>
+          </div>
+        )}
+      </div>
       {urls.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {urls.map((src, i) => (
-            <div key={`${src}-${i}`} className="relative group">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={src}
-                alt={`본문 이미지 ${i + 1}`}
-                className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
-              />
-              {onRemove && (
+          {urls.map((src, i) => {
+            const on = selected.has(src);
+            return (
+              <div
+                key={`${src}-${i}`}
+                className={`relative rounded-lg border overflow-hidden ${
+                  on ? "border-accent ring-2 ring-accent/40" : "border-ink-200"
+                }`}
+              >
                 <button
                   type="button"
-                  title="사진 지우기"
-                  onClick={() => onRemove(src)}
-                  className="absolute top-1 right-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-ink-200 bg-white/95 text-verify-false shadow-sm hover:bg-verify-false hover:text-white"
+                  title="크게 보기"
+                  onClick={() => setPreview(i)}
+                  className="block w-full"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={src}
+                    alt={`본문 이미지 ${i + 1}`}
+                    className="aspect-video w-full object-cover bg-ink-50"
+                  />
                 </button>
-              )}
-            </div>
-          ))}
+                {onRemoveMany && (
+                  <label className="absolute top-1 left-1 print:hidden inline-flex h-7 w-7 items-center justify-center rounded-md border border-ink-200 bg-white/95 shadow-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggle(src)}
+                      className="sr-only"
+                    />
+                    <span
+                      className={`flex h-4 w-4 items-center justify-center rounded-sm border ${
+                        on
+                          ? "border-accent bg-accent text-white"
+                          : "border-ink-400 bg-white"
+                      }`}
+                    >
+                      {on && <Check className="h-3 w-3" />}
+                    </span>
+                  </label>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="text-xs text-ink-500">
@@ -168,8 +255,59 @@ function UrlArticleImageGallery({
         </p>
       )}
       <p className="text-xs text-ink-500">
-        보고서 본문 아래 사진입니다. X로 지울 수 있습니다.
+        사진을 누르면 확대됩니다. 왼쪽 칸을 선택해 여러 장을 지울 수 있습니다.
       </p>
+      {preview != null && urls[preview] && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 print:hidden"
+          onClick={() => setPreview(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="사진 확대"
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 rounded-full border border-white/40 bg-black/40 p-2 text-white"
+            onClick={() => setPreview(null)}
+            aria-label="닫기"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {preview > 0 && (
+            <button
+              type="button"
+              className="absolute left-3 rounded-full border border-white/40 bg-black/40 p-2 text-white"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreview(preview - 1);
+              }}
+              aria-label="이전 사진"
+            >
+              <ChevronUp className="h-5 w-5 -rotate-90" />
+            </button>
+          )}
+          {preview < urls.length - 1 && (
+            <button
+              type="button"
+              className="absolute right-3 rounded-full border border-white/40 bg-black/40 p-2 text-white"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreview(preview + 1);
+              }}
+              aria-label="다음 사진"
+            >
+              <ChevronDown className="h-5 w-5 -rotate-90" />
+            </button>
+          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={urls[preview]}
+            alt={`본문 이미지 ${preview + 1}`}
+            className="max-h-[90vh] max-w-[min(96vw,1200px)] object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1508,15 +1646,17 @@ export function EditableReportPanel({
     }
   }
 
-  async function removeArticleImage(src: string) {
-    const target = src.trim();
-    if (!target) return;
-    if (!confirm("이 사진을 지울까요?")) return;
+  async function removeArticleImages(srcs: string[]) {
+    const drop = Array.from(
+      new Set(srcs.map((s) => s.trim()).filter(Boolean))
+    );
+    if (!drop.length) return;
+    if (!confirm(`사진 ${drop.length}장을 지울까요?`)) return;
     try {
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ removeArticleImages: [target] }),
+        body: JSON.stringify({ removeArticleImages: drop }),
       });
       const data = (await res.json()) as { error?: string; video?: VideoRecord };
       if (!res.ok) throw new Error(data.error || "사진을 지우지 못했습니다.");
@@ -1526,15 +1666,19 @@ export function EditableReportPanel({
           setDraft(normalizeReportImageRefs(data.video.report));
         } else {
           setDraft((prev) =>
-            prev ? dropUrlsFromReport(prev, [target]) : prev
+            prev ? dropUrlsFromReport(prev, drop) : prev
           );
         }
       }
-      void releaseMediaUrls([target]);
+      void releaseMediaUrls(drop);
       router.refresh();
     } catch (e) {
       alert(e instanceof Error ? e.message : "사진을 지우지 못했습니다.");
     }
+  }
+
+  async function removeArticleImage(src: string) {
+    await removeArticleImages([src]);
   }
 
   async function addImagesToRoom(files: File[]) {
@@ -3205,7 +3349,7 @@ export function EditableReportPanel({
         {urlArticle && editing && (
           <UrlArticleImageGallery
             urls={urlArticleImages}
-            onRemove={(src) => void removeArticleImage(src)}
+            onRemoveMany={(srcs) => void removeArticleImages(srcs)}
           />
         )}
         <div
@@ -3443,7 +3587,7 @@ export function EditableReportPanel({
           {urlArticle && !editing && (
             <UrlArticleImageGallery
               urls={urlArticleImages}
-              onRemove={(src) => void removeArticleImage(src)}
+              onRemoveMany={(srcs) => void removeArticleImages(srcs)}
             />
           )}
         </div>

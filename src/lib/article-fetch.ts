@@ -3,9 +3,10 @@ import { unwrapSoftLineBreaks } from "./paste";
 
 export const ARTICLE_FETCH_MAX_HTML_BYTES = 2 * 1024 * 1024;
 export const ARTICLE_FETCH_MAX_IMAGES = 16;
-export const ARTICLE_FETCH_IMAGE_MAX_BYTES = 1_000_000;
+/** 페이지에서 받은 바이트를 재압축하지 않고 저장. 이보다 크면 건너뜀 */
+export const ARTICLE_FETCH_IMAGE_MAX_BYTES = 4_000_000;
 const HTML_TIMEOUT_MS = 20_000;
-const IMAGE_TIMEOUT_MS = 12_000;
+const IMAGE_TIMEOUT_MS = 20_000;
 const MAX_REDIRECTS = 5;
 
 const BROWSER_UA =
@@ -264,10 +265,12 @@ function collectImageUrls(html: string, base: URL): string[] {
     const h = parseInt(attr(tag, "height") || "0", 10);
     if ((w > 0 && w < 40) || (h > 0 && h < 40)) continue;
     const raw =
-      attr(tag, "src") ||
-      pickSrcset(attr(tag, "srcset")) ||
-      attr(tag, "data-src") ||
+      pickSrcset(attr(tag, "srcset") || attr(tag, "data-srcset")) ||
       attr(tag, "data-original") ||
+      attr(tag, "data-full") ||
+      attr(tag, "data-large") ||
+      attr(tag, "src") ||
+      attr(tag, "data-src") ||
       attr(tag, "data-lazy-src") ||
       attr(tag, "data-url");
     const abs = raw ? absoluteUrl(base, raw) : null;
