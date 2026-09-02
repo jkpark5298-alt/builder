@@ -8,7 +8,7 @@ import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
 import { dedupeTexts, normalizeAiAnswer } from "./text-format";
 import { REPORT_TYPE_LABELS } from "./types";
-import { reportSourceLink } from "./input-mode";
+import { isUrlArticleInput, isYoutubeInput, reportSourceLink } from "./input-mode";
 import type {
   FactCheckResult,
   SummaryItem,
@@ -88,6 +88,8 @@ export async function writeReportWithLlm(
     | "inputMode"
     | "skipFactCheck"
     | "transcript"
+    | "tags"
+    | "transcriptSource"
   >
 ): Promise<TypedReport | null> {
   if (!hasLlm()) return null;
@@ -97,10 +99,15 @@ export async function writeReportWithLlm(
     ? []
     : video.items.filter((i) => i.needsFactCheck);
   const fcMap = new Map(video.factChecks.map((f) => [f.itemId, f]));
+  const sourceNoun = isYoutubeInput(video)
+    ? "유튜브 영상"
+    : isUrlArticleInput(video)
+      ? "웹 기사·본문"
+      : "입력된 내용";
 
   const system = skipFc
     ? `당신은 한국어 보고서 작성자입니다.
-유튜브 영상의 **상세 요약**을 바탕으로, 독자가 영상 전체를 이해하도록
+${sourceNoun}의 **상세 요약**을 바탕으로, 독자가 내용 전체를 이해하도록
 논리 흐름이 분명하고 구체적인 보고서를 작성하세요.
 
 규칙:
@@ -152,6 +159,7 @@ JSON:
       JSON.stringify({
         title: video.title,
         channel: video.channel,
+        sourceUrl: video.sourceUrl,
         overview: video.overview?.slice(0, 12_000),
         summaryBullets: video.summaryBullets?.slice(0, 16),
         ...(skipFc
@@ -435,7 +443,10 @@ export function syncFactChecksIntoExistingReport(
  */
 export async function buildReportDocument(
   video: Parameters<typeof buildTypedReport>[0] &
-    Pick<VideoRecord, "skipFactCheck" | "transcript">
+    Pick<
+      VideoRecord,
+      "skipFactCheck" | "transcript" | "tags" | "transcriptSource"
+    >
 ): Promise<ReportBuildResult> {
   const llmReport = await writeReportWithLlm(video);
   if (llmReport?.sections?.length) {

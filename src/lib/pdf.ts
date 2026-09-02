@@ -12,7 +12,7 @@ import { parseBodySImageSlots } from "./report-body-s-slots";
 import { sectionSlotCapacity } from "./report-images";
 import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
-import { reportSourceLink } from "./input-mode";
+import { reportDocumentTitle, reportSourceLink } from "./input-mode";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 
@@ -380,9 +380,7 @@ export async function buildReportPdf(
   const report = video.report;
   setFace("bold");
   writeWrapped(
-    video.skipFactCheck
-      ? "유튜브 요약 보고서"
-      : "유튜브 요약 · 팩트체크 보고서",
+    reportDocumentTitle(video),
     16,
     4
   );

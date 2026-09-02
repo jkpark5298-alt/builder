@@ -41,7 +41,7 @@ import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { preferPlainPaste } from "@/lib/device";
-import { isFactCheckPass } from "@/lib/input-mode";
+import { isFactCheckPass, reportDocumentTitle } from "@/lib/input-mode";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
   bindSectionSlotUrls,
@@ -2098,9 +2098,7 @@ export function EditableReportPanel({
         {/* 인쇄·PDF용 보고서 표지 메타 */}
         <div className="print-only space-y-1 mb-6 pb-4 border-b border-ink-200">
           <h1 className="font-display text-xl text-ink-900">
-            {hideFactCheck
-              ? "유튜브 요약 보고서"
-              : "유튜브 요약 · 팩트체크 보고서"}
+            {reportDocumentTitle(localVideo)}
           </h1>
           <p className="text-sm">제목 · {draft.meta.title}</p>
           <p className="text-sm">채널 · {draft.meta.channel}</p>

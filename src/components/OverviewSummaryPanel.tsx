@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { factCheckProgress } from "@/lib/factcheck-client";
-import { isFactCheckPass, isYoutubeInput } from "@/lib/input-mode";
+import { isFactCheckPass, isUrlArticleInput, isYoutubeInput } from "@/lib/input-mode";
 import { normalizeAiOverviewPaste } from "@/lib/text-format";
 
 /** API와 동일 — 클라이언트에서 unpdf를 끌어오지 않도록 상수만 둠 */
@@ -188,7 +188,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
         setHint("요약만 저장했습니다. 기존 팩트체크는 유지됩니다.");
       } else if (fcPass || data.mode === "overview_pass_finalize") {
         setHint("요약 완료. 보고서를 만들었습니다.");
-      } else if (isYoutubeInput(video)) {
+      } else if (isYoutubeInput(video) || isUrlArticleInput(video)) {
         setHint(
           "요약 완료. 아래에서 팩트체크 실시 또는 pass를 고르세요."
         );

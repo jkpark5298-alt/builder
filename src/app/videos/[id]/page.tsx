@@ -112,18 +112,19 @@ export default async function VideoDetailPage({
   const fcPass = isFactCheckPass(video);
   const showFcChoice = needsFactCheckDecision(video);
   const summaryStepLabel = isYoutube ? "유튜브 내용 요약" : "내용 요약";
+  const writeStepLabel = isYoutube ? "유형 보고서" : "보고서 작성";
 
   const stepItems = fcPass
     ? [
         { n: "1", t: summaryStepLabel, on: true },
-        { n: "2", t: "유형 보고서", on: ready || Boolean(video.report) },
+        { n: "2", t: writeStepLabel, on: ready || Boolean(video.report) },
         { n: "3", t: "인포 이미지·공유", on: ready },
       ]
     : showFcChoice
     ? [
         { n: "1", t: summaryStepLabel, on: true },
         { n: "2", t: "팩트체크 또는 pass", on: true },
-        { n: "3", t: "유형 보고서", on: false },
+        { n: "3", t: writeStepLabel, on: false },
         { n: "4", t: "인포 이미지·공유", on: false },
       ]
     : historyFlow
@@ -141,7 +142,7 @@ export default async function VideoDetailPage({
     : [
         { n: "1", t: summaryStepLabel, on: true },
         { n: "2", t: "팩트체크 정리", on: awaiting || ready },
-        { n: "3", t: "유형 보고서", on: ready },
+        { n: "3", t: writeStepLabel, on: ready },
         { n: "4", t: "인포 이미지·공유", on: ready },
       ];
 
@@ -428,7 +429,13 @@ export default async function VideoDetailPage({
               ) : null}
               <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
                 <h2 className="font-display text-lg sm:text-xl mb-3">
-                  {fcPass ? "2. 보고서" : historyFlow ? "4. 확정 보고서" : "보고서"}
+                  {fcPass
+                    ? isYoutube
+                      ? "2. 보고서"
+                      : "2. 보고서 작성"
+                    : historyFlow
+                      ? "4. 확정 보고서"
+                      : "보고서"}
                 </h2>
                 <ReportActions video={video} />
               </div>

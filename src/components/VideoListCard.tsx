@@ -33,8 +33,14 @@ export function VideoListCard({
     if (!confirm(`「${video.title}」을(를) 삭제할까요?`)) return;
     setBusy(true);
     try {
-      await fetch(`/api/videos/${video.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/videos/${video.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || "삭제에 실패했습니다.");
+      }
       router.refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     } finally {
       setBusy(false);
     }

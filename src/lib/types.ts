@@ -186,12 +186,12 @@ export interface VideoRecord {
   /** youtube: URL·자막 자동 수집 / report: 스크립트·메타 직접 입력 */
   inputMode?: InputMode;
   /**
-   * 유튜브 팩트체크 pass — 검증 단계를 건너뛰고 요약으로 보고서를 작성.
-   * UI에서 팩트체크 탭·버튼은 숨긴다.
+   * 팩트체크 pass — 검증 단계를 건너뛰고 요약으로 보고서를 작성.
+   * 유튜브·URL 입력 경로. UI에서 팩트체크 탭·버튼은 숨긴다.
    */
   skipFactCheck?: boolean;
   /**
-   * 유튜브 요약 이후 선택.
+   * 요약 이후 선택 (유튜브·URL 입력).
    * 없으면 아직 미결정(팩트체크 실시 vs pass).
    */
   factCheckDecision?: "do" | "pass";

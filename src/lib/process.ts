@@ -742,7 +742,7 @@ export async function finalizeReport(
   return upsertVideo(next, expectedUpdatedAt);
 }
 
-/** 유튜브 요약 이후 팩트체크 pass → AI가 요약으로 상세 보고서 초안 작성 */
+/** 요약 이후 팩트체크 pass → AI가 요약으로 상세 보고서 초안 작성 */
 export async function applyFactCheckPass(
   video: VideoRecord,
   expectedUpdatedAt?: string
@@ -781,7 +781,7 @@ export async function applyFactCheckPass(
     reportSource: built.source,
     reportWriteNotice:
       built.source === "llm"
-        ? "유튜브 요약을 바탕으로 글쓰기 AI가 상세 보고서 초안을 작성했습니다. 본문을 다듬은 뒤 「보고서 확정」을 누르세요."
+        ? "요약을 바탕으로 글쓰기 AI가 보고서 초안을 작성했습니다. 본문을 정리하고 이미지를 넣은 뒤 「보고서 확정」을 누르세요."
         : built.notice,
     status: "awaiting_factcheck",
     updatedAt: new Date().toISOString(),

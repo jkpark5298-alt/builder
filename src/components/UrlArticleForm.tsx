@@ -278,7 +278,7 @@ export function UrlArticleForm({
     setStatus(
       manual
         ? "수동 요약 화면으로 이동 중…"
-        : "AI 요약·검증 중… (1~3분 걸릴 수 있어요)"
+        : "AI 요약 중… (1~3분 걸릴 수 있어요)"
     );
 
     const controller = new AbortController();
@@ -306,7 +306,9 @@ export function UrlArticleForm({
         }
         cacheVideoSnapshot(data.video);
         setStatus("완료. 다음 화면으로 이동합니다…");
-        window.location.assign(`/videos/${data.video.id}`);
+        window.location.assign(
+          `/videos/${data.video.id}${manual ? "" : "#fc-decision"}`
+        );
         return;
       }
 
@@ -326,7 +328,9 @@ export function UrlArticleForm({
       }
       cacheVideoSnapshot(data.video);
       setStatus("완료. 다음 화면으로 이동합니다…");
-      window.location.assign(`/videos/${data.video.id}`);
+      window.location.assign(
+        `/videos/${data.video.id}${manual ? "" : "#fc-decision"}`
+      );
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError(
@@ -372,8 +376,10 @@ export function UrlArticleForm({
           </h2>
           <p className="text-sm text-ink-600 leading-relaxed">
             제목과 기사 URL을 넣은 뒤 본문·이미지를 가져옵니다. 저장한 다음{" "}
-            <strong>AI 요약</strong> 또는 <strong>수동 요약</strong>을 고르면,
-            이후 팩트체크·보고서 작성은 기존과 같습니다.
+            <strong>AI 요약</strong> 또는 <strong>수동 요약</strong>을 고르세요.
+            요약이 끝나면 <strong>팩트체크 실시</strong> 또는{" "}
+            <strong>pass</strong>를 고르고, 보고서 작성(정리·이미지) 후 확정하면
+            기존 조회·PDF·공유를 그대로 씁니다.
           </p>
         </div>
 
@@ -533,7 +539,7 @@ export function UrlArticleForm({
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript
-              ? "본문 저장 후 AI 또는 수동 요약 → 팩트체크·보고서"
+              ? "본문 저장 후 AI 또는 수동 요약 → 팩트체크 여부 → 보고서 작성"
               : "본문을 가져온 뒤 저장하거나, 수동 요약으로 이어갈 수 있습니다"}
           </p>
         )}

@@ -228,7 +228,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
      */
     keepReportBody?: boolean;
     completeManual?: boolean;
-    /** 유튜브 요약 이후: 팩트체크 실시 | pass(AI 보고서 초안) */
+    /** 요약 이후: 팩트체크 실시 | pass(AI 보고서 초안) */
     factCheckDecision?: "do" | "pass";
     /** true면 필수 미완료 항목이 있어도 완료 1건 이상이면 보고서 생성 */
     allowPartialFactCheck?: boolean;

@@ -40,7 +40,14 @@ export function isFactCheckPass(
   return video.skipFactCheck === true || video.factCheckDecision === "pass";
 }
 
-/** 유튜브 요약 이후, 팩트체크 실시 vs pass 를 아직 고르지 않음 */
+/** 요약 이후 팩트체크 실시 vs pass 를 고르는 경로 (유튜브 · URL 입력) */
+export function offersFactCheckDecision(
+  video: Pick<VideoRecord, "inputMode" | "sourceUrl" | "tags" | "transcriptSource">
+): boolean {
+  return isYoutubeInput(video) || isUrlArticleInput(video);
+}
+
+/** 요약 이후, 팩트체크 실시 vs pass 를 아직 고르지 않음 */
 export function needsFactCheckDecision(
   video: Pick<
     VideoRecord,
@@ -49,14 +56,37 @@ export function needsFactCheckDecision(
     | "overview"
     | "skipFactCheck"
     | "factCheckDecision"
+    | "sourceUrl"
+    | "tags"
+    | "transcriptSource"
   >
 ): boolean {
-  if ((video.inputMode ?? "youtube") !== "youtube") return false;
+  if (!offersFactCheckDecision(video)) return false;
   if (video.status !== "awaiting_factcheck") return false;
   if ((video.overview ?? "").trim().length < 40) return false;
   if (isFactCheckPass(video)) return false;
   if (video.factCheckDecision === "do") return false;
   return true;
+}
+
+/** PDF·인쇄 표지 제목 */
+export function reportDocumentTitle(
+  video: Pick<
+    VideoRecord,
+    | "inputMode"
+    | "skipFactCheck"
+    | "factCheckDecision"
+    | "sourceUrl"
+    | "tags"
+    | "transcriptSource"
+  >
+): string {
+  if (isFactCheckPass(video)) {
+    return isYoutubeInput(video) ? "유튜브 요약 보고서" : "요약 보고서";
+  }
+  return isYoutubeInput(video)
+    ? "유튜브 요약 · 팩트체크 보고서"
+    : "팩트체크 보고서";
 }
 
 /** 팩트체크보고서 항목용 썸네일 (외부 URL 없음) */

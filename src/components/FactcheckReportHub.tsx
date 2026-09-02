@@ -11,7 +11,10 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
-import { isUrlArticleInput } from "@/lib/input-mode";
+import {
+  isUrlArticleInput,
+  needsFactCheckDecision,
+} from "@/lib/input-mode";
 import {
   isReportInputDraft,
   isReportPending,
@@ -20,6 +23,7 @@ import {
 import { ReportCreateForm } from "@/components/ReportCreateForm";
 import { UrlArticleForm } from "@/components/UrlArticleForm";
 import { ReportListPanel } from "@/components/ReportListPanel";
+import { HubPreviewItemList } from "@/components/HubPreviewItemList";
 import { VideoListCard } from "@/components/VideoListCard";
 
 type HubView = "home" | "input" | "url" | "status";
@@ -35,7 +39,7 @@ function listKindFor(
 
 /** 팩트체크보고서 작업 단계 (유튜브 제외) */
 export function factcheckWorkStep(
-  video: Pick<VideoRecord, "status" | "items" | "factChecks">
+  video: VideoRecord
 ): InputStep {
   if (isReportPending(video)) return "report";
   if (isReportInputDraft(video)) return "summary";
@@ -48,6 +52,7 @@ export function factcheckWorkStep(
   ) {
     return "summary";
   }
+  if (needsFactCheckDecision(video)) return "summary";
   if (stage === "report_pending") return "report";
   return "factcheck";
 }
@@ -55,7 +60,8 @@ export function factcheckWorkStep(
 function stepHref(video: VideoRecord, step: InputStep): string {
   if (step === "summary") {
     if (isReportInputDraft(video)) return `/videos/${video.id}`;
-    return `/videos/${video.id}#overview`;
+    if (needsFactCheckDecision(video)) return `/videos/${video.id}#fc-decision`;
+    return `/videos/${video.id}#general-summary`;
   }
   if (step === "factcheck") return `/videos/${video.id}#manual-factcheck`;
   return `/videos/${video.id}#report`;
@@ -355,7 +361,8 @@ export function FactcheckReportHub({
               URL 입력
             </h2>
             <p className="text-sm text-ink-500 mt-0.5">
-              제목·URL → 본문·이미지 저장 → AI/수동 요약 → 팩트체크·보고서
+              제목·URL → 본문·이미지 저장 → AI/수동 요약 → 팩트체크 여부 →
+              보고서 작성
             </p>
           </div>
         </div>
@@ -370,19 +377,19 @@ export function FactcheckReportHub({
               {
                 id: "summary" as const,
                 label: "요약",
-                hint: "URL 본문 · AI/수동",
+                hint: "본문 · AI/수동 · 팩트체크 여부",
                 icon: Link2,
               },
               {
                 id: "factcheck" as const,
                 label: "팩트체크 내용",
-                hint: "요약 기반 검증 입력",
+                hint: "실시 선택 후 검증 입력",
                 icon: ShieldCheck,
               },
               {
                 id: "report" as const,
                 label: "보고서 작성",
-                hint: "정리 + 이미지",
+                hint: "정리 + 이미지 · 확정",
                 icon: PenLine,
               },
             ] as const
@@ -444,7 +451,9 @@ export function FactcheckReportHub({
                         className="flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-ink-900 bg-ink-900 text-sm font-medium text-white hover:opacity-90"
                       >
                         <Link2 className="h-4 w-4" />
-                        본문·요약 이어서
+                        {needsFactCheckDecision(v)
+                          ? "팩트체크 여부 고르기"
+                          : "본문·요약 이어서"}
                       </a>
                     </div>
                   ))}
@@ -457,13 +466,13 @@ export function FactcheckReportHub({
         {inputStep === "factcheck" && (
           <div className="space-y-3">
             <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
-              URL에서 가져온 본문을 요약한 뒤 팩트체크를 입력합니다. 항목을
-              고르면 해당 화면으로 이동합니다.
+              요약한 뒤 「팩트체크 실시」를 고른 항목입니다. 고르면 검증 화면으로
+              이동합니다.
             </p>
             {stepItems.length === 0 ? (
               <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
                 팩트체크 진행 항목이 없습니다. 「요약」에서 본문을 저장하고
-                AI 또는 수동 요약을 마치세요.
+                AI 또는 수동 요약을 마친 뒤, 팩트체크 실시를 고르세요.
               </p>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -487,13 +496,13 @@ export function FactcheckReportHub({
         {inputStep === "report" && (
           <div className="space-y-3">
             <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
-              요약·팩트체크를 정리하고 이미지를 넣습니다. 작성 화면으로
-              이동합니다.
+              본문을 정리하고 이미지를 넣은 뒤 확정합니다. 확정 후에는 기존
+              조회·PDF·공유를 그대로 씁니다.
             </p>
             {stepItems.length === 0 ? (
               <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
-                보고서 작성 대기 항목이 없습니다. 팩트체크를 마치면 여기로
-                옵니다.
+                보고서 작성 대기 항목이 없습니다. 팩트체크를 마치거나 pass하면
+                여기로 옵니다.
               </p>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -574,100 +583,90 @@ export function FactcheckReportHub({
     );
   }
 
+  const emptyWork = (
+    <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+      <FileText className="h-3.5 w-3.5" />
+      작업 중 없음
+    </span>
+  );
+
   return (
     <section id="fc-home" className="space-y-4 scroll-mt-24">
       <div className="grid gap-3 sm:grid-cols-3">
-        <button
-          type="button"
-          onClick={() => go("url", "fc-url")}
-          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
-        >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <Link2 className="h-5 w-5" />
-          </span>
-          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
-            URL 입력
-          </span>
-          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            제목·URL → 본문·이미지 저장 → AI/수동 요약
-          </span>
-          {latestUrlWork.length > 0 ? (
-            <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
-              {latestUrlWork.map((v, i) => (
-                <li key={v.id} className="flex gap-1.5 min-w-0">
-                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
-                  <span className="truncate">{v.title || "제목 없음"}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
-              <FileText className="h-3.5 w-3.5" />
-              작업 중 없음
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+          <button
+            type="button"
+            onClick={() => go("url", "fc-url")}
+            className="w-full text-left"
+          >
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
+              <Link2 className="h-5 w-5" />
             </span>
-          )}
-        </button>
+            <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+              URL 입력
+            </span>
+            <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+              제목·URL → 본문·이미지 저장 → AI/수동 요약 · 팩트체크 여부 · 삭제
+            </span>
+          </button>
+          <HubPreviewItemList
+            items={latestUrlWork}
+            accent
+            empty={emptyWork}
+            hrefFor={(v) => `/videos/${v.id}`}
+          />
+        </article>
 
-        <button
-          type="button"
-          onClick={() => go("input", "fc-input")}
-          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
-        >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <ClipboardPaste className="h-5 w-5" />
-          </span>
-          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
-            정보/요약 입력
-          </span>
-          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            요약 붙여넣기 → 팩트체크 입력 → 보고서 작성·이미지
-          </span>
-          {latestPasteWork.length > 0 ? (
-            <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
-              {latestPasteWork.map((v, i) => (
-                <li key={v.id} className="flex gap-1.5 min-w-0">
-                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
-                  <span className="truncate">{v.title || "제목 없음"}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
-              <FileText className="h-3.5 w-3.5" />
-              작업 중 없음
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+          <button
+            type="button"
+            onClick={() => go("input", "fc-input")}
+            className="w-full text-left"
+          >
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
+              <ClipboardPaste className="h-5 w-5" />
             </span>
-          )}
-        </button>
+            <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+              정보/요약 입력
+            </span>
+            <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+              요약 붙여넣기 → 팩트체크 입력 → 보고서 작성·이미지 · 삭제
+            </span>
+          </button>
+          <HubPreviewItemList
+            items={latestPasteWork}
+            accent
+            empty={emptyWork}
+            hrefFor={(v) => `/videos/${v.id}`}
+          />
+        </article>
 
-        <button
-          type="button"
-          onClick={() => go("status", "fc-status")}
-          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
-        >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-ink-900 text-white">
-            <Library className="h-5 w-5" />
-          </span>
-          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
-            팩트체크 보고서 현황
-          </span>
-          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            최신 5건 · 전체 보기 · 조회·삭제
-          </span>
-          {latestFive.length > 0 ? (
-            <ol className="mt-3 space-y-1 text-xs font-medium text-ink-700">
-              {latestFive.map((v, i) => (
-                <li key={v.id} className="flex gap-1.5 min-w-0">
-                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
-                  <span className="truncate">{v.title || "제목 없음"}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
-              확정 보고서 없음
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+          <button
+            type="button"
+            onClick={() => go("status", "fc-status")}
+            className="w-full text-left"
+          >
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-ink-900 text-white">
+              <Library className="h-5 w-5" />
             </span>
-          )}
-        </button>
+            <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+              팩트체크 보고서 현황
+            </span>
+            <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+              최신 5건 · 전체 보기 · 조회·삭제
+            </span>
+          </button>
+          <HubPreviewItemList
+            items={latestFive}
+            empty={
+              <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+                확정 보고서 없음
+              </span>
+            }
+            hrefFor={(v) => `/videos/${v.id}#report`}
+          />
+        </article>
       </div>
     </section>
   );

@@ -3,13 +3,21 @@
 import { CheckCircle2, FileText, Loader2, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { isUrlArticleInput, isYoutubeInput } from "@/lib/input-mode";
 import type { VideoRecord } from "@/lib/types";
 
-/** 유튜브 요약 이후 — 팩트체크 실시 vs pass */
+function sourceKindLabel(video: VideoRecord): "youtube" | "url" | "report" {
+  if (isYoutubeInput(video)) return "youtube";
+  if (isUrlArticleInput(video)) return "url";
+  return "report";
+}
+
+/** 유튜브·URL 요약 이후 — 팩트체크 실시 vs pass */
 export function FactCheckDecisionPanel({ video }: { video: VideoRecord }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"do" | "pass" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const kind = sourceKindLabel(video);
 
   async function choose(decision: "do" | "pass") {
     setError(null);
@@ -67,8 +75,12 @@ export function FactCheckDecisionPanel({ video }: { video: VideoRecord }) {
       </div>
       <div className="p-4 sm:p-5 space-y-4">
         <p className="text-sm text-ink-700 leading-relaxed">
-          유튜브 요약이 끝났습니다. 이제{" "}
-          <strong>팩트체크를 진행</strong>하거나,{" "}
+          {kind === "url"
+            ? "URL 본문 요약이 끝났습니다."
+            : kind === "youtube"
+              ? "유튜브 요약이 끝났습니다."
+              : "요약이 끝났습니다."}{" "}
+          이제 <strong>팩트체크를 진행</strong>하거나,{" "}
           <strong>pass</strong>하여 요약만으로 보고서 초안을 만들 수 있습니다.
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -110,15 +122,16 @@ export function FactCheckDecisionPanel({ video }: { video: VideoRecord }) {
               팩트체크 pass
             </span>
             <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-              검증 없이 요약을 바탕으로 AI가 상세 보고서 초안을 작성합니다.
-              1~2분 걸릴 수 있습니다.
+              검증 없이 요약을 바탕으로 AI가 보고서 초안을 작성합니다. 본문을
+              정리하고 이미지를 넣은 뒤 확정합니다. 1~2분 걸릴 수 있습니다.
             </span>
           </button>
         </div>
         {busy === "pass" && (
           <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50 px-4 py-3">
-            AI가 유튜브 요약을 조합해 상세 보고서를 작성하는 중입니다. 화면을
-            끄지 마세요.
+            {kind === "url"
+              ? "AI가 URL 본문 요약을 바탕으로 보고서 초안을 작성하는 중입니다. 화면을 끄지 마세요."
+              : "AI가 요약을 조합해 상세 보고서를 작성하는 중입니다. 화면을 끄지 마세요."}
           </p>
         )}
         {error && (
@@ -167,8 +180,9 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
   return (
     <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 space-y-2 print:hidden">
       <p className="text-sm text-ink-800 leading-relaxed">
-        <strong>보고서 초안</strong> — 유튜브 요약을 참고해 AI가 작성했습니다.
-        본문을 다듬은 뒤 확정하세요. 팩트체크 탭은 보이지 않습니다.
+        <strong>보고서 작성</strong> — 요약을 참고해 AI가 초안을 만들었습니다.
+        본문을 정리하고 이미지를 넣은 뒤 확정하세요. 팩트체크 탭은 보이지
+        않습니다. 확정 후에는 기존과 같이 조회·PDF·공유를 씁니다.
       </p>
       <button
         type="button"
