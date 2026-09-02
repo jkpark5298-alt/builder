@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MAX_BYTES = 1_000_000;
+const MAX_BYTES = 4_000_000;
 
 function friendlyMediaError(msg: string): string {
   if (/project size limit|512\s*MB|could not extend file/i.test(msg)) {
@@ -126,7 +126,7 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  if (dataUrl.length > 1_400_000) {
+  if (dataUrl.length > 5_600_000) {
     return NextResponse.json({ error: "image too large" }, { status: 413 });
   }
 

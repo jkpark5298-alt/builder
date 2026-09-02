@@ -47,7 +47,7 @@ import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { reportThumbnailUrl } from "@/lib/input-mode";
 import { fetchArticleFromUrl } from "@/lib/article-fetch";
-import { dropUrlsFromReport } from "@/lib/report-images";
+import { dropUrlsFromReport, replaceUrlsInReport } from "@/lib/report-images";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
 import { normalizeTagList } from "@/lib/tags";
@@ -296,6 +296,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     importArticleImages?: boolean | string;
     /** URL에서 가져온 본문 이미지 삭제 */
     removeArticleImages?: string[];
+    /** 잘라낸 사진으로 본문 이미지 URL 교체 */
+    replaceArticleImage?: { from: string; to: string };
   };
 
   try {
@@ -373,6 +375,39 @@ async function patchVideo(req: Request, ctx: Ctx) {
         updatedAt: new Date().toISOString(),
       };
     }
+  }
+
+  if (body.replaceArticleImage) {
+    const from = body.replaceArticleImage.from.trim();
+    const to = body.replaceArticleImage.to.trim();
+    if (!from || !to || from === to) {
+      return NextResponse.json(
+        { error: "바꿀 사진이 없습니다." },
+        { status: 400 }
+      );
+    }
+    if (
+      !to.startsWith("http://") &&
+      !to.startsWith("https://") &&
+      !to.startsWith("/api/media/")
+    ) {
+      return NextResponse.json(
+        { error: "저장한 사진 URL만 넣을 수 있습니다." },
+        { status: 400 }
+      );
+    }
+    const prevImgs = next.articleImages ?? [];
+    const articleImages = prevImgs.includes(from)
+      ? prevImgs.map((u) => (u === from ? to : u))
+      : [...prevImgs, to];
+    next = {
+      ...next,
+      articleImages: Array.from(new Set(articleImages)),
+      report: next.report
+        ? replaceUrlsInReport(next.report, from, to)
+        : next.report,
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   if (body.updateUserTags) {

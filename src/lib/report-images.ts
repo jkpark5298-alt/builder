@@ -256,6 +256,28 @@ export function collectReferencedRoomKeys(report: TypedReport): {
   return { ids, urls };
 }
 
+/** 룸 URL만 바꾸고 슬롯 refs(id)는 유지한다 */
+export function replaceUrlsInReport(
+  report: TypedReport,
+  from: string,
+  to: string
+): TypedReport {
+  const src = from.trim();
+  const dest = to.trim();
+  if (!src || !dest || src === dest) return report;
+  return {
+    ...report,
+    imageRoom: normalizeRoomItems(report.imageRoom).map((it) =>
+      it.url === src ? { ...it, url: dest } : it
+    ),
+    sections: report.sections.map((sec) => ({
+      ...sec,
+      imageUrl: sec.imageUrl === src ? dest : sec.imageUrl,
+      images: sec.images?.map((u) => (u === src ? dest : u)),
+    })),
+  };
+}
+
 /** 이미지 룸·섹션에서 지정 URL을 뺀다 */
 export function dropUrlsFromReport(
   report: TypedReport,

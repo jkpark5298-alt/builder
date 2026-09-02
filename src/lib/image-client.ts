@@ -130,3 +130,77 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.src = src;
   });
 }
+
+export type CropRect = { sx: number; sy: number; sw: number; sh: number };
+
+const CROP_UPLOAD_MAX_BYTES = 4_000_000;
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** 원본을 디코딩한 뒤 object URL로 로드 (캔버스 CORS 회피) */
+export async function loadImageForEdit(src: string): Promise<{
+  img: HTMLImageElement;
+  revoke: () => void;
+}> {
+  if (src.startsWith("data:")) {
+    return { img: await loadImage(src), revoke: () => undefined };
+  }
+  const res = await fetch(src);
+  if (!res.ok) throw new Error("이미지를 읽지 못했습니다.");
+  const blob = await res.blob();
+  const obj = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(obj);
+    return {
+      img,
+      revoke: () => URL.revokeObjectURL(obj),
+    };
+  } catch (e) {
+    URL.revokeObjectURL(obj);
+    throw e;
+  }
+}
+
+/**
+ * 원본 픽셀 그대로 잘라낸다. 축소·JPEG 재압축 없음.
+ * PNG가 업로드 한도를 넘을 때만 같은 크기의 JPEG(0.95)로 저장한다.
+ */
+export async function cropImageLossless(
+  src: string,
+  region: CropRect
+): Promise<string> {
+  const { img, revoke } = await loadImageForEdit(src);
+  try {
+    const sx = Math.max(0, Math.floor(region.sx));
+    const sy = Math.max(0, Math.floor(region.sy));
+    const sw = Math.max(1, Math.min(img.naturalWidth - sx, Math.round(region.sw)));
+    const sh = Math.max(1, Math.min(img.naturalHeight - sy, Math.round(region.sh)));
+    const canvas = document.createElement("canvas");
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("이미지를 잘라내지 못했습니다.");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    const png = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    );
+    if (png && png.size <= CROP_UPLOAD_MAX_BYTES) {
+      return blobToDataUrl(png);
+    }
+    const jpg = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.95)
+    );
+    if (!jpg) throw new Error("이미지를 잘라내지 못했습니다.");
+    return blobToDataUrl(jpg);
+  } finally {
+    revoke();
+  }
+}

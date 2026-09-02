@@ -14,6 +14,7 @@ import {
   ChevronUp,
   ClipboardCopy,
   ClipboardPaste,
+  Crop,
   Home,
   ImagePlus,
   Loader2,
@@ -53,6 +54,7 @@ import {
   normalizeReportImageRefs,
   orderedSlotUrls,
   pruneUnreferencedRoomItems,
+  replaceUrlsInReport,
   sectionSlotCapacity,
   upsertRoomUrls,
 } from "@/lib/report-images";
@@ -87,6 +89,7 @@ import { FormatToolbar } from "@/components/ReportFormatToolbar";
 import { MobileFormatBubble } from "@/components/MobileFormatBubble";
 import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
+import { ImageCropModal } from "@/components/ImageCropModal";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
@@ -130,11 +133,17 @@ function UrlArticleImageGallery({
   onRemoveMany,
   onInsertMany,
   onCopy,
+  onImport,
+  importBusy,
+  onCrop,
 }: {
   urls: string[];
   onRemoveMany?: (srcs: string[]) => void;
   onInsertMany?: (srcs: string[]) => void;
   onCopy?: (src: string) => void;
+  onImport?: () => void;
+  importBusy?: boolean;
+  onCrop?: (src: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [preview, setPreview] = useState<number | null>(null);
@@ -182,41 +191,78 @@ function UrlArticleImageGallery({
           {urls.length ? ` · ${urls.length}장` : ""}
           {selected.size ? ` · ${selected.size}장 선택` : ""}
         </p>
-        {(onRemoveMany || onInsertMany) && urls.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 print:hidden">
+        <div className="flex flex-wrap gap-1.5 print:hidden">
+          {onImport && (
             <button
               type="button"
-              onClick={() =>
-                setSelected(allOn ? new Set() : new Set(urls))
-              }
-              className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700"
+              onClick={onImport}
+              disabled={importBusy}
+              className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-50"
             >
-              {allOn ? "선택 해제" : "모두 선택"}
+              {importBusy ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  가져오는 중…
+                </>
+              ) : (
+                <>
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  원문에서 사진 가져오기
+                </>
+              )}
             </button>
-            {onInsertMany && (
+          )}
+          {(onRemoveMany || onInsertMany) && urls.length > 0 && (
+            <>
               <button
                 type="button"
-                disabled={!selected.size}
-                onClick={() => onInsertMany([...selected])}
-                className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-40"
+                onClick={() =>
+                  setSelected(allOn ? new Set() : new Set(urls))
+                }
+                className="rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700"
               >
-                <ClipboardPaste className="h-3.5 w-3.5" />
-                선택 본문에 넣기
+                {allOn ? "선택 해제" : "모두 선택"}
               </button>
-            )}
-            {onRemoveMany && (
-            <button
-              type="button"
-              disabled={!selected.size}
-              onClick={() => onRemoveMany([...selected])}
-              className="inline-flex items-center gap-1 rounded-md border border-verify-false/40 bg-white px-2 py-1 text-xs font-medium text-verify-false disabled:opacity-40"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              선택 삭제
-            </button>
-            )}
-          </div>
-        )}
+              {onInsertMany && (
+                <button
+                  type="button"
+                  disabled={!selected.size}
+                  onClick={() => onInsertMany([...selected])}
+                  className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-40"
+                >
+                  <ClipboardPaste className="h-3.5 w-3.5" />
+                  선택 본문에 넣기
+                </button>
+              )}
+              {onCrop && (
+                <button
+                  type="button"
+                  disabled={selected.size !== 1}
+                  onClick={() => {
+                    const src = [...selected][0];
+                    if (src) onCrop(src);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium text-ink-700 disabled:opacity-40"
+                  title="한 장을 선택한 뒤 확대·잘라내기"
+                >
+                  <Crop className="h-3.5 w-3.5" />
+                  잘라내기
+                </button>
+              )}
+              {onRemoveMany && (
+                <button
+                  type="button"
+                  disabled={!selected.size}
+                  onClick={() => onRemoveMany([...selected])}
+                  className="inline-flex items-center gap-1 rounded-md border border-verify-false/40 bg-white px-2 py-1 text-xs font-medium text-verify-false disabled:opacity-40"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  선택 삭제
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
       {urls.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -267,13 +313,13 @@ function UrlArticleImageGallery({
         </div>
       ) : (
         <p className="text-xs text-ink-500">
-          저장된 본문 이미지가 없습니다. URL 입력에서 본문·이미지를
-          가져온 뒤 저장하면 여기에 표시됩니다.
+          가져온 사진이 없습니다. 「원문에서 사진 가져오기」로 페이지
+          사진을 이 칸에 모은 뒤, 본문에 넣을 수 있습니다.
         </p>
       )}
       <p className="text-xs text-ink-500">
-        사진을 누르면 확대됩니다. 선택한 뒤 「본문에 넣기」로 붙이거나, 확대한
-        다음 복사해서 본문에 Ctrl+V 할 수 있습니다.
+        사진을 누르면 확대됩니다. 한 장을 선택한 뒤 「잘라내기」로 확대·자를
+        수 있습니다. 원본 픽셀을 유지하며 화질은 바꾸지 않습니다.
       </p>
       {preview != null && urls[preview] && (
         <div
@@ -324,11 +370,25 @@ function UrlArticleImageGallery({
             className="max-h-[82vh] max-w-[min(96vw,1200px)] object-contain rounded-lg"
             onClick={(e) => e.stopPropagation()}
           />
-          {(onInsertMany || onCopy) && (
+          {(onInsertMany || onCopy || onCrop) && (
             <div
               className="absolute bottom-4 flex flex-wrap gap-2"
               onClick={(e) => e.stopPropagation()}
             >
+              {onCrop && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const src = urls[preview];
+                    setPreview(null);
+                    if (src) onCrop(src);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/40 bg-black/50 px-3 py-2 text-sm text-white"
+                >
+                  <Crop className="h-4 w-4" />
+                  잘라내기
+                </button>
+              )}
               {onInsertMany && (
                 <button
                   type="button"
@@ -398,6 +458,8 @@ export function EditableReportPanel({
   const [rebuilding, setRebuilding] = useState(false);
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [articleImportBusy, setArticleImportBusy] = useState(false);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [cropBusy, setCropBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [organizeResult, setOrganizeResult] =
@@ -2055,6 +2117,45 @@ export function EditableReportPanel({
     }
   }
 
+  async function replaceCroppedArticleImage(from: string, dataUrl: string) {
+    const src = from.trim();
+    if (!src || !dataUrl) return;
+    setCropBusy(true);
+    try {
+      const [uploaded] = await uploadDataUrls(
+        [dataUrl],
+        reportImagePrefix(video.id)
+      );
+      if (!uploaded) throw new Error("잘라낸 사진을 저장하지 못했습니다.");
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          replaceArticleImage: { from: src, to: uploaded },
+        }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "잘라낸 사진을 저장하지 못했습니다.");
+      if (data.video) {
+        setLocalVideo(data.video);
+        if (data.video.report) {
+          setDraft(normalizeReportImageRefs(data.video.report));
+        } else {
+          setDraft((prev) =>
+            prev ? replaceUrlsInReport(prev, src, uploaded) : prev
+          );
+        }
+      }
+      void releaseMediaUrls([src]);
+      setCropSrc(null);
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "잘라내지 못했습니다.");
+    } finally {
+      setCropBusy(false);
+    }
+  }
+
   function pasteFcImagesToActiveSection(urls: string[]) {
     if (!draft || !urls.length) return;
     if (!editing) setMode("body");
@@ -2978,31 +3079,13 @@ export function EditableReportPanel({
               </div>
             )}
 
-            {urlArticle && (
+            {!urlArticle && (
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs font-medium text-ink-700">
                   이미지 룸 · 재사용 보관함
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => void importArticleImagesFromSource()}
-                      disabled={articleImportBusy}
-                      className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-50"
-                    >
-                      {articleImportBusy ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          가져오는 중…
-                        </>
-                      ) : (
-                        <>
-                          <ImagePlus className="h-3.5 w-3.5" />
-                          원문에서 사진 가져오기
-                        </>
-                      )}
-                    </button>
                   {unusedRoomCount > 0 && (
                     <button
                       type="button"
@@ -3032,8 +3115,8 @@ export function EditableReportPanel({
                 </div>
               </div>
               <p className="text-[11px] text-ink-500">
-                「원문에서 사진 가져오기」로 페이지 사진을 이 칸에 넣습니다.
-                본문에는 「현재 섹션에 넣기」 또는 문장 끝 S로 붙이세요.
+                같은 그림은 한 번만 저장됩니다. 본문에는 「현재 섹션에 넣기」로
+                붙이거나 Ctrl+V / 파일로 S칸에 넣으세요.
               </p>
               <input
                 id="report-room-upload"
@@ -3093,7 +3176,7 @@ export function EditableReportPanel({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void removeArticleImage(room.url)}
+                          onClick={() => removeImageFromRoom(room.url)}
                           className="rounded-md border border-ink-200 px-1.5 py-1 text-[11px] text-ink-500"
                           title="룸에서 제거"
                         >
@@ -3104,30 +3187,11 @@ export function EditableReportPanel({
                   ))}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-ink-500">
-                    보관된 사진이 없습니다. 아래 버튼으로 원문 페이지 사진을
-                    가져오세요.
-                  </p>
-                    <button
-                      type="button"
-                      onClick={() => void importArticleImagesFromSource()}
-                      disabled={articleImportBusy}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-white px-3 py-2 text-xs font-medium text-accent disabled:opacity-50"
-                    >
-                      {articleImportBusy ? (
-                        <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          원문 사진 가져오는 중…
-                        </>
-                      ) : (
-                        <>
-                          <ImagePlus className="h-3.5 w-3.5" />
-                          원문에서 사진 가져오기
-                        </>
-                      )}
-                    </button>
-                </div>
+                <p className="text-xs text-ink-500">
+                  {hideFactCheck
+                    ? "본문에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."
+                    : "본문/팩트체크에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."}
+                </p>
               )}
             </div>
             )}
@@ -3456,6 +3520,9 @@ export function EditableReportPanel({
             onRemoveMany={(srcs) => void removeArticleImages(srcs)}
             onInsertMany={insertArticleImagesToBody}
             onCopy={(src) => void copyArticleImage(src)}
+            onImport={() => void importArticleImagesFromSource()}
+            importBusy={articleImportBusy}
+            onCrop={setCropSrc}
           />
         )}
         <div
@@ -3696,9 +3763,23 @@ export function EditableReportPanel({
               onRemoveMany={(srcs) => void removeArticleImages(srcs)}
               onInsertMany={insertArticleImagesToBody}
               onCopy={(src) => void copyArticleImage(src)}
+              onImport={() => void importArticleImagesFromSource()}
+              importBusy={articleImportBusy}
+              onCrop={setCropSrc}
             />
           )}
         </div>
+
+        {cropSrc && (
+          <ImageCropModal
+            src={cropSrc}
+            busy={cropBusy}
+            onCancel={() => {
+              if (!cropBusy) setCropSrc(null);
+            }}
+            onApply={(dataUrl) => replaceCroppedArticleImage(cropSrc, dataUrl)}
+          />
+        )}
 
         {handwritingFor !== null && (
           <HandwritingModal
