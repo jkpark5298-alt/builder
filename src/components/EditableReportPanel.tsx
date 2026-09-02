@@ -128,9 +128,13 @@ const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "�
 function UrlArticleImageGallery({
   urls,
   onRemoveMany,
+  onInsertMany,
+  onCopy,
 }: {
   urls: string[];
   onRemoveMany?: (srcs: string[]) => void;
+  onInsertMany?: (srcs: string[]) => void;
+  onCopy?: (src: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [preview, setPreview] = useState<number | null>(null);
@@ -178,7 +182,7 @@ function UrlArticleImageGallery({
           {urls.length ? ` · ${urls.length}장` : ""}
           {selected.size ? ` · ${selected.size}장 선택` : ""}
         </p>
-        {urls.length > 0 && onRemoveMany && (
+        {(onRemoveMany || onInsertMany) && urls.length > 0 && (
           <div className="flex flex-wrap gap-1.5 print:hidden">
             <button
               type="button"
@@ -189,6 +193,18 @@ function UrlArticleImageGallery({
             >
               {allOn ? "선택 해제" : "모두 선택"}
             </button>
+            {onInsertMany && (
+              <button
+                type="button"
+                disabled={!selected.size}
+                onClick={() => onInsertMany([...selected])}
+                className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-40"
+              >
+                <ClipboardPaste className="h-3.5 w-3.5" />
+                선택 본문에 넣기
+              </button>
+            )}
+            {onRemoveMany && (
             <button
               type="button"
               disabled={!selected.size}
@@ -198,6 +214,7 @@ function UrlArticleImageGallery({
               <Trash2 className="h-3.5 w-3.5" />
               선택 삭제
             </button>
+            )}
           </div>
         )}
       </div>
@@ -255,7 +272,8 @@ function UrlArticleImageGallery({
         </p>
       )}
       <p className="text-xs text-ink-500">
-        사진을 누르면 확대됩니다. 왼쪽 칸을 선택해 여러 장을 지울 수 있습니다.
+        사진을 누르면 확대됩니다. 선택한 뒤 「본문에 넣기」로 붙이거나, 확대한
+        다음 복사해서 본문에 Ctrl+V 할 수 있습니다.
       </p>
       {preview != null && urls[preview] && (
         <div
@@ -303,9 +321,39 @@ function UrlArticleImageGallery({
           <img
             src={urls[preview]}
             alt={`본문 이미지 ${preview + 1}`}
-            className="max-h-[90vh] max-w-[min(96vw,1200px)] object-contain rounded-lg"
+            className="max-h-[82vh] max-w-[min(96vw,1200px)] object-contain rounded-lg"
             onClick={(e) => e.stopPropagation()}
           />
+          {(onInsertMany || onCopy) && (
+            <div
+              className="absolute bottom-4 flex flex-wrap gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {onInsertMany && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onInsertMany([urls[preview]!]);
+                    setPreview(null);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/40 bg-black/50 px-3 py-2 text-sm text-white"
+                >
+                  <ClipboardPaste className="h-4 w-4" />
+                  본문에 넣기
+                </button>
+              )}
+              {onCopy && (
+                <button
+                  type="button"
+                  onClick={() => onCopy(urls[preview]!)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/40 bg-black/50 px-3 py-2 text-sm text-white"
+                >
+                  <ClipboardCopy className="h-4 w-4" />
+                  복사
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -385,6 +433,7 @@ export function EditableReportPanel({
   draftRef.current = draft;
   /** 빈 룸을 섹션 이미지로 한 번만 시드 — 삭제 후 재등장 방지 */
   const imageRoomSeededRef = useRef(false);
+  const pendingBodyImagesRef = useRef<string[] | null>(null);
   const historyPastRef = useRef<TypedReport[]>([]);
   const historyFutureRef = useRef<TypedReport[]>([]);
   const pendingHistoryBaseRef = useRef<TypedReport | null>(null);
@@ -585,6 +634,24 @@ export function EditableReportPanel({
     }
     wasEditingRef.current = editing;
   }, [editing, report, localVideo, resetHistory]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const pending = pendingBodyImagesRef.current;
+    if (!pending?.length) return;
+    pendingBodyImagesRef.current = null;
+    const t = window.setTimeout(() => {
+      const idx = Math.min(
+        Math.max(0, activeSectionIdx),
+        Math.max(0, (draftRef.current?.sections.length ?? 1) - 1)
+      );
+      applyUrlsToSSlots(idx, pending);
+      syncSectionEditorFigures(idx);
+    }, 80);
+    return () => window.clearTimeout(t);
+    // applyUrlsToSSlots는 매 렌더 생성 — 편집 진입 시에만 대기 사진을 넣음
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
 
   useEffect(() => {
     if (mode !== "body" || !draft) return;
@@ -1949,6 +2016,43 @@ export function EditableReportPanel({
       sections[secIdx] = section;
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
+  }
+
+  function insertArticleImagesToBody(srcs: string[]) {
+    const urls = srcs.map((s) => s.trim()).filter(Boolean);
+    if (!urls.length) return;
+    if (!editing) {
+      pendingBodyImagesRef.current = urls;
+      setMode("body");
+      return;
+    }
+    const idx = Math.min(
+      Math.max(0, activeSectionIdx),
+      Math.max(0, (draft?.sections.length ?? 1) - 1)
+    );
+    applyUrlsToSSlots(idx, urls);
+    syncSectionEditorFigures(idx);
+  }
+
+  async function copyArticleImage(src: string) {
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error("이미지를 읽지 못했습니다.");
+      const blob = await res.blob();
+      const type = blob.type && blob.type.startsWith("image/")
+        ? blob.type
+        : "image/png";
+      await navigator.clipboard.write([
+        new ClipboardItem({ [type]: blob }),
+      ]);
+      alert(
+        "복사했습니다. 본문 편집에서 문장 끝에 S를 친 뒤 Ctrl+V로 붙이세요."
+      );
+    } catch {
+      alert(
+        "이 브라우저에서는 사진 복사가 막혀 있습니다. 「본문에 넣기」를 사용하세요."
+      );
+    }
   }
 
   function pasteFcImagesToActiveSection(urls: string[]) {
@@ -3350,6 +3454,8 @@ export function EditableReportPanel({
           <UrlArticleImageGallery
             urls={urlArticleImages}
             onRemoveMany={(srcs) => void removeArticleImages(srcs)}
+            onInsertMany={insertArticleImagesToBody}
+            onCopy={(src) => void copyArticleImage(src)}
           />
         )}
         <div
@@ -3588,6 +3694,8 @@ export function EditableReportPanel({
             <UrlArticleImageGallery
               urls={urlArticleImages}
               onRemoveMany={(srcs) => void removeArticleImages(srcs)}
+              onInsertMany={insertArticleImagesToBody}
+              onCopy={(src) => void copyArticleImage(src)}
             />
           )}
         </div>
