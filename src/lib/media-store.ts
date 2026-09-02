@@ -441,6 +441,11 @@ export async function externalizeVideoMedia(
     factChecks,
     report,
     infographic,
+    articleImages: video.articleImages?.length
+      ? await persistMediaUrls(video.articleImages, {
+          prefix: `videos/${video.id}/article`,
+        })
+      : video.articleImages,
   };
 }
 

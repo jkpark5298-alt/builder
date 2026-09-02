@@ -63,6 +63,7 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
     "youtube_auto",
     "speech_text",
     "pasted",
+    "web",
     "creator_meta",
     "none",
   ]);
@@ -89,6 +90,10 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
         : raw.skipFactCheck === true
           ? "pass"
           : undefined,
+    sourceUrl: raw.sourceUrl?.trim() || undefined,
+    articleImages: Array.isArray(raw.articleImages)
+      ? raw.articleImages.filter((u) => typeof u === "string" && u.trim())
+      : undefined,
     description: raw.description ?? "",
     chapters: raw.chapters ?? [],
     summaryBullets: raw.summaryBullets ?? [],
@@ -379,6 +384,7 @@ export async function searchVideos(query: string): Promise<VideoRecord[]> {
         v.overview,
         v.reportType,
         v.youtubeUrl,
+        v.sourceUrl ?? "",
         ...(v.summaryBullets ?? []),
         ...(v.chapters ?? []).map((c) => c.title),
         ...v.tags,

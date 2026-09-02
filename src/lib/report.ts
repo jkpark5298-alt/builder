@@ -18,6 +18,7 @@ import {
   htmlToPlainText,
   normalizeAiAnswer,
 } from "./text-format";
+import { reportSourceLink } from "./input-mode";
 
 export { detectReportType } from "./report-detect";
 
@@ -1402,6 +1403,7 @@ export function buildTypedReport(
     | "title"
     | "channel"
     | "youtubeUrl"
+    | "sourceUrl"
     | "overview"
     | "summaryBullets"
     | "items"
@@ -1538,10 +1540,7 @@ export function buildTypedReport(
     meta: {
       title: video.title,
       channel: video.channel,
-      url:
-        video.inputMode === "report"
-          ? "팩트체크보고서 (직접 입력)"
-          : video.youtubeUrl,
+      url: reportSourceLink(video),
       writtenAt,
     },
     reportType: video.reportType,

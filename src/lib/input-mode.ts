@@ -14,6 +14,25 @@ export function isReportInput(
   return video.inputMode === "report";
 }
 
+/** 팩트체크보고서 · 웹 URL에서 본문을 가져온 항목 */
+export function isUrlArticleInput(
+  video: Pick<VideoRecord, "sourceUrl" | "tags" | "transcriptSource">
+): boolean {
+  if (video.sourceUrl?.trim()) return true;
+  if (video.transcriptSource === "web") return true;
+  return (video.tags ?? []).includes("url-article");
+}
+
+/** 보고서 메타·PDF에 넣을 원문 링크 */
+export function reportSourceLink(
+  video: Pick<VideoRecord, "inputMode" | "youtubeUrl" | "sourceUrl">
+): string {
+  const src = video.sourceUrl?.trim();
+  if (src) return src;
+  if (video.inputMode === "report") return "팩트체크보고서 (직접 입력)";
+  return video.youtubeUrl;
+}
+
 /** 유튜브 팩트체크 pass — 검증 UI·게이트를 건너뛴다 */
 export function isFactCheckPass(
   video: Pick<VideoRecord, "skipFactCheck" | "factCheckDecision">

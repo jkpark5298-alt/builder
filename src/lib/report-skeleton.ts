@@ -31,6 +31,12 @@ export async function ensureSkeletonReport(
     return video;
   }
   const report = buildSkeletonReport(video);
+  if (video.articleImages?.length) {
+    report.imageRoom = video.articleImages.map((url, i) => ({
+      url,
+      tag: `본문 ${i + 1}`,
+    }));
+  }
   return {
     ...video,
     report,

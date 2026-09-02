@@ -8,6 +8,7 @@ import { normalizeImageUrls, splitPrimaryImage } from "./image-urls";
 import { resolveAnswerParts } from "./answer-parts";
 import { dedupeTexts, normalizeAiAnswer } from "./text-format";
 import { REPORT_TYPE_LABELS } from "./types";
+import { reportSourceLink } from "./input-mode";
 import type {
   FactCheckResult,
   SummaryItem,
@@ -76,6 +77,7 @@ export async function writeReportWithLlm(
     | "title"
     | "channel"
     | "youtubeUrl"
+    | "sourceUrl"
     | "overview"
     | "summaryBullets"
     | "items"
@@ -284,10 +286,7 @@ JSON:
       meta: {
         title: video.title,
         channel: video.channel,
-        url:
-          video.inputMode === "report"
-            ? "팩트체크보고서 (직접 입력)"
-            : video.youtubeUrl,
+      url: reportSourceLink(video),
         writtenAt,
       },
       reportType: video.reportType,
@@ -324,6 +323,7 @@ export function syncFactChecksIntoExistingReport(
     | "title"
     | "channel"
     | "youtubeUrl"
+    | "sourceUrl"
     | "inputMode"
   >
 ): TypedReport {
@@ -424,10 +424,7 @@ export function syncFactChecksIntoExistingReport(
       ...report.meta,
       title: video.title || report.meta.title,
       channel: video.channel || report.meta.channel,
-      url:
-        video.inputMode === "report"
-          ? "팩트체크보고서 (직접 입력)"
-          : video.youtubeUrl || report.meta.url,
+      url: reportSourceLink(video),
     },
     factChecks: inlineFactChecks,
   });

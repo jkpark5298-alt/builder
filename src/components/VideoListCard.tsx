@@ -87,7 +87,7 @@ export function VideoListCard({
             )}
             {isReportInput(video) && (
               <span className="text-xs px-2 py-0.5 rounded-md bg-ink-900/90 text-white">
-                팩트체크보고서
+                {video.sourceUrl ? "URL 보고서" : "팩트체크보고서"}
               </span>
             )}
             <span className="text-xs text-ink-400">

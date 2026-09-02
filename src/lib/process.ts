@@ -123,6 +123,8 @@ export async function createReportJob(opts: {
   pastedScript?: string;
   creatorNotes?: string;
   thumbnailUrl?: string;
+  sourceUrl?: string;
+  articleImages?: string[];
 }): Promise<VideoRecord> {
   const script = normalizePastedText(opts.pastedScript ?? "");
   const title = opts.title.trim();
@@ -132,17 +134,23 @@ export async function createReportJob(opts: {
 
   const id = uuid();
   const now = new Date().toISOString();
-  const channel = opts.channel?.trim() || "직접 입력";
+  const sourceUrl = opts.sourceUrl?.trim() || undefined;
+  const articleImages = (opts.articleImages ?? []).filter(Boolean);
+  const channel =
+    opts.channel?.trim() || (sourceUrl ? "웹 기사" : "직접 입력");
   const description = opts.creatorNotes?.trim() ?? "";
   const chapters = description
     ? parseChaptersFromDescription(description)
     : [];
   const hasScript = hasUsablePastedScript(script);
+  const fromWeb = Boolean(sourceUrl);
 
   const record: VideoRecord = {
     id,
     inputMode: "report",
     youtubeUrl: "",
+    sourceUrl,
+    articleImages: articleImages.length ? articleImages : undefined,
     videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
     title,
     channel,
@@ -150,9 +158,13 @@ export async function createReportJob(opts: {
     description,
     chapters,
     transcript: script,
-    transcriptSource: script ? "pasted" : "none",
+    transcriptSource: script ? (fromWeb ? "web" : "pasted") : "none",
     scriptNotice: hasScript
-      ? `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
+      ? fromWeb
+        ? `웹 본문 전체(${script.length.toLocaleString()}자${
+            articleImages.length ? ` · 이미지 ${articleImages.length}장` : ""
+          })를 기준으로 요약합니다.`
+        : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
       : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
     summarySource: "none",
@@ -166,6 +178,7 @@ export async function createReportJob(opts: {
     tags: [
       "report",
       channel,
+      ...(fromWeb ? ["url-article"] : []),
       ...(hasScript ? ["has-script"] : ["no-script"]),
       ...(!hasScript ? ["manual-overview"] : []),
     ],
@@ -184,7 +197,11 @@ async function openReportManualOverview(
   const next: VideoRecord = {
     ...record,
     transcript: script,
-    transcriptSource: script ? "pasted" : "none",
+    transcriptSource: script
+      ? record.transcriptSource === "web" || record.sourceUrl
+        ? "web"
+        : "pasted"
+      : "none",
     scriptNotice: script
       ? `스크립트가 짧아(${script.length.toLocaleString()}자) 자동 요약 대신 수동 요약으로 시작합니다. 「1. 내용 요약」에 입력한 뒤 완료를 누르세요.`
       : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
@@ -217,6 +234,8 @@ export async function saveReportInputDraft(opts: {
   pastedScript?: string;
   creatorNotes?: string;
   thumbnailUrl?: string;
+  sourceUrl?: string;
+  articleImages?: string[];
 }): Promise<VideoRecord> {
   const title = opts.title.trim();
   if (title.length < 2) {
@@ -224,15 +243,25 @@ export async function saveReportInputDraft(opts: {
   }
 
   const script = normalizePastedText(opts.pastedScript ?? "");
-  const channel = opts.channel?.trim() || "직접 입력";
+  const sourceUrl = opts.sourceUrl?.trim() || undefined;
+  const articleImages = (opts.articleImages ?? []).filter(Boolean);
+  const fromWeb = Boolean(sourceUrl);
+  const channel =
+    opts.channel?.trim() || (fromWeb ? "웹 기사" : "직접 입력");
   const description = opts.creatorNotes?.trim() ?? "";
   const chapters = description
     ? parseChaptersFromDescription(description)
     : [];
   const now = new Date().toISOString();
   const scriptNotice = script
-    ? `입력 중 · 스크립트 ${script.length.toLocaleString()}자 (없어도 요약·검증을 시작할 수 있습니다)`
-    : "입력 중 · 제목만 저장됨. 스크립트 없이도 요약·검증을 시작할 수 있습니다.";
+    ? fromWeb
+      ? `입력 중 · 웹 본문 ${script.length.toLocaleString()}자${
+          articleImages.length ? ` · 이미지 ${articleImages.length}장` : ""
+        }`
+      : `입력 중 · 스크립트 ${script.length.toLocaleString()}자 (없어도 요약·검증을 시작할 수 있습니다)`
+    : fromWeb
+      ? "입력 중 · URL만 저장됨. 본문을 가져온 뒤 요약을 시작하세요."
+      : "입력 중 · 제목만 저장됨. 스크립트 없이도 요약·검증을 시작할 수 있습니다.";
 
   if (opts.id) {
     const existing = await getVideo(opts.id);
@@ -251,8 +280,16 @@ export async function saveReportInputDraft(opts: {
       channel,
       description,
       chapters,
+      sourceUrl: sourceUrl ?? existing.sourceUrl,
+      articleImages: articleImages.length
+        ? articleImages
+        : existing.articleImages,
       transcript: script,
-      transcriptSource: script ? "pasted" : "none",
+      transcriptSource: script
+        ? sourceUrl || existing.sourceUrl
+          ? "web"
+          : "pasted"
+        : "none",
       scriptNotice,
       thumbnailUrl: opts.thumbnailUrl?.trim() || existing.thumbnailUrl,
       tags: Array.from(
@@ -260,6 +297,7 @@ export async function saveReportInputDraft(opts: {
           ...existing.tags.filter((t) => t !== "has-script"),
           "report",
           channel,
+          ...(sourceUrl || existing.sourceUrl ? ["url-article"] : []),
           ...(script ? ["has-script"] : []),
         ])
       ),
@@ -274,6 +312,8 @@ export async function saveReportInputDraft(opts: {
     id,
     inputMode: "report",
     youtubeUrl: "",
+    sourceUrl,
+    articleImages: articleImages.length ? articleImages : undefined,
     videoId: `report-${id.replace(/-/g, "").slice(0, 11)}`,
     title,
     channel,
@@ -281,7 +321,7 @@ export async function saveReportInputDraft(opts: {
     description,
     chapters,
     transcript: script,
-    transcriptSource: script ? "pasted" : "none",
+    transcriptSource: script ? (fromWeb ? "web" : "pasted") : "none",
     scriptNotice,
     overview: "",
     summarySource: "none",
@@ -292,7 +332,12 @@ export async function saveReportInputDraft(opts: {
     report: null,
     infographic: null,
     status: "report_input_draft",
-    tags: ["report", channel, ...(script ? ["has-script"] : [])],
+    tags: [
+      "report",
+      channel,
+      ...(fromWeb ? ["url-article"] : []),
+      ...(script ? ["has-script"] : []),
+    ],
     createdAt: now,
     updatedAt: now,
   };
@@ -303,7 +348,8 @@ export async function saveReportInputDraft(opts: {
 /** 입력 임시 저장 → 요약·팩트체크 파이프라인 시작 */
 export async function startReportFromDraft(
   id: string,
-  creatorNotes?: string
+  creatorNotes?: string,
+  opts?: { manualOverview?: boolean }
 ): Promise<VideoRecord> {
   const existing = await getVideo(id);
   if (!existing) {
@@ -314,16 +360,19 @@ export async function startReportFromDraft(
   }
 
   const script = normalizePastedText(existing.transcript ?? "");
-  if (!hasUsablePastedScript(script)) {
+  if (opts?.manualOverview || !hasUsablePastedScript(script)) {
     return openReportManualOverview(existing, script);
   }
 
+  const fromWeb = Boolean(existing.sourceUrl?.trim());
   const now = new Date().toISOString();
   let record: VideoRecord = {
     ...existing,
     transcript: script,
-    transcriptSource: "pasted",
-    scriptNotice: `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`,
+    transcriptSource: fromWeb ? "web" : "pasted",
+    scriptNotice: fromWeb
+      ? `웹 본문 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
+      : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`,
     status: "queued",
     updatedAt: now,
   };
@@ -394,8 +443,14 @@ export async function runVideoPipeline(
         return openReportManualOverview(record, body);
       }
       text = body;
-      source = "pasted";
-      notice = `붙여넣은 스크립트 전체(${body.length.toLocaleString()}자)를 기준으로 요약합니다.`;
+      source =
+        record.transcriptSource === "web" || record.sourceUrl
+          ? "web"
+          : "pasted";
+      notice =
+        source === "web"
+          ? `웹 본문 전체(${body.length.toLocaleString()}자)를 기준으로 요약합니다.`
+          : `붙여넣은 스크립트 전체(${body.length.toLocaleString()}자)를 기준으로 요약합니다.`;
     } else {
       meta = script
         ? await fetchYoutubeMetaLite(record.youtubeUrl, record.videoId)
@@ -564,7 +619,11 @@ export async function runVideoPipeline(
       record = {
         ...record,
         transcript: script || record.transcript,
-        transcriptSource: script ? "pasted" : record.transcriptSource,
+        transcriptSource: script
+          ? record.transcriptSource === "web" || record.sourceUrl
+            ? "web"
+            : "pasted"
+          : record.transcriptSource,
         overview: record.overview || "",
         summarySource: "none",
         summaryBullets: record.summaryBullets?.length
@@ -611,10 +670,13 @@ export async function createAndProcessReport(opts: {
   pastedScript?: string;
   creatorNotes?: string;
   thumbnailUrl?: string;
+  sourceUrl?: string;
+  articleImages?: string[];
+  manualOverview?: boolean;
 }): Promise<VideoRecord> {
   const job = await createReportJob(opts);
   const script = normalizePastedText(opts.pastedScript ?? "");
-  if (!hasUsablePastedScript(script)) {
+  if (opts.manualOverview || !hasUsablePastedScript(script)) {
     return openReportManualOverview(job, script);
   }
   return runVideoPipeline(job.id, opts.creatorNotes, script);
@@ -783,7 +845,10 @@ export async function prepareReprocess(
     ...(script
       ? {
           transcript: script,
-          transcriptSource: "pasted" as const,
+          transcriptSource:
+            existing.transcriptSource === "web" || existing.sourceUrl
+              ? ("web" as const)
+              : ("pasted" as const),
           scriptNotice: `스크립트 전체(${script.length.toLocaleString()}자)로 상세 재요약 중…`,
         }
       : {

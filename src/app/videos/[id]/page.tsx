@@ -1,4 +1,5 @@
 import { ReportCreateForm } from "@/components/ReportCreateForm";
+import { UrlArticleForm } from "@/components/UrlArticleForm";
 import { ThumbnailEditor } from "@/components/ThumbnailEditor";
 import { getVideo, upsertVideo } from "@/lib/store";
 import { ensureSkeletonReport } from "@/lib/report-skeleton";
@@ -19,7 +20,7 @@ import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { factCheckProgress } from "@/lib/factcheck";
 import { isHistoryFactCheckFlow } from "@/lib/history-flow";
-import { isYoutubeInput, isFactCheckPass, needsFactCheckDecision } from "@/lib/input-mode";
+import { isYoutubeInput, isFactCheckPass, needsFactCheckDecision, isUrlArticleInput } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { formatTagList } from "@/lib/tags";
 import { REPORT_TYPE_LABELS } from "@/lib/types";
@@ -46,24 +47,53 @@ export default async function VideoDetailPage({
   }
 
   if (video.status === "report_input_draft") {
+    const urlDraft = isUrlArticleInput(video);
     return (
       <div className="space-y-6 pb-24 sm:pb-8">
         <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-700">
-          <strong>입력 중</strong> — 제목을 채운 뒤 임시 저장하거나, 스크립트
-          없이도 요약·검증을 시작하세요.
+          {urlDraft ? (
+            <>
+              <strong>URL 입력 중</strong> — 본문·이미지를 가져온 뒤 저장하고,
+              AI 또는 수동 요약을 시작하세요.
+            </>
+          ) : (
+            <>
+              <strong>입력 중</strong> — 제목을 채운 뒤 임시 저장하거나, 스크립트
+              없이도 요약·검증을 시작하세요.
+            </>
+          )}
         </div>
-        <ReportCreateForm
-          draftId={video.id}
-          initial={{
-            title: video.title,
-            channel: video.channel === "직접 입력" ? "" : video.channel,
-            creatorNotes: video.description ?? "",
-            pastedScript: video.transcript ?? "",
-            thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
-              ? ""
-              : video.thumbnailUrl,
-          }}
-        />
+        {urlDraft ? (
+          <UrlArticleForm
+            draftId={video.id}
+            initial={{
+              title: video.title,
+              sourceUrl: video.sourceUrl ?? "",
+              channel:
+                video.channel === "직접 입력" || video.channel === "웹 기사"
+                  ? ""
+                  : video.channel,
+              pastedScript: video.transcript ?? "",
+              thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+                ? ""
+                : video.thumbnailUrl,
+              articleImages: video.articleImages,
+            }}
+          />
+        ) : (
+          <ReportCreateForm
+            draftId={video.id}
+            initial={{
+              title: video.title,
+              channel: video.channel === "직접 입력" ? "" : video.channel,
+              creatorNotes: video.description ?? "",
+              pastedScript: video.transcript ?? "",
+              thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+                ? ""
+                : video.thumbnailUrl,
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -170,6 +200,15 @@ export default async function VideoDetailPage({
               >
                 {video.youtubeUrl}
               </a>
+            ) : video.sourceUrl ? (
+              <a
+                href={video.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-ink-500 hover:text-accent mt-2 inline-block break-all"
+              >
+                {video.sourceUrl}
+              </a>
             ) : (
               <p className="text-sm text-ink-400 mt-2">
                 팩트체크보고서 · 직접 입력
@@ -178,7 +217,13 @@ export default async function VideoDetailPage({
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-ink-500">
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-              {isYoutube ? (fcPass ? "유튜브 · 팩트체크 pass" : "유튜브") : "팩트체크보고서"}
+              {isYoutube
+                ? fcPass
+                  ? "유튜브 · 팩트체크 pass"
+                  : "유튜브"
+                : video.sourceUrl
+                  ? "팩트체크보고서 · URL"
+                  : "팩트체크보고서"}
             </span>
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {REPORT_TYPE_LABELS[video.reportType]}
@@ -192,15 +237,17 @@ export default async function VideoDetailPage({
               스크립트:{" "}
               {video.transcriptSource === "pasted"
                 ? "붙여넣은 스크립트"
-                : video.transcriptSource === "youtube"
-                  ? "자막"
-                  : video.transcriptSource === "youtube_auto"
-                    ? "자동자막→텍스트"
-                    : video.transcriptSource === "speech_text"
-                      ? "음성→텍스트"
-                      : video.transcriptSource === "creator_meta"
-                        ? "설명·챕터만"
-                        : "없음"}
+                : video.transcriptSource === "web"
+                  ? "웹 본문"
+                  : video.transcriptSource === "youtube"
+                    ? "자막"
+                    : video.transcriptSource === "youtube_auto"
+                      ? "자동자막→텍스트"
+                      : video.transcriptSource === "speech_text"
+                        ? "음성→텍스트"
+                        : video.transcriptSource === "creator_meta"
+                          ? "설명·챕터만"
+                          : "없음"}
             </span>
             <span
               className={`rounded-md border px-2 py-1 ${

@@ -44,6 +44,8 @@ export async function POST(req: Request) {
       creatorNotes?: string;
       pastedScript?: string;
       thumbnailUrl?: string;
+      sourceUrl?: string;
+      articleImages?: string[];
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
       /** 유튜브 팩트체크 pass — 검증 없이 바로 보고서 */
@@ -64,6 +66,8 @@ export async function POST(req: Request) {
         pastedScript: body.pastedScript,
         creatorNotes: body.creatorNotes?.trim(),
         thumbnailUrl: body.thumbnailUrl?.trim(),
+        sourceUrl: body.sourceUrl?.trim(),
+        articleImages: body.articleImages,
       });
       return NextResponse.json({
         video,
@@ -87,15 +91,22 @@ export async function POST(req: Request) {
         pastedScript,
         creatorNotes: body.creatorNotes?.trim(),
         thumbnailUrl: body.thumbnailUrl?.trim(),
+        sourceUrl: body.sourceUrl?.trim(),
+        articleImages: body.articleImages,
+        manualOverview: body.manualOverview === true,
       });
       const hasScript = hasUsablePastedScript(pastedScript);
       return NextResponse.json({
         video,
         processing: false,
         storage: storageMode(),
-        scriptNotice: hasScript
-          ? "붙여넣은 스크립트를 기준으로 요약합니다."
-          : "스크립트 없이 시작합니다. 내용 요약에 수동으로 입력해 주세요.",
+        scriptNotice: body.manualOverview
+          ? "수동 요약 화면으로 열었습니다. 내용 요약에 직접 입력해 주세요."
+          : hasScript
+            ? body.sourceUrl
+              ? "가져온 웹 본문을 기준으로 요약합니다."
+              : "붙여넣은 스크립트를 기준으로 요약합니다."
+            : "스크립트 없이 시작합니다. 내용 요약에 수동으로 입력해 주세요.",
       });
     }
 

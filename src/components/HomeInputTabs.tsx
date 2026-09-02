@@ -25,6 +25,7 @@ function tabFromHash(hash: string): Tab | null {
     h === "factcheck" ||
     h === "fc-home" ||
     h === "fc-input" ||
+    h === "fc-url" ||
     h === "fc-status" ||
     h === "report-create" ||
     h === "report-list" ||
@@ -92,7 +93,7 @@ export function HomeInputTabs({
     {
       id: "factcheck",
       label: "팩트체크 보고서",
-      hint: "요약 · 검증 · 보고서",
+      hint: "URL · 붙여넣기 · 검증",
     },
     { id: "topic", label: "주제", hint: "태그 모아 통합 보고서" },
   ];

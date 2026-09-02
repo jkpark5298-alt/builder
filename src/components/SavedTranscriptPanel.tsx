@@ -10,11 +10,15 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
   const [copied, setCopied] = useState(false);
 
   const text = (video.transcript ?? "").trim();
-  const hasScript = text.length > 80;
+  const images = (video.articleImages ?? []).filter(Boolean);
+  const isWeb = video.transcriptSource === "web" || Boolean(video.sourceUrl);
+  const hasScript = text.length > 80 || images.length > 0;
   const sourceLabel = useMemo(() => {
     switch (video.transcriptSource) {
       case "pasted":
         return "붙여넣기";
+      case "web":
+        return "웹 본문";
       case "youtube":
         return "유튜브 자막";
       case "youtube_auto":
@@ -24,9 +28,9 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
       case "creator_meta":
         return "설명·챕터";
       default:
-        return "없음";
+        return isWeb ? "웹 본문" : "없음";
     }
-  }, [video.transcriptSource]);
+  }, [video.transcriptSource, isWeb]);
 
   async function copyAll() {
     if (!text) return;
@@ -38,7 +42,8 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
   if (!hasScript) {
     return (
       <div className="rounded-xl border border-ink-200 bg-ink-50/80 px-4 py-3 text-sm text-ink-600">
-        저장된 자막이 없습니다. 홈에서 자막을 가져와 요약하면 여기에 보관됩니다.
+        저장된 {isWeb ? "본문" : "자막"}이 없습니다. 홈에서 본문·자막을 가져와
+        요약하면 여기에 보관됩니다.
       </div>
     );
   }
@@ -59,10 +64,11 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
           )}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-ink-900">
-              저장된 자막 (스크립트)
+              {isWeb ? "저장된 본문" : "저장된 자막 (스크립트)"}
             </p>
             <p className="text-xs text-ink-500 mt-0.5">
-              {sourceLabel} · {text.length.toLocaleString()}자 · 눌러서{" "}
+              {sourceLabel} · {text.length.toLocaleString()}자
+              {images.length ? ` · 이미지 ${images.length}장` : ""} · 눌러서{" "}
               {open ? "접기" : "보기"}
             </p>
           </div>
@@ -71,22 +77,37 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
           type="button"
           onClick={() => void copyAll()}
           className="self-center shrink-0 inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent"
-          aria-label="저장된 자막 복사"
+          aria-label={isWeb ? "저장된 본문 복사" : "저장된 자막 복사"}
         >
           {copied ? (
             <Check className="h-3.5 w-3.5 text-emerald-600" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}
-          {copied ? "복사됨" : "자막 복사"}
+          {copied ? "복사됨" : isWeb ? "본문 복사" : "자막 복사"}
         </button>
       </div>
 
       {open && (
-        <div className="border-t border-ink-100 px-4 pb-4 pt-3">
-          <pre className="max-h-72 overflow-auto rounded-lg border border-ink-100 bg-ink-50/80 p-3 text-xs sm:text-sm text-ink-800 whitespace-pre-wrap leading-relaxed">
-            {text}
-          </pre>
+        <div className="border-t border-ink-100 px-4 pb-4 pt-3 space-y-3">
+          {images.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {images.map((src, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${src}-${i}`}
+                  src={src}
+                  alt={`본문 이미지 ${i + 1}`}
+                  className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
+                />
+              ))}
+            </div>
+          )}
+          {text ? (
+            <pre className="max-h-72 overflow-auto rounded-lg border border-ink-100 bg-ink-50/80 p-3 text-xs sm:text-sm text-ink-800 whitespace-pre-wrap leading-relaxed">
+              {text}
+            </pre>
+          ) : null}
         </div>
       )}
     </div>

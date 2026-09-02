@@ -20,6 +20,7 @@ export type SummaryMeta = YoutubeMeta & {
     | "youtube_auto"
     | "speech_text"
     | "pasted"
+    | "web"
     | "creator_meta"
     | "none";
   videoId?: string;
@@ -555,6 +556,7 @@ function hasRealScript(meta: SummaryMeta, transcript: string): boolean {
   const cleaned = cleanTranscript(transcript);
   return (
     (meta.transcriptSource === "pasted" ||
+      meta.transcriptSource === "web" ||
       meta.transcriptSource === "youtube" ||
       meta.transcriptSource === "youtube_auto" ||
       meta.transcriptSource === "speech_text") &&

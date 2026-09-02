@@ -3,7 +3,7 @@ export type ClaimType = "claim" | "opinion" | "info";
 /** H=역사, S=주식, C=교양, P=정치/시사 */
 export type ReportType = "H" | "S" | "C" | "P";
 
-/** youtube: URL·자막 자동 / report: 스크립트 직접 입력 */
+/** youtube: URL·자막 자동 / report: 스크립트 직접 입력 또는 웹 URL 본문 */
 export type InputMode = "youtube" | "report";
 
 export type FactCheckVerdict =
@@ -196,6 +196,13 @@ export interface VideoRecord {
    */
   factCheckDecision?: "do" | "pass";
   youtubeUrl: string;
+  /**
+   * 팩트체크보고서 URL 입력 — 기사·웹 페이지 원문 주소.
+   * youtubeUrl과 별개. 보고서 메타 링크에 사용.
+   */
+  sourceUrl?: string;
+  /** URL에서 가져온 본문 이미지 (저장소 URL) */
+  articleImages?: string[];
   videoId: string;
   title: string;
   channel: string;
@@ -209,6 +216,7 @@ export interface VideoRecord {
     | "youtube_auto"
     | "speech_text"
     | "pasted"
+    | "web"
     | "creator_meta"
     | "none";
   /** 스크립트 없음/대체 소스 안내 */

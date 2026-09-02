@@ -6,20 +6,23 @@ import {
   ClipboardPaste,
   FileText,
   Library,
+  Link2,
   PenLine,
   ShieldCheck,
 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
+import { isUrlArticleInput } from "@/lib/input-mode";
 import {
   isReportInputDraft,
   isReportPending,
   libraryStage,
 } from "@/lib/library";
 import { ReportCreateForm } from "@/components/ReportCreateForm";
+import { UrlArticleForm } from "@/components/UrlArticleForm";
 import { ReportListPanel } from "@/components/ReportListPanel";
 import { VideoListCard } from "@/components/VideoListCard";
 
-type HubView = "home" | "input" | "status";
+type HubView = "home" | "input" | "url" | "status";
 type InputStep = "summary" | "factcheck" | "report";
 
 function listKindFor(
@@ -78,6 +81,8 @@ export function FactcheckReportHub({
         setShowAllReports(hash === "report-list");
       } else if (hash === "fc-input" || hash === "report-create") {
         setView("input");
+      } else if (hash === "fc-url") {
+        setView("url");
       } else if (
         hash === "fc-home" ||
         hash === "paste" ||
@@ -101,6 +106,8 @@ export function FactcheckReportHub({
         if (href.includes("#report-list")) setShowAllReports(true);
       } else if (href.includes("#fc-input") || href.includes("#report-create")) {
         setView("input");
+      } else if (href.includes("#fc-url")) {
+        setView("url");
       }
     }
     document.addEventListener("click", onClick);
@@ -109,6 +116,7 @@ export function FactcheckReportHub({
 
   function go(next: HubView, hash: string) {
     setView(next);
+    if (next === "url" || next === "input") setInputStep("summary");
     if (next !== "status") setShowAllReports(false);
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/#${hash}`);
@@ -133,14 +141,22 @@ export function FactcheckReportHub({
     [workItems]
   );
 
+  const urlWorkItems = useMemo(
+    () => sortedWorkItems.filter(isUrlArticleInput),
+    [sortedWorkItems]
+  );
+  const pasteWorkItems = useMemo(
+    () => sortedWorkItems.filter((v) => !isUrlArticleInput(v)),
+    [sortedWorkItems]
+  );
+
   const latestFive = sortedCompleted.slice(0, 5);
-  const latestWorkFive = sortedWorkItems.slice(0, 5);
+  const latestPasteWork = pasteWorkItems.slice(0, 5);
+  const latestUrlWork = urlWorkItems.slice(0, 5);
   const statusList = showAllReports ? sortedCompleted : latestFive;
 
-  const stepItems = useMemo(
-    () => workItems.filter((v) => factcheckWorkStep(v) === inputStep),
-    [workItems, inputStep]
-  );
+  const stepPool = view === "url" ? urlWorkItems : pasteWorkItems;
+  const stepItems = stepPool.filter((v) => factcheckWorkStep(v) === inputStep);
 
   if (view === "input") {
     return (
@@ -194,7 +210,7 @@ export function FactcheckReportHub({
           ).map((s) => {
             const Icon = s.icon;
             const active = inputStep === s.id;
-            const count = workItems.filter(
+            const count = pasteWorkItems.filter(
               (v) => factcheckWorkStep(v) === s.id
             ).length;
             return (
@@ -321,6 +337,186 @@ export function FactcheckReportHub({
     );
   }
 
+  if (view === "url") {
+    return (
+      <section id="fc-url" className="space-y-5 scroll-mt-24">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => go("home", "fc-home")}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-700 hover:border-accent"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            뒤로
+          </button>
+          <div>
+            <h2 className="font-display text-xl text-ink-900 flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-accent" />
+              URL 입력
+            </h2>
+            <p className="text-sm text-ink-500 mt-0.5">
+              제목·URL → 본문·이미지 저장 → AI/수동 요약 → 팩트체크·보고서
+            </p>
+          </div>
+        </div>
+
+        <div
+          className="grid gap-2 sm:grid-cols-3"
+          role="tablist"
+          aria-label="URL 입력 단계"
+        >
+          {(
+            [
+              {
+                id: "summary" as const,
+                label: "요약",
+                hint: "URL 본문 · AI/수동",
+                icon: Link2,
+              },
+              {
+                id: "factcheck" as const,
+                label: "팩트체크 내용",
+                hint: "요약 기반 검증 입력",
+                icon: ShieldCheck,
+              },
+              {
+                id: "report" as const,
+                label: "보고서 작성",
+                hint: "정리 + 이미지",
+                icon: PenLine,
+              },
+            ] as const
+          ).map((s) => {
+            const Icon = s.icon;
+            const active = inputStep === s.id;
+            const count = urlWorkItems.filter(
+              (v) => factcheckWorkStep(v) === s.id
+            ).length;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setInputStep(s.id)}
+                className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                  active
+                    ? "border-accent bg-accent-muted/40 shadow-sm"
+                    : "border-ink-200 bg-white hover:border-accent/50"
+                }`}
+              >
+                <span className="flex items-center gap-2 font-semibold text-ink-900 text-sm">
+                  <Icon className="h-4 w-4 text-accent shrink-0" />
+                  {s.label}
+                  {count > 0 && (
+                    <span className="ml-auto text-xs font-medium text-ink-500">
+                      {count}
+                    </span>
+                  )}
+                </span>
+                <span className="block text-[11px] text-ink-500 mt-1 pl-6">
+                  {s.hint}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {inputStep === "summary" && (
+          <div className="space-y-4">
+            <UrlArticleForm />
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium text-ink-700">
+                URL 본문·요약 이어하기
+              </h3>
+              {stepItems.length === 0 ? (
+                <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-6 text-center">
+                  진행 중인 URL 항목이 없습니다. 위에서 제목과 URL을 넣어
+                  본문을 가져오세요.
+                </p>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {stepItems.map((v) => (
+                    <div key={v.id} className="space-y-2">
+                      <VideoListCard video={v} listKind={listKindFor(v)} />
+                      <a
+                        href={stepHref(v, "summary")}
+                        className="flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-ink-900 bg-ink-900 text-sm font-medium text-white hover:opacity-90"
+                      >
+                        <Link2 className="h-4 w-4" />
+                        본문·요약 이어서
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {inputStep === "factcheck" && (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
+              URL에서 가져온 본문을 요약한 뒤 팩트체크를 입력합니다. 항목을
+              고르면 해당 화면으로 이동합니다.
+            </p>
+            {stepItems.length === 0 ? (
+              <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
+                팩트체크 진행 항목이 없습니다. 「요약」에서 본문을 저장하고
+                AI 또는 수동 요약을 마치세요.
+              </p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {stepItems.map((v) => (
+                  <div key={v.id} className="space-y-2">
+                    <VideoListCard video={v} listKind={listKindFor(v)} />
+                    <a
+                      href={stepHref(v, "factcheck")}
+                      className="flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-ink-900 bg-ink-900 text-sm font-medium text-white hover:opacity-90"
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      팩트체크 입력
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {inputStep === "report" && (
+          <div className="space-y-3">
+            <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
+              요약·팩트체크를 정리하고 이미지를 넣습니다. 작성 화면으로
+              이동합니다.
+            </p>
+            {stepItems.length === 0 ? (
+              <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
+                보고서 작성 대기 항목이 없습니다. 팩트체크를 마치면 여기로
+                옵니다.
+              </p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {stepItems.map((v) => (
+                  <div key={v.id} className="space-y-2">
+                    <VideoListCard video={v} listKind={listKindFor(v)} />
+                    <a
+                      href={stepHref(v, "report")}
+                      className="flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-ink-900 bg-ink-900 text-sm font-medium text-white hover:opacity-90"
+                    >
+                      <PenLine className="h-4 w-4" />
+                      보고서 작성
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   if (view === "status") {
     return (
       <section id="fc-status" className="space-y-5 scroll-mt-24">
@@ -380,7 +576,38 @@ export function FactcheckReportHub({
 
   return (
     <section id="fc-home" className="space-y-4 scroll-mt-24">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <button
+          type="button"
+          onClick={() => go("url", "fc-url")}
+          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
+        >
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
+            <Link2 className="h-5 w-5" />
+          </span>
+          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+            URL 입력
+          </span>
+          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+            제목·URL → 본문·이미지 저장 → AI/수동 요약
+          </span>
+          {latestUrlWork.length > 0 ? (
+            <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
+              {latestUrlWork.map((v, i) => (
+                <li key={v.id} className="flex gap-1.5 min-w-0">
+                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
+                  <span className="truncate">{v.title || "제목 없음"}</span>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+              <FileText className="h-3.5 w-3.5" />
+              작업 중 없음
+            </span>
+          )}
+        </button>
+
         <button
           type="button"
           onClick={() => go("input", "fc-input")}
@@ -395,9 +622,9 @@ export function FactcheckReportHub({
           <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
             요약 붙여넣기 → 팩트체크 입력 → 보고서 작성·이미지
           </span>
-          {latestWorkFive.length > 0 ? (
+          {latestPasteWork.length > 0 ? (
             <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
-              {latestWorkFive.map((v, i) => (
+              {latestPasteWork.map((v, i) => (
                 <li key={v.id} className="flex gap-1.5 min-w-0">
                   <span className="shrink-0 tabular-nums">{i + 1}.</span>
                   <span className="truncate">{v.title || "제목 없음"}</span>

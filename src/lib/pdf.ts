@@ -12,6 +12,7 @@ import { parseBodySImageSlots } from "./report-body-s-slots";
 import { sectionSlotCapacity } from "./report-images";
 import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
+import { reportSourceLink } from "./input-mode";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 
@@ -389,7 +390,7 @@ export async function buildReportPdf(
 
   writeWrapped(`제목: ${video.title}`, 12, 6);
   writeWrapped(`채널: ${video.channel}`, 11, 4);
-  writeWrapped(`링크: ${video.youtubeUrl}`, 10, 4);
+  writeWrapped(`링크: ${reportSourceLink(video)}`, 10, 4);
   writeWrapped(
     `작성일: ${report?.meta.writtenAt ?? new Date(video.updatedAt).toLocaleString("ko-KR")}`,
     10,

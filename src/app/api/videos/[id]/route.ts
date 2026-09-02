@@ -213,9 +213,13 @@ async function patchVideo(req: Request, ctx: Ctx) {
       creatorNotes?: string;
       pastedScript?: string;
       thumbnailUrl?: string;
+      sourceUrl?: string;
+      articleImages?: string[];
     };
     /** Report 입력 임시 저장 → 요약·검증 시작 */
     startReportPipeline?: boolean;
+    /** startReportPipeline 시 AI 요약 건너뛰고 수동 요약 */
+    manualOverview?: boolean;
     /** 완료(ready) → 임시 저장(awaiting_factcheck)으로 되돌림 */
     reopenAsDraft?: boolean;
     /**
@@ -355,6 +359,9 @@ async function patchVideo(req: Request, ctx: Ctx) {
       pastedScript: body.updateReportInput.pastedScript ?? video.transcript,
       creatorNotes: body.updateReportInput.creatorNotes,
       thumbnailUrl: body.updateReportInput.thumbnailUrl,
+      sourceUrl: body.updateReportInput.sourceUrl ?? video.sourceUrl,
+      articleImages:
+        body.updateReportInput.articleImages ?? video.articleImages,
     });
     return jsonVideo(saved, { mode: "report_input_draft" });
   }
@@ -377,11 +384,15 @@ async function patchVideo(req: Request, ctx: Ctx) {
         pastedScript: script,
         creatorNotes: body.updateReportInput.creatorNotes,
         thumbnailUrl: body.updateReportInput.thumbnailUrl,
+        sourceUrl: body.updateReportInput.sourceUrl ?? video.sourceUrl,
+        articleImages:
+          body.updateReportInput.articleImages ?? video.articleImages,
       });
     }
     const processed = await startReportFromDraft(
       video.id,
-      body.updateReportInput?.creatorNotes?.trim()
+      body.updateReportInput?.creatorNotes?.trim(),
+      { manualOverview: body.manualOverview === true }
     );
     return jsonVideo(processed, { mode: "report_pipeline_started" });
   }
