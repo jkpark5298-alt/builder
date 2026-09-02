@@ -41,7 +41,8 @@ import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { preferPlainPaste } from "@/lib/device";
-import { isFactCheckPass, reportDocumentTitle } from "@/lib/input-mode";
+import { isFactCheckPass, isUrlArticleInput, reportDocumentTitle } from "@/lib/input-mode";
+import { withArticleImages } from "@/lib/report-skeleton";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
   bindSectionSlotUrls,
@@ -98,6 +99,7 @@ import {
   mergeReportSectionsToSingleBody,
   normalizeAiReportPaste,
   replaceAllReportBodies,
+  reportBodyPlain,
   sanitizeAiPasteText,
 } from "@/lib/report";
 import {
@@ -122,6 +124,39 @@ type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
 const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "기타"] as const;
 
+function UrlArticleImageGallery({ urls }: { urls: string[] }) {
+  return (
+    <div className="rounded-xl border border-ink-200 bg-white p-3 space-y-2">
+      <p className="text-sm font-medium text-ink-900">
+        가져온 본문 이미지
+        {urls.length ? ` · ${urls.length}장` : ""}
+      </p>
+      {urls.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {urls.map((src, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`${src}-${i}`}
+              src={src}
+              alt={`본문 이미지 ${i + 1}`}
+              className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-ink-500">
+          저장된 본문 이미지가 없습니다. URL 입력에서 본문·이미지를
+          가져온 뒤 저장하면 여기에 표시됩니다.
+        </p>
+      )}
+      <p className="text-xs text-ink-500">
+        가져온 사진입니다. 본문에 붙이려면 문장 끝에 S를 입력하거나, 이미지
+        룸에서 「현재 섹션에 넣기」를 누르세요.
+      </p>
+    </div>
+  );
+}
+
 export function EditableReportPanel({
   video,
   draftPhase = false,
@@ -142,12 +177,24 @@ export function EditableReportPanel({
   const [draft, setDraft] = useState<TypedReport | null>(
     report ? normalizeReportImageRefs(report) : report
   );
+  const sourcePageUrl = [
+    localVideo.sourceUrl,
+    video.sourceUrl,
+    draft?.meta.url,
+    localVideo.report?.meta.url,
+    video.report?.meta.url,
+  ]
+    .map((u) => (u || "").trim())
+    .find((u) => /^https?:\/\//i.test(u) && !/youtu\.?be/i.test(u)) || "";
+  const urlArticle =
+    isUrlArticleInput(localVideo) || Boolean(sourcePageUrl);
   const [openFcKey, setOpenFcKey] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
   const [activeSectionIdx, setActiveSectionIdx] = useState(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
+  const [articleImportBusy, setArticleImportBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [organizeResult, setOrganizeResult] =
@@ -374,7 +421,7 @@ export function EditableReportPanel({
   useEffect(() => {
     if (editing && !wasEditingRef.current && report) {
       const stabilized = stabilizeReportFcAnchors(cloneReport(report));
-      setDraft(stabilized);
+      setDraft(withArticleImages(stabilized, localVideo));
       setSavedSections(report.sections.map(sectionSnapshot));
       setSectionSavedFlash({});
       lastSavedSnapRef.current = JSON.stringify(report);
@@ -382,7 +429,7 @@ export function EditableReportPanel({
       resetHistory();
     }
     wasEditingRef.current = editing;
-  }, [editing, report, resetHistory]);
+  }, [editing, report, localVideo, resetHistory]);
 
   useEffect(() => {
     if (mode !== "body" || !draft) return;
@@ -577,6 +624,12 @@ export function EditableReportPanel({
 
   useEffect(() => {
     if (!draft) return;
+    const merged = withArticleImages(draft, localVideo);
+    if (merged !== draft) {
+      imageRoomSeededRef.current = true;
+      setDraft(merged);
+      return;
+    }
     if (imageRoomSeededRef.current) return;
     if ((draft.imageRoom?.length ?? 0) > 0) {
       imageRoomSeededRef.current = true;
@@ -599,13 +652,42 @@ export function EditableReportPanel({
           }
         : prev
     );
-  }, [draft, fcByItem]);
+  }, [draft, fcByItem, localVideo]);
 
   const openMarker = markers.find((m) => m.key === openFcKey) ?? null;
-  const imageRoom = useMemo(
-    () => normalizeRoomItems(draft?.imageRoom),
-    [draft?.imageRoom]
-  );
+  const imageRoom = useMemo(() => {
+    const base = normalizeRoomItems(draft?.imageRoom);
+    if (!urlArticle) return base;
+    const extras = (localVideo.articleImages ?? []).filter(Boolean);
+    if (!extras.length) return base;
+    return upsertRoomUrls(base, extras).room;
+  }, [draft?.imageRoom, localVideo.articleImages, urlArticle]);
+  const urlArticleImages = useMemo(() => {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+    for (const u of [
+      ...(localVideo.articleImages ?? []),
+      ...imageRoom.map((r) => r.url),
+    ]) {
+      const url = u.trim();
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+    return urls;
+  }, [localVideo.articleImages, imageRoom]);
+  const unusedUrlArticleImages = useMemo(() => {
+    if (!draft) return urlArticleImages;
+    const used = new Set<string>();
+    for (const sec of draft.sections) {
+      const n = countTrailingSMarkers(sec.body || "");
+      const cap = sectionSlotCapacity(sec, n);
+      for (const u of orderedSlotUrls(sec, draft.imageRoom, cap)) {
+        if (u) used.add(u);
+      }
+    }
+    return urlArticleImages.filter((u) => !used.has(u));
+  }, [draft, urlArticleImages]);
   const unusedRoomCount = useMemo(
     () => (draft ? countUnreferencedRoomItems(draft) : 0),
     [draft]
@@ -1384,6 +1466,41 @@ export function EditableReportPanel({
       if (room.length === normalizeRoomItems(prev.imageRoom).length) return prev;
       return { ...prev, imageRoom: room };
     }, { history });
+  }
+
+  async function importArticleImagesFromSource() {
+    const url = sourcePageUrl;
+    if (!url) {
+      alert("원문 URL이 없습니다.");
+      return;
+    }
+    setArticleImportBusy(true);
+    try {
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ importArticleImages: url }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "사진을 가져오지 못했습니다.");
+      if (data.video) {
+        setLocalVideo(data.video);
+        if (data.video.report) {
+          const merged = withArticleImages(
+            normalizeReportImageRefs(data.video.report),
+            data.video
+          );
+          setDraft(merged);
+        } else if ((data.video.articleImages ?? []).length) {
+          patchImageRoom(data.video.articleImages ?? [], "none");
+        }
+      }
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "사진을 가져오지 못했습니다.");
+    } finally {
+      setArticleImportBusy(false);
+    }
   }
 
   async function addImagesToRoom(files: File[]) {
@@ -2227,6 +2344,10 @@ export function EditableReportPanel({
           </p>
         </div>
 
+        {urlArticle && editing && urlArticleImages.length > 0 && (
+          <UrlArticleImageGallery urls={urlArticleImages} />
+        )}
+
         {editing && (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
             <div className="md:sticky md:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white md:bg-white/95 md:backdrop-blur-md px-3 py-2 space-y-2 md:shadow-sm">
@@ -2579,12 +2700,31 @@ export function EditableReportPanel({
               </div>
             )}
 
+            {urlArticle && (
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs font-medium text-ink-700">
                   이미지 룸 · 재사용 보관함
                 </p>
                 <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void importArticleImagesFromSource()}
+                      disabled={articleImportBusy}
+                      className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2 py-1 text-xs font-medium text-accent disabled:opacity-50"
+                    >
+                      {articleImportBusy ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          가져오는 중…
+                        </>
+                      ) : (
+                        <>
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          원문에서 사진 가져오기
+                        </>
+                      )}
+                    </button>
                   {unusedRoomCount > 0 && (
                     <button
                       type="button"
@@ -2614,8 +2754,8 @@ export function EditableReportPanel({
                 </div>
               </div>
               <p className="text-[11px] text-ink-500">
-                같은 그림은 한 번만 저장됩니다. 본문에는 「현재 섹션에 넣기」로
-                붙이거나 Ctrl+V / 파일로 S칸에 넣으세요.
+                「원문에서 사진 가져오기」로 페이지 사진을 이 칸에 넣습니다.
+                본문에는 「현재 섹션에 넣기」 또는 문장 끝 S로 붙이세요.
               </p>
               <input
                 id="report-room-upload"
@@ -2686,13 +2826,33 @@ export function EditableReportPanel({
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-ink-500">
-                  {hideFactCheck
-                    ? "본문에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."
-                    : "본문/팩트체크에서 사용한 이미지가 자동으로 모이며, 여기서 현재 섹션으로 다시 넣을 수 있습니다."}
-                </p>
+                <div className="space-y-2">
+                  <p className="text-xs text-ink-500">
+                    보관된 사진이 없습니다. 아래 버튼으로 원문 페이지 사진을
+                    가져오세요.
+                  </p>
+                    <button
+                      type="button"
+                      onClick={() => void importArticleImagesFromSource()}
+                      disabled={articleImportBusy}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-white px-3 py-2 text-xs font-medium text-accent disabled:opacity-50"
+                    >
+                      {articleImportBusy ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          원문 사진 가져오는 중…
+                        </>
+                      ) : (
+                        <>
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          원문에서 사진 가져오기
+                        </>
+                      )}
+                    </button>
+                </div>
               )}
             </div>
+            )}
 
             <div className="p-4 sm:p-5">
               {draft.sections.map((sec, idx) => {
@@ -3244,6 +3404,9 @@ export function EditableReportPanel({
               </div>
             );
           })}
+          {urlArticle && unusedUrlArticleImages.length > 0 && (
+            <UrlArticleImageGallery urls={unusedUrlArticleImages} />
+          )}
         </div>
 
         {handwritingFor !== null && (

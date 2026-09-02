@@ -9,6 +9,7 @@ import { resolveAnswerParts } from "./answer-parts";
 import { dedupeTexts, normalizeAiAnswer } from "./text-format";
 import { REPORT_TYPE_LABELS } from "./types";
 import { isUrlArticleInput, isYoutubeInput, reportSourceLink } from "./input-mode";
+import { withArticleImages } from "./report-skeleton";
 import type {
   FactCheckResult,
   SummaryItem,
@@ -90,6 +91,7 @@ export async function writeReportWithLlm(
     | "transcript"
     | "tags"
     | "transcriptSource"
+    | "articleImages"
   >
 ): Promise<TypedReport | null> {
   if (!hasLlm()) return null;
@@ -445,13 +447,17 @@ export async function buildReportDocument(
   video: Parameters<typeof buildTypedReport>[0] &
     Pick<
       VideoRecord,
-      "skipFactCheck" | "transcript" | "tags" | "transcriptSource"
+      | "skipFactCheck"
+      | "transcript"
+      | "tags"
+      | "transcriptSource"
+      | "articleImages"
     >
 ): Promise<ReportBuildResult> {
   const llmReport = await writeReportWithLlm(video);
   if (llmReport?.sections?.length) {
     return {
-      report: llmReport,
+      report: withArticleImages(llmReport, video),
       source: "llm",
       notice:
         "글쓰기 AI로 보고서를 작성했습니다. (OpenAI 토큰 사용) 에디터에서 수정할 수 있습니다.",
@@ -460,7 +466,7 @@ export async function buildReportDocument(
 
   const skipFc = video.skipFactCheck === true;
   return {
-    report: buildTypedReport(video),
+    report: withArticleImages(buildTypedReport(video), video),
     source: "assembled",
     notice: skipFc
       ? !hasLlm()

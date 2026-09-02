@@ -19,6 +19,7 @@ import {
   buildSkeletonReport,
   ensureSkeletonReport,
   SKELETON_REPORT_NOTICE,
+  withArticleImages,
 } from "@/lib/report-skeleton";
 import {
   deleteVideo,
@@ -45,6 +46,7 @@ import {
 import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { reportThumbnailUrl } from "@/lib/input-mode";
+import { fetchArticleFromUrl } from "@/lib/article-fetch";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
 import { normalizeTagList } from "@/lib/tags";
@@ -289,6 +291,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     updateThumbnail?: { thumbnailUrl: string | null };
     /** 사용자 분류 태그 (#조선 → 조선). 시스템 tags 와 별개 */
     updateUserTags?: { tags: string[] };
+    /** URL 원문에서 사진을 다시 가져와 이미지 룸에 넣기 */
+    importArticleImages?: boolean | string;
   };
 
   try {
@@ -301,6 +305,59 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   let next = { ...video };
+
+  if (body.importArticleImages) {
+    const rawUrl =
+      (typeof body.importArticleImages === "string"
+        ? body.importArticleImages.trim()
+        : "") ||
+      video.sourceUrl?.trim() ||
+      (video.report?.meta.url || "").trim();
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      return NextResponse.json(
+        { error: "원문 URL이 없어 사진을 가져올 수 없습니다." },
+        { status: 400 }
+      );
+    }
+    try {
+      const article = await fetchArticleFromUrl(rawUrl, {
+        persistPrefix: `videos/${video.id}/article`,
+      });
+      const images = (article.images ?? []).filter(Boolean);
+      if (!images.length) {
+        return NextResponse.json(
+          {
+            error:
+              "이 페이지에서 저장할 사진을 찾지 못했습니다. 로고·작은 그림은 건너뜁니다.",
+          },
+          { status: 400 }
+        );
+      }
+      const articleImages = Array.from(
+        new Set([...(video.articleImages ?? []), ...images])
+      );
+      next = {
+        ...next,
+        sourceUrl: video.sourceUrl?.trim() || article.url || rawUrl,
+        articleImages,
+        report: next.report
+          ? withArticleImages(next.report, { articleImages })
+          : next.report,
+        tags: Array.from(
+          new Set([...(next.tags ?? []), "url-article"])
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+    } catch (e) {
+      return NextResponse.json(
+        {
+          error:
+            e instanceof Error ? e.message : "사진을 가져오지 못했습니다.",
+        },
+        { status: 400 }
+      );
+    }
+  }
 
   if (body.updateUserTags) {
     next.userTags = normalizeTagList(body.updateUserTags.tags);

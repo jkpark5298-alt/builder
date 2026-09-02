@@ -1,6 +1,22 @@
 import { buildTypedReport } from "./report";
 import { stabilizeReportFcAnchors } from "./fc-markers";
+import { normalizeRoomItems, upsertRoomUrls } from "./report-images";
 import type { TypedReport, VideoRecord } from "./types";
+
+/** URL에서 가져온 사진을 보고서 이미지 룸에 합친다 (본문 S칸에 붙일 수 있게) */
+export function withArticleImages(
+  report: TypedReport,
+  video: Pick<VideoRecord, "articleImages">
+): TypedReport {
+  const extras = (video.articleImages ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (!extras.length) return report;
+  const before = normalizeRoomItems(report.imageRoom);
+  const { room } = upsertRoomUrls(before, extras);
+  if (room.length === before.length) return report;
+  return { ...report, imageRoom: room };
+}
 
 export const SKELETON_REPORT_NOTICE =
   "요약·팩트체크 항목으로 골격 보고서를 만들었습니다. 팩트체크를 이어가며 아래에서 미리 보거나 본문을 다듬을 수 있습니다. 팩트체크 완료 후 「보고서 만들기」를 누르면 글쓰기 AI로 본문을 다시 쓰거나, 이미 수정한 본문은 그대로 유지됩니다.";
@@ -30,13 +46,7 @@ export async function ensureSkeletonReport(
   if (!video.overview?.trim() || video.overview.trim().length < 40) {
     return video;
   }
-  const report = buildSkeletonReport(video);
-  if (video.articleImages?.length) {
-    report.imageRoom = video.articleImages.map((url, i) => ({
-      url,
-      tag: `본문 ${i + 1}`,
-    }));
-  }
+  const report = withArticleImages(buildSkeletonReport(video), video);
   return {
     ...video,
     report,

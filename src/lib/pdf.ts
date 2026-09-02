@@ -12,7 +12,11 @@ import { parseBodySImageSlots } from "./report-body-s-slots";
 import { sectionSlotCapacity } from "./report-images";
 import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
-import { reportDocumentTitle, reportSourceLink } from "./input-mode";
+import {
+  isUrlArticleInput,
+  reportDocumentTitle,
+  reportSourceLink,
+} from "./input-mode";
 import type { VideoRecord } from "./types";
 import { REPORT_TYPE_LABELS } from "./types";
 
@@ -419,6 +423,8 @@ export async function buildReportPdf(
   setFace("normal");
 
   // 보고서 본문: 보기와 같이 S 자리마다 이미지 삽입 (텍스트 후 몰아넣기 금지)
+  const urlArticle = isUrlArticleInput(video);
+  const drawnAll = new Set<string>();
   for (const sec of report.sections) {
     ensureSpace(56);
     setFace("bold");
@@ -446,6 +452,7 @@ export async function buildReportPdf(
           if (src && !isYoutubeThumb(src)) {
             await drawImage(src);
             drawn.add(src);
+            drawnAll.add(src);
           }
         }
       }
@@ -460,9 +467,36 @@ export async function buildReportPdf(
     );
     for (const src of leftovers) {
       await drawImage(src);
+      drawnAll.add(src);
     }
 
     y += 14;
+  }
+
+  if (urlArticle) {
+    const seen = new Set<string>(drawnAll);
+    const urls: string[] = [];
+    for (const u of [
+      ...(video.articleImages ?? []),
+      ...(report.imageRoom ?? []).map((r) =>
+        typeof r === "string" ? r : r.url
+      ),
+    ]) {
+      const url = (u || "").trim();
+      if (!url || seen.has(url) || isYoutubeThumb(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+    if (urls.length) {
+      ensureSpace(56);
+      setFace("bold");
+      writeWrapped("가져온 본문 이미지 (본문에 붙이지 않은 사진)", 13, 10);
+      setFace("normal");
+      for (const src of urls) {
+        await drawImage(src);
+      }
+      y += 14;
+    }
   }
 
   const fcMarkers = collectFcMarkers(report);

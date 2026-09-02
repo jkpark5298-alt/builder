@@ -7,6 +7,7 @@ import {
 import {
   ensureSkeletonReport,
   shouldKeepReportBodyOnFinalize,
+  withArticleImages,
 } from "./report-skeleton";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
@@ -717,7 +718,7 @@ export async function finalizeReport(
 
   const withReport = {
     ...typed,
-    report: built.report,
+    report: withArticleImages(built.report, typed),
     reportSource: built.source,
     reportWriteNotice: [built.notice, partialNote].filter(Boolean).join(" "),
     pendingReportFinalize: null,
@@ -777,7 +778,7 @@ export async function applyFactCheckPass(
   const built = await buildReportDocument(prepared);
   const next: VideoRecord = {
     ...prepared,
-    report: built.report,
+    report: withArticleImages(built.report, video),
     reportSource: built.source,
     reportWriteNotice:
       built.source === "llm"

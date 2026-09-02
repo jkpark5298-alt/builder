@@ -6,11 +6,10 @@ import type { VideoRecord } from "@/lib/types";
 
 /** 저장된 자막(스크립트) — 선택(펼침) 시 표시 + 복사 */
 export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-
   const text = (video.transcript ?? "").trim();
   const images = (video.articleImages ?? []).filter(Boolean);
+  const [open, setOpen] = useState(() => images.length > 0);
+  const [copied, setCopied] = useState(false);
   const isWeb = video.transcriptSource === "web" || Boolean(video.sourceUrl);
   const hasScript = text.length > 80 || images.length > 0;
   const sourceLabel = useMemo(() => {
