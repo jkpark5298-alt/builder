@@ -47,6 +47,7 @@ import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { reportThumbnailUrl } from "@/lib/input-mode";
 import { fetchArticleFromUrl } from "@/lib/article-fetch";
+import { dropUrlsFromReport } from "@/lib/report-images";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
 import { normalizeTagList } from "@/lib/tags";
@@ -293,6 +294,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     updateUserTags?: { tags: string[] };
     /** URL 원문에서 사진을 다시 가져와 이미지 룸에 넣기 */
     importArticleImages?: boolean | string;
+    /** URL에서 가져온 본문 이미지 삭제 */
+    removeArticleImages?: string[];
   };
 
   try {
@@ -356,6 +359,19 @@ async function patchVideo(req: Request, ctx: Ctx) {
         },
         { status: 400 }
       );
+    }
+  }
+
+  if (body.removeArticleImages?.length) {
+    const drop = body.removeArticleImages.map((u) => u.trim()).filter(Boolean);
+    if (drop.length) {
+      const remain = (next.articleImages ?? []).filter((u) => !drop.includes(u));
+      next = {
+        ...next,
+        articleImages: remain.length ? remain : undefined,
+        report: next.report ? dropUrlsFromReport(next.report, drop) : next.report,
+        updatedAt: new Date().toISOString(),
+      };
     }
   }
 

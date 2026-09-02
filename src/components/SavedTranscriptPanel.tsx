@@ -8,7 +8,7 @@ import type { VideoRecord } from "@/lib/types";
 export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
   const text = (video.transcript ?? "").trim();
   const images = (video.articleImages ?? []).filter(Boolean);
-  const [open, setOpen] = useState(() => images.length > 0);
+  const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const isWeb = video.transcriptSource === "web" || Boolean(video.sourceUrl);
   const hasScript = text.length > 80 || images.length > 0;
@@ -66,8 +66,7 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
               {isWeb ? "저장된 본문" : "저장된 자막 (스크립트)"}
             </p>
             <p className="text-xs text-ink-500 mt-0.5">
-              {sourceLabel} · {text.length.toLocaleString()}자
-              {images.length ? ` · 이미지 ${images.length}장` : ""} · 눌러서{" "}
+              {sourceLabel} · {text.length.toLocaleString()}자 · 눌러서{" "}
               {open ? "접기" : "보기"}
             </p>
           </div>
@@ -89,19 +88,6 @@ export function SavedTranscriptPanel({ video }: { video: VideoRecord }) {
 
       {open && (
         <div className="border-t border-ink-100 px-4 pb-4 pt-3 space-y-3">
-          {images.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {images.map((src, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={`${src}-${i}`}
-                  src={src}
-                  alt={`본문 이미지 ${i + 1}`}
-                  className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
-                />
-              ))}
-            </div>
-          )}
           {text ? (
             <pre className="max-h-72 overflow-auto rounded-lg border border-ink-100 bg-ink-50/80 p-3 text-xs sm:text-sm text-ink-800 whitespace-pre-wrap leading-relaxed">
               {text}

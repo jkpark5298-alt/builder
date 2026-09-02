@@ -48,6 +48,7 @@ import {
   bindSectionSlotUrls,
   collectSectionImages as collectSectionImagesFromRoom,
   countUnreferencedRoomItems,
+  dropUrlsFromReport,
   normalizeRoomItems,
   normalizeReportImageRefs,
   orderedSlotUrls,
@@ -124,7 +125,13 @@ type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
 const ROOM_TAGS = ["도입", "핵심", "근거", "결론", "F1", "F2", "F3", "기타"] as const;
 
-function UrlArticleImageGallery({ urls }: { urls: string[] }) {
+function UrlArticleImageGallery({
+  urls,
+  onRemove,
+}: {
+  urls: string[];
+  onRemove?: (src: string) => void;
+}) {
   return (
     <div className="rounded-xl border border-ink-200 bg-white p-3 space-y-2">
       <p className="text-sm font-medium text-ink-900">
@@ -134,13 +141,24 @@ function UrlArticleImageGallery({ urls }: { urls: string[] }) {
       {urls.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {urls.map((src, i) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={`${src}-${i}`}
-              src={src}
-              alt={`본문 이미지 ${i + 1}`}
-              className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
-            />
+            <div key={`${src}-${i}`} className="relative group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={src}
+                alt={`본문 이미지 ${i + 1}`}
+                className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
+              />
+              {onRemove && (
+                <button
+                  type="button"
+                  title="사진 지우기"
+                  onClick={() => onRemove(src)}
+                  className="absolute top-1 right-1 inline-flex h-7 w-7 items-center justify-center rounded-full border border-ink-200 bg-white/95 text-verify-false shadow-sm hover:bg-verify-false hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       ) : (
@@ -150,8 +168,7 @@ function UrlArticleImageGallery({ urls }: { urls: string[] }) {
         </p>
       )}
       <p className="text-xs text-ink-500">
-        가져온 사진입니다. 본문에 붙이려면 문장 끝에 S를 입력하거나, 이미지
-        룸에서 「현재 섹션에 넣기」를 누르세요.
+        보고서 본문 아래 사진입니다. X로 지울 수 있습니다.
       </p>
     </div>
   );
@@ -676,18 +693,6 @@ export function EditableReportPanel({
     }
     return urls;
   }, [localVideo.articleImages, imageRoom]);
-  const unusedUrlArticleImages = useMemo(() => {
-    if (!draft) return urlArticleImages;
-    const used = new Set<string>();
-    for (const sec of draft.sections) {
-      const n = countTrailingSMarkers(sec.body || "");
-      const cap = sectionSlotCapacity(sec, n);
-      for (const u of orderedSlotUrls(sec, draft.imageRoom, cap)) {
-        if (u) used.add(u);
-      }
-    }
-    return urlArticleImages.filter((u) => !used.has(u));
-  }, [draft, urlArticleImages]);
   const unusedRoomCount = useMemo(
     () => (draft ? countUnreferencedRoomItems(draft) : 0),
     [draft]
@@ -1500,6 +1505,35 @@ export function EditableReportPanel({
       alert(e instanceof Error ? e.message : "사진을 가져오지 못했습니다.");
     } finally {
       setArticleImportBusy(false);
+    }
+  }
+
+  async function removeArticleImage(src: string) {
+    const target = src.trim();
+    if (!target) return;
+    if (!confirm("이 사진을 지울까요?")) return;
+    try {
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeArticleImages: [target] }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "사진을 지우지 못했습니다.");
+      if (data.video) {
+        setLocalVideo(data.video);
+        if (data.video.report) {
+          setDraft(normalizeReportImageRefs(data.video.report));
+        } else {
+          setDraft((prev) =>
+            prev ? dropUrlsFromReport(prev, [target]) : prev
+          );
+        }
+      }
+      void releaseMediaUrls([target]);
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "사진을 지우지 못했습니다.");
     }
   }
 
@@ -2344,10 +2378,6 @@ export function EditableReportPanel({
           </p>
         </div>
 
-        {urlArticle && editing && urlArticleImages.length > 0 && (
-          <UrlArticleImageGallery urls={urlArticleImages} />
-        )}
-
         {editing && (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
             <div className="md:sticky md:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white md:bg-white/95 md:backdrop-blur-md px-3 py-2 space-y-2 md:shadow-sm">
@@ -2815,7 +2845,7 @@ export function EditableReportPanel({
                         </button>
                         <button
                           type="button"
-                          onClick={() => removeImageFromRoom(room.url)}
+                          onClick={() => void removeArticleImage(room.url)}
                           className="rounded-md border border-ink-200 px-1.5 py-1 text-[11px] text-ink-500"
                           title="룸에서 제거"
                         >
@@ -3172,6 +3202,12 @@ export function EditableReportPanel({
             </div>
           </div>
         )}
+        {urlArticle && editing && (
+          <UrlArticleImageGallery
+            urls={urlArticleImages}
+            onRemove={(src) => void removeArticleImage(src)}
+          />
+        )}
         <div
           id="report-body-export"
           className={editing ? "report-export-offscreen" : undefined}
@@ -3404,8 +3440,11 @@ export function EditableReportPanel({
               </div>
             );
           })}
-          {urlArticle && unusedUrlArticleImages.length > 0 && (
-            <UrlArticleImageGallery urls={unusedUrlArticleImages} />
+          {urlArticle && !editing && (
+            <UrlArticleImageGallery
+              urls={urlArticleImages}
+              onRemove={(src) => void removeArticleImage(src)}
+            />
           )}
         </div>
 

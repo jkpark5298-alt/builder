@@ -256,6 +256,30 @@ export function collectReferencedRoomKeys(report: TypedReport): {
   return { ids, urls };
 }
 
+/** 이미지 룸·섹션에서 지정 URL을 뺀다 */
+export function dropUrlsFromReport(
+  report: TypedReport,
+  urls: string[]
+): TypedReport {
+  const drop = new Set(urls.map((u) => u.trim()).filter(Boolean));
+  if (!drop.size) return report;
+  const room = normalizeRoomItems(report.imageRoom);
+  const dropIds = new Set(
+    room.filter((i) => drop.has(i.url)).map((i) => i.id)
+  );
+  return {
+    ...report,
+    imageRoom: room.filter((i) => !drop.has(i.url)),
+    sections: report.sections.map((sec) => ({
+      ...sec,
+      imageUrl:
+        sec.imageUrl && drop.has(sec.imageUrl) ? undefined : sec.imageUrl,
+      images: sec.images?.filter((u) => !drop.has(u)),
+      imageRefs: sec.imageRefs?.filter((id) => !dropIds.has(id)),
+    })),
+  };
+}
+
 /**
  * 본문에서 쓰이지 않는 룸 항목만 제거 (파일 GC는 별도 release).
  */
