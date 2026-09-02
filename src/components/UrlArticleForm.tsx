@@ -10,6 +10,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { extractVideoId } from "@/lib/youtube";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
@@ -63,6 +64,7 @@ export function UrlArticleForm({
   draftId?: string;
   initial?: Partial<UrlArticleFormValues>;
 }) {
+  const router = useRouter();
   const [activeDraftId, setActiveDraftId] = useState(draftId);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
@@ -232,7 +234,8 @@ export function UrlArticleForm({
         });
         const data = await parseJsonResponse(res);
         if (!res.ok) throw new Error(data.error || "임시 저장 실패");
-        setStatus("본문을 저장했습니다. AI 또는 수동 요약을 선택할 수 있습니다.");
+        setStatus("본문을 저장했습니다. 위에서 항목을 눌러 이어서 열 수 있습니다.");
+        router.refresh();
       } else {
         const res = await fetch("/api/videos", {
           method: "POST",
@@ -246,11 +249,9 @@ export function UrlArticleForm({
         setActiveDraftId(data.video.id);
         cacheVideoSnapshot(data.video);
         setStatus(
-          "본문을 저장했습니다. 홈 URL 입력 화면에서 이어서 작성할 수 있습니다."
+          "본문을 저장했습니다. 위 「URL 본문·요약 이어하기」에서 눌러 여세요."
         );
-        if (!draftId) {
-          window.history.replaceState(null, "", `/videos/${data.video.id}`);
-        }
+        router.refresh();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "임시 저장 실패");

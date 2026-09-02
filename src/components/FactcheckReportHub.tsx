@@ -67,6 +67,53 @@ function stepHref(video: VideoRecord, step: InputStep): string {
   return `/videos/${video.id}#report`;
 }
 
+function openWorkItem(href: string) {
+  window.location.assign(href);
+}
+
+function UrlContinuePicker({ items }: { items: VideoRecord[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-ink-700">
+        URL 본문·요약 이어하기
+      </h3>
+      <p className="text-xs text-ink-500">
+        저장한 항목을 누르면 이어서 작성합니다.
+      </p>
+      <ul className="space-y-2">
+        {items.map((v) => {
+          const href = stepHref(v, "summary");
+          const label = needsFactCheckDecision(v)
+            ? "팩트체크 여부"
+            : isReportInputDraft(v)
+              ? "이어서 작성"
+              : "열기";
+          return (
+            <li key={v.id}>
+              <a
+                href={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openWorkItem(href);
+                }}
+                className="flex items-center gap-3 min-h-12 rounded-xl border border-ink-200 bg-white px-3 py-2.5 text-left hover:border-accent hover:bg-accent-muted/30"
+              >
+                <span className="min-w-0 flex-1 truncate font-medium text-ink-900">
+                  {v.title || "제목 없음"}
+                </span>
+                <span className="shrink-0 text-xs font-medium text-accent">
+                  {label}
+                </span>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function FactcheckReportHub({
   workItems,
   completedReports,
@@ -345,7 +392,7 @@ export function FactcheckReportHub({
 
   if (view === "url") {
     return (
-      <section id="fc-url" className="space-y-5 scroll-mt-24">
+      <section id="fc-url" className="space-y-5 scroll-mt-24 pb-36 sm:pb-8">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -431,35 +478,8 @@ export function FactcheckReportHub({
 
         {inputStep === "summary" && (
           <div className="space-y-4">
+            <UrlContinuePicker items={stepItems} />
             <UrlArticleForm />
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium text-ink-700">
-                URL 본문·요약 이어하기
-              </h3>
-              {stepItems.length === 0 ? (
-                <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-6 text-center">
-                  진행 중인 URL 항목이 없습니다. 위에서 제목과 URL을 넣어
-                  본문을 가져오세요.
-                </p>
-              ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {stepItems.map((v) => (
-                    <div key={v.id} className="space-y-2">
-                      <VideoListCard video={v} listKind={listKindFor(v)} />
-                      <a
-                        href={stepHref(v, "summary")}
-                        className="flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-ink-900 bg-ink-900 text-sm font-medium text-white hover:opacity-90"
-                      >
-                        <Link2 className="h-4 w-4" />
-                        {needsFactCheckDecision(v)
-                          ? "팩트체크 여부 고르기"
-                          : "본문·요약 이어서"}
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
         )}
 
