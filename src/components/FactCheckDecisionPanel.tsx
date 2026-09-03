@@ -149,6 +149,7 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const urlArticle = isUrlArticleInput(video);
 
   async function confirm() {
     setError(null);
@@ -180,9 +181,20 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
   return (
     <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 space-y-2 print:hidden">
       <p className="text-sm text-ink-800 leading-relaxed">
-        <strong>보고서 작성</strong> — 요약을 참고해 AI가 초안을 만들었습니다.
-        본문을 정리하고 이미지를 넣은 뒤 확정하세요. 팩트체크 탭은 보이지
-        않습니다. 확정 후에는 기존과 같이 조회·PDF·공유를 씁니다.
+        {urlArticle ? (
+          <>
+            <strong>원문 보고서</strong> — 가져온 글 전체가 본문입니다. 받은
+            사진은 본문 아래 S칸에 있습니다. 더 넣으려면 문장 끝에{" "}
+            <strong>S</strong>를 친 뒤 붙여넣기 또는 사진첩을 쓰세요. 요약·팩트체크는
+            선택입니다. 확정하면 조회·PDF·공유를 씁니다.
+          </>
+        ) : (
+          <>
+            <strong>보고서 작성</strong> — 요약을 참고해 AI가 초안을 만들었습니다.
+            본문을 정리하고 이미지를 넣은 뒤 확정하세요. 팩트체크 탭은 보이지
+            않습니다. 확정 후에는 기존과 같이 조회·PDF·공유를 씁니다.
+          </>
+        )}
       </p>
       <button
         type="button"

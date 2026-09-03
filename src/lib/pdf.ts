@@ -476,12 +476,7 @@ export async function buildReportPdf(
   if (urlArticle) {
     const seen = new Set<string>(drawnAll);
     const urls: string[] = [];
-    for (const u of [
-      ...(video.articleImages ?? []),
-      ...(report.imageRoom ?? []).map((r) =>
-        typeof r === "string" ? r : r.url
-      ),
-    ]) {
+    for (const u of video.articleImages ?? []) {
       const url = (u || "").trim();
       if (!url || seen.has(url) || isYoutubeThumb(url)) continue;
       seen.add(url);
@@ -490,7 +485,7 @@ export async function buildReportPdf(
     if (urls.length) {
       ensureSpace(56);
       setFace("bold");
-      writeWrapped("가져온 본문 이미지 (본문에 붙이지 않은 사진)", 13, 10);
+      writeWrapped("본문에 붙이지 않은 원문 사진", 13, 10);
       setFace("normal");
       for (const src of urls) {
         await drawImage(src);

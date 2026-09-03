@@ -6,9 +6,12 @@ import {
 } from "./report-write";
 import {
   ensureSkeletonReport,
+  ensureUrlArticleReport,
   shouldKeepReportBodyOnFinalize,
   withArticleImages,
 } from "./report-skeleton";
+import { isUrlArticleInput, reportThumbnailUrl, withUrlArticleTag } from "./input-mode";
+import { URL_ARTICLE_REPORT_NOTICE } from "./url-article-report";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
 import type { ReportType, SummaryItem, VideoRecord } from "./types";
@@ -18,11 +21,9 @@ import {
   fetchYoutubeMetaLite,
   parseChaptersFromDescription,
   thumbnailUrl,
+  type YoutubeMeta,
 } from "./youtube";
-
 import { hasUsablePastedScript, normalizePastedText } from "./paste";
-import { reportThumbnailUrl } from "./input-mode";
-import type { YoutubeMeta } from "./youtube";
 
 function withoutFactCheckTargets(items: SummaryItem[]): SummaryItem[] {
   return items.map((item) => ({ ...item, needsFactCheck: false }));
@@ -160,11 +161,13 @@ export async function createReportJob(opts: {
     chapters,
     transcript: script,
     transcriptSource: script ? (fromWeb ? "web" : "pasted") : "none",
+    skipFactCheck: fromWeb || undefined,
+    factCheckDecision: fromWeb ? "pass" : undefined,
     scriptNotice: hasScript
       ? fromWeb
-        ? `웹 본문 전체(${script.length.toLocaleString()}자${
+        ? `웹 원문 전체(${script.length.toLocaleString()}자${
             articleImages.length ? ` · 이미지 ${articleImages.length}장` : ""
-          })를 기준으로 요약합니다.`
+          })를 보고서 본문으로 넣습니다. 요약·팩트체크는 선택입니다.`
         : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
       : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
@@ -179,7 +182,7 @@ export async function createReportJob(opts: {
     tags: [
       "report",
       channel,
-      ...(fromWeb ? ["url-article"] : []),
+      ...(fromWeb ? ["url-article", "fc-pass"] : []),
       ...(hasScript ? ["has-script"] : ["no-script"]),
       ...(!hasScript ? ["manual-overview"] : []),
     ],
@@ -361,11 +364,23 @@ export async function startReportFromDraft(
   }
 
   const script = normalizePastedText(existing.transcript ?? "");
+  const fromWeb = Boolean(existing.sourceUrl?.trim());
+  if (fromWeb) {
+    const updated: VideoRecord = {
+      ...existing,
+      transcript: script,
+      transcriptSource: "web",
+      skipFactCheck: true,
+      factCheckDecision: "pass",
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertVideo(updated);
+    return openUrlArticleReport(updated);
+  }
   if (opts?.manualOverview || !hasUsablePastedScript(script)) {
     return openReportManualOverview(existing, script);
   }
 
-  const fromWeb = Boolean(existing.sourceUrl?.trim());
   const now = new Date().toISOString();
   let record: VideoRecord = {
     ...existing,
@@ -379,6 +394,36 @@ export async function startReportFromDraft(
   };
   await upsertVideo(record);
   return runVideoPipeline(id, creatorNotes, script);
+}
+
+/** URL 원문 전체를 보고서 본문으로 넣고, 받은 사진은 본문 끝 S칸에 붙인다 */
+export async function openUrlArticleReport(
+  record: VideoRecord
+): Promise<VideoRecord> {
+  const script = normalizePastedText(record.transcript ?? "");
+  const images = (record.articleImages ?? []).filter(Boolean);
+  const seeded = ensureUrlArticleReport({
+    ...record,
+    transcript: script,
+    transcriptSource: "web",
+    skipFactCheck: true,
+    factCheckDecision: "pass",
+    scriptNotice: `웹 원문 전체(${script.length.toLocaleString()}자${
+      images.length ? ` · 이미지 ${images.length}장` : ""
+    })를 보고서 본문으로 넣었습니다. 요약·팩트체크는 선택입니다.`,
+    reportWriteNotice: URL_ARTICLE_REPORT_NOTICE,
+    tags: withUrlArticleTag(record, [
+      ...record.tags.filter((t) => t !== "no-script"),
+      "report",
+      "url-article",
+      "fc-pass",
+      ...(script ? ["has-script"] : []),
+    ]),
+    status: "awaiting_factcheck",
+    errorMessage: undefined,
+    updatedAt: new Date().toISOString(),
+  });
+  return upsertVideo(seeded);
 }
 
 function buildReportMeta(
@@ -493,17 +538,20 @@ export async function runVideoPipeline(
       transcript: text,
       transcriptSource: source,
       scriptNotice: notice,
-      tags: Array.from(
-        new Set([
-          ...(isReport ? ["report"] : ["youtube"]),
-          meta.channel,
-          ...(meta.chapters.length ? ["chapters"] : []),
-          ...(source === "none" || source === "creator_meta"
-            ? ["no-script"]
-            : ["has-script"]),
-          ...(record.skipFactCheck ? ["fc-pass"] : []),
-        ])
-      ).filter(Boolean),
+      tags: withUrlArticleTag(
+        record,
+        Array.from(
+          new Set([
+            ...(isReport ? ["report"] : ["youtube"]),
+            meta.channel,
+            ...(meta.chapters.length ? ["chapters"] : []),
+            ...(source === "none" || source === "creator_meta"
+              ? ["no-script"]
+              : ["has-script"]),
+            ...(record.skipFactCheck ? ["fc-pass"] : []),
+          ])
+        ).filter(Boolean)
+      ),
       updatedAt: new Date().toISOString(),
     };
     await upsertVideo(record);
@@ -677,6 +725,12 @@ export async function createAndProcessReport(opts: {
 }): Promise<VideoRecord> {
   const job = await createReportJob(opts);
   const script = normalizePastedText(opts.pastedScript ?? "");
+  if (opts.sourceUrl?.trim()) {
+    if (!hasUsablePastedScript(script) && !(opts.articleImages ?? []).length) {
+      return openReportManualOverview(job, script);
+    }
+    return openUrlArticleReport(job);
+  }
   if (opts.manualOverview || !hasUsablePastedScript(script)) {
     return openReportManualOverview(job, script);
   }
@@ -729,14 +783,17 @@ export async function finalizeReport(
     ...withReport,
     infographic: video.infographic ?? null,
     status: "ready",
-    tags: Array.from(
-      new Set([
-        ...typed.tags.filter(
-          (t) => t !== "report-llm" && t !== "report-assembled"
-        ),
-        built.source === "llm" ? "report-llm" : "report-assembled",
-        ...(video.skipFactCheck ? ["fc-pass"] : []),
-      ])
+    tags: withUrlArticleTag(
+      typed,
+      Array.from(
+        new Set([
+          ...typed.tags.filter(
+            (t) => t !== "report-llm" && t !== "report-assembled"
+          ),
+          built.source === "llm" ? "report-llm" : "report-assembled",
+          ...(video.skipFactCheck ? ["fc-pass"] : []),
+        ])
+      )
     ),
     updatedAt: new Date().toISOString(),
   };
@@ -760,17 +817,20 @@ export async function applyFactCheckPass(
     factChecks: [],
     pendingReportFinalize: "keep_body",
     reportSkeletonEdited: undefined,
-    tags: Array.from(
-      new Set([
-        ...video.tags.filter(
-          (t) =>
-            t !== "fc-llm-draft" &&
-            t !== "auto-factcheck" &&
-            t !== "heuristic-factcheck" &&
-            t !== "manual-review"
-        ),
-        "fc-pass",
-      ])
+    tags: withUrlArticleTag(
+      video,
+      Array.from(
+        new Set([
+          ...video.tags.filter(
+            (t) =>
+              t !== "fc-llm-draft" &&
+              t !== "auto-factcheck" &&
+              t !== "heuristic-factcheck" &&
+              t !== "manual-review"
+          ),
+          "fc-pass",
+        ])
+      )
     ),
     updatedAt: new Date().toISOString(),
   };
@@ -826,21 +886,25 @@ export async function prepareReprocess(
     // 스크립트 없이도 메타 기준 재요약은 가능 — 다만 사용자에게 안내
   }
 
+  const urlArticle = isUrlArticleInput(existing);
   const creatorNotes = existing.description?.trim() || undefined;
   const reset: VideoRecord = {
     ...existing,
     overview: "",
     summaryBullets: [],
     summarySource: "none",
-    items: [],
-    factChecks: [],
-    report: null,
-    infographic: null,
-    pendingReportFinalize: null,
-    reportSkeletonEdited: undefined,
-    skipFactCheck: false,
-    factCheckDecision: undefined,
-    tags: existing.tags.filter((t) => t !== "fc-pass"),
+    items: urlArticle ? existing.items : [],
+    factChecks: urlArticle ? existing.factChecks : [],
+    report: urlArticle ? existing.report : null,
+    infographic: urlArticle ? existing.infographic : null,
+    pendingReportFinalize: urlArticle ? "keep_body" : null,
+    reportSkeletonEdited: urlArticle ? true : undefined,
+    skipFactCheck: urlArticle ? true : false,
+    factCheckDecision: urlArticle ? "pass" : undefined,
+    tags: withUrlArticleTag(
+      existing,
+      existing.tags.filter((t) => (urlArticle ? true : t !== "fc-pass"))
+    ),
     status: "queued",
     errorMessage: undefined,
     ...(script

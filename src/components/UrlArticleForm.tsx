@@ -2,12 +2,11 @@
 
 import {
   Check,
+  FileText,
   ImagePlus,
   Link2,
   Loader2,
   Save,
-  Sparkles,
-  UserRound,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -276,11 +275,7 @@ export function UrlArticleForm({
     }
 
     setLoading(true);
-    setStatus(
-      manual
-        ? "수동 요약 화면으로 이동 중…"
-        : "AI 요약 중… (1~3분 걸릴 수 있어요)"
-    );
+    setStatus("원문을 보고서 본문으로 넣는 중…");
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
@@ -298,18 +293,16 @@ export function UrlArticleForm({
         });
         const data = await parseJsonResponse(res);
         if (!res.ok || !data.video?.id) {
-          throw new Error(data.error || "요약 시작 실패");
+          throw new Error(data.error || "보고서 만들기 실패");
         }
         if (data.video.status === "report_input_draft") {
           throw new Error(
-            "요약이 시작되지 않았습니다. 새로고침 후 다시 시도해 주세요."
+            "보고서가 만들어지지 않았습니다. 새로고침 후 다시 시도해 주세요."
           );
         }
         cacheVideoSnapshot(data.video);
         setStatus("완료. 다음 화면으로 이동합니다…");
-        window.location.assign(
-          `/videos/${data.video.id}${manual ? "" : "#fc-decision"}`
-        );
+        window.location.assign(`/videos/${data.video.id}#report`);
         return;
       }
 
@@ -325,13 +318,11 @@ export function UrlArticleForm({
       });
       const data = await parseJsonResponse(res);
       if (!res.ok || !data.video?.id) {
-        throw new Error(data.error || "요약 시작 실패");
+        throw new Error(data.error || "보고서 만들기 실패");
       }
       cacheVideoSnapshot(data.video);
-      setStatus("완료. 다음 화면으로 이동합니다…");
-      window.location.assign(
-        `/videos/${data.video.id}${manual ? "" : "#fc-decision"}`
-      );
+      setStatus("완료. 보고서로 이동합니다…");
+      window.location.assign(`/videos/${data.video.id}#report`);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError(
@@ -376,11 +367,10 @@ export function UrlArticleForm({
             {isContinuing ? "URL 본문 이어서 작성" : "URL로 보고서 만들기"}
           </h2>
           <p className="text-sm text-ink-600 leading-relaxed">
-            제목과 기사 URL을 넣은 뒤 본문·이미지를 가져옵니다. 저장한 다음{" "}
-            <strong>AI 요약</strong> 또는 <strong>수동 요약</strong>을 고르세요.
-            요약이 끝나면 <strong>팩트체크 실시</strong> 또는{" "}
-            <strong>pass</strong>를 고르고, 보고서 작성(정리·이미지) 후 확정하면
-            기존 조회·PDF·공유를 그대로 씁니다.
+            제목과 기사 URL을 넣은 뒤 본문·이미지를 가져옵니다.{" "}
+            <strong>보고서 만들기</strong>를 누르면 원문 전체가 보고서 본문(평문)이
+            되고, 받은 사진은 본문 아래에 붙습니다. 요약(수동·추후 AI)과
+            팩트체크는 선택입니다.
           </p>
         </div>
 
@@ -510,28 +500,19 @@ export function UrlArticleForm({
           </button>
           <button
             type="button"
-            onClick={() => void startSummary(true)}
-            disabled={busy || !step1Done}
-            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-ink-300 bg-white min-h-12 px-5 py-3.5 text-ink-800 font-medium hover:border-accent disabled:opacity-50"
-          >
-            <UserRound className="h-4 w-4" />
-            수동 요약
-          </button>
-          <button
-            type="button"
             onClick={() => void startSummary(false)}
             disabled={busy || !step1Done || !hasScript}
             className="w-full sm:flex-[1.3] inline-flex items-center justify-center gap-2 rounded-xl bg-accent min-h-12 px-5 py-3.5 text-white font-medium hover:bg-ink-900 disabled:opacity-60 transition-colors shadow-lg sm:shadow-none"
           >
-            {loading && !fetchedOk ? (
+            {loading ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                요약 중…
+                보고서 만드는 중…
               </>
             ) : (
               <>
-                <Sparkles className="h-4 w-4" />
-                AI로 요약
+                <FileText className="h-4 w-4" />
+                보고서 만들기
               </>
             )}
           </button>
@@ -540,8 +521,8 @@ export function UrlArticleForm({
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript
-              ? "본문 저장 후 AI 또는 수동 요약 → 팩트체크 여부 → 보고서 작성"
-              : "본문을 가져온 뒤 저장하거나, 수동 요약으로 이어갈 수 있습니다"}
+              ? "보고서 만들기 → 원문 전체·사진은 본문 아래. 요약·팩트체크는 선택"
+              : "본문을 가져온 뒤 저장하거나 보고서를 만들 수 있습니다"}
           </p>
         )}
       </div>

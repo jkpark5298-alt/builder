@@ -174,7 +174,7 @@ export function formatOverviewWithFactChecksText(
     .trim();
 }
 
-function plainTextToHtml(text: string): string {
+export function plainTextToHtml(text: string): string {
   const parts = text
     .split(/\n{2,}/)
     .map((p) => p.trim())

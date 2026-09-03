@@ -187,7 +187,7 @@ export interface VideoRecord {
   inputMode?: InputMode;
   /**
    * 팩트체크 pass — 검증 단계를 건너뛰고 요약으로 보고서를 작성.
-   * 유튜브·URL 입력 경로. UI에서 팩트체크 탭·버튼은 숨긴다.
+   * 유튜브·URL 입력 경로. URL은 기본 pass(선택). UI에서 팩트체크 탭·버튼은 숨긴다.
    */
   skipFactCheck?: boolean;
   /**

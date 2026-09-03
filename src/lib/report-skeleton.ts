@@ -1,6 +1,11 @@
 import { buildTypedReport } from "./report";
 import { stabilizeReportFcAnchors } from "./fc-markers";
+import { isUrlArticleInput } from "./input-mode";
 import { normalizeRoomItems, upsertRoomUrls } from "./report-images";
+import {
+  buildUrlArticleReport,
+  URL_ARTICLE_REPORT_NOTICE,
+} from "./url-article-report";
 import type { TypedReport, VideoRecord } from "./types";
 
 /** URL에서 가져온 사진을 보고서 이미지 룸에 합친다 (본문 S칸에 붙일 수 있게) */
@@ -38,11 +43,36 @@ export function buildSkeletonReport(
   };
 }
 
+/** URL 원문이 있으면 그 전체를 보고서 본문으로 채운다 */
+export function ensureUrlArticleReport(video: VideoRecord): VideoRecord {
+  if (!isUrlArticleInput(video)) return video;
+  if (video.report) {
+    return {
+      ...video,
+      report: withArticleImages(video.report, video),
+    };
+  }
+  const body = (video.transcript ?? "").trim();
+  if (body.length < 40 && !(video.articleImages ?? []).length) return video;
+  return {
+    ...video,
+    report: buildUrlArticleReport(video),
+    reportSource: "assembled",
+    reportWriteNotice: URL_ARTICLE_REPORT_NOTICE,
+    reportSkeletonEdited: true,
+    pendingReportFinalize: "keep_body",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 /** report가 없으면 골격 보고서를 채운다 (인포그래픽 자동 생성 없음) */
 export async function ensureSkeletonReport(
   video: VideoRecord
 ): Promise<VideoRecord> {
   if (video.report) return video;
+  if (isUrlArticleInput(video)) {
+    return ensureUrlArticleReport(video);
+  }
   if (!video.overview?.trim() || video.overview.trim().length < 40) {
     return video;
   }

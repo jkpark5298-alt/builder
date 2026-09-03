@@ -45,7 +45,7 @@ import {
 } from "@/lib/answer-parts";
 import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { reportThumbnailUrl } from "@/lib/input-mode";
+import { reportThumbnailUrl, withUrlArticleTag } from "@/lib/input-mode";
 import { fetchArticleFromUrl } from "@/lib/article-fetch";
 import { dropUrlsFromReport, replaceUrlsInReport } from "@/lib/report-images";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
@@ -1354,13 +1354,16 @@ async function patchVideo(req: Request, ctx: Ctx) {
     next.report = built.report;
     next.reportSource = built.source;
     next.reportWriteNotice = built.notice;
-    next.tags = Array.from(
-      new Set([
-        ...next.tags.filter(
-          (t) => t !== "report-llm" && t !== "report-assembled"
-        ),
-        built.source === "llm" ? "report-llm" : "report-assembled",
-      ])
+    next.tags = withUrlArticleTag(
+      next,
+      Array.from(
+        new Set([
+          ...next.tags.filter(
+            (t) => t !== "report-llm" && t !== "report-assembled"
+          ),
+          built.source === "llm" ? "report-llm" : "report-assembled",
+        ])
+      )
     );
     next.updatedAt = new Date().toISOString();
   }

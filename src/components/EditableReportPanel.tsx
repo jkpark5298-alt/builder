@@ -187,7 +187,7 @@ function UrlArticleImageGallery({
     <div className="rounded-xl border border-ink-200 bg-white p-3 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-ink-900">
-          가져온 본문 이미지
+          URL에서 받은 사진
           {urls.length ? ` · ${urls.length}장` : ""}
           {selected.size ? ` · ${selected.size}장 선택` : ""}
         </p>
@@ -947,19 +947,16 @@ export function EditableReportPanel({
     return upsertRoomUrls(base, extras).room;
   }, [draft?.imageRoom, localVideo.articleImages, urlArticle]);
   const urlArticleImages = useMemo(() => {
-    const urls: string[] = [];
     const seen = new Set<string>();
-    for (const u of [
-      ...(localVideo.articleImages ?? []),
-      ...imageRoom.map((r) => r.url),
-    ]) {
+    const urls: string[] = [];
+    for (const u of localVideo.articleImages ?? []) {
       const url = u.trim();
       if (!url || seen.has(url)) continue;
       seen.add(url);
       urls.push(url);
     }
     return urls;
-  }, [localVideo.articleImages, imageRoom]);
+  }, [localVideo.articleImages]);
   const unusedRoomCount = useMemo(
     () => (draft ? countUnreferencedRoomItems(draft) : 0),
     [draft]
@@ -3079,7 +3076,6 @@ export function EditableReportPanel({
               </div>
             )}
 
-            {!urlArticle && (
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs font-medium text-ink-700">
@@ -3194,7 +3190,6 @@ export function EditableReportPanel({
                 </p>
               )}
             </div>
-            )}
 
             <div className="p-4 sm:p-5">
               {draft.sections.map((sec, idx) => {
@@ -3515,15 +3510,22 @@ export function EditableReportPanel({
           </div>
         )}
         {urlArticle && editing && (
-          <UrlArticleImageGallery
-            urls={urlArticleImages}
-            onRemoveMany={(srcs) => void removeArticleImages(srcs)}
-            onInsertMany={insertArticleImagesToBody}
-            onCopy={(src) => void copyArticleImage(src)}
-            onImport={() => void importArticleImagesFromSource()}
-            importBusy={articleImportBusy}
-            onCrop={setCropSrc}
-          />
+          <div className="space-y-1">
+            <p className="px-3 text-[11px] text-ink-500">
+              URL에서 받은 사진입니다. 「선택 본문에 넣기」는 문장 끝 S칸에
+              붙입니다. 칸이 없으면 본문 아래에 S칸을 만듭니다. 직접 넣으려면
+              문장 끝에 S를 친 뒤 Ctrl+V 또는 사진첩을 쓰세요.
+            </p>
+            <UrlArticleImageGallery
+              urls={urlArticleImages}
+              onRemoveMany={(srcs) => void removeArticleImages(srcs)}
+              onInsertMany={insertArticleImagesToBody}
+              onCopy={(src) => void copyArticleImage(src)}
+              onImport={() => void importArticleImagesFromSource()}
+              importBusy={articleImportBusy}
+              onCrop={setCropSrc}
+            />
+          </div>
         )}
         <div
           id="report-body-export"
@@ -3757,17 +3759,6 @@ export function EditableReportPanel({
               </div>
             );
           })}
-          {urlArticle && !editing && (
-            <UrlArticleImageGallery
-              urls={urlArticleImages}
-              onRemoveMany={(srcs) => void removeArticleImages(srcs)}
-              onInsertMany={insertArticleImagesToBody}
-              onCopy={(src) => void copyArticleImage(src)}
-              onImport={() => void importArticleImagesFromSource()}
-              importBusy={articleImportBusy}
-              onCrop={setCropSrc}
-            />
-          )}
         </div>
 
         {cropSrc && (

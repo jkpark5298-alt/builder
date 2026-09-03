@@ -23,6 +23,15 @@ export function isUrlArticleInput(
   return (video.tags ?? []).includes("url-article");
 }
 
+/** 파이프라인에서 tags를 다시 짜도 url-article 표시는 유지 */
+export function withUrlArticleTag(
+  record: Pick<VideoRecord, "sourceUrl" | "transcriptSource" | "tags">,
+  tags: string[]
+): string[] {
+  const keep = isUrlArticleInput(record);
+  return Array.from(new Set([...tags, ...(keep ? ["url-article"] : [])]));
+}
+
 /** 보고서 메타·PDF에 넣을 원문 링크 */
 export function reportSourceLink(
   video: Pick<VideoRecord, "inputMode" | "youtubeUrl" | "sourceUrl">

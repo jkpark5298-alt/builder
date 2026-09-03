@@ -39,9 +39,10 @@ export default async function VideoDetailPage({
   }
 
   if (
-    video.status === "awaiting_factcheck" &&
     !video.report &&
-    video.overview.trim().length >= 40
+    (isUrlArticleInput(video) ||
+      (video.status === "awaiting_factcheck" &&
+        video.overview.trim().length >= 40))
   ) {
     video = await upsertVideo(await ensureSkeletonReport(video));
   }
@@ -53,8 +54,9 @@ export default async function VideoDetailPage({
         <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-700">
           {urlDraft ? (
             <>
-              <strong>URL 입력 중</strong> — 본문·이미지를 가져온 뒤 저장하고,
-              AI 또는 수동 요약을 시작하세요.
+              <strong>URL 입력 중</strong> — 본문·이미지를 가져온 뒤 「보고서
+              만들기」를 누르면 원문 전체가 본문이 됩니다. 받은 사진은 본문 아래
+              S칸에 붙습니다.
             </>
           ) : (
             <>
@@ -111,10 +113,25 @@ export default async function VideoDetailPage({
   const isYoutube = isYoutubeInput(video);
   const fcPass = isFactCheckPass(video);
   const showFcChoice = needsFactCheckDecision(video);
-  const summaryStepLabel = isYoutube ? "유튜브 내용 요약" : "내용 요약";
-  const writeStepLabel = isYoutube ? "유형 보고서" : "보고서 작성";
+  const urlArticle = isUrlArticleInput(video);
+  const summaryStepLabel = isYoutube
+    ? "유튜브 내용 요약"
+    : urlArticle
+      ? "요약 (선택)"
+      : "내용 요약";
+  const writeStepLabel = isYoutube
+    ? "유형 보고서"
+    : urlArticle
+      ? "원문 보고서"
+      : "보고서 작성";
 
-  const stepItems = fcPass
+  const stepItems = urlArticle && fcPass
+    ? [
+        { n: "1", t: "원문 보고서", on: Boolean(video.report) },
+        { n: "2", t: "요약 (선택)", on: video.overview.trim().length >= 40 },
+        { n: "3", t: "확정·공유", on: ready },
+      ]
+    : fcPass
     ? [
         { n: "1", t: summaryStepLabel, on: true },
         { n: "2", t: writeStepLabel, on: ready || Boolean(video.report) },

@@ -408,8 +408,8 @@ export function FactcheckReportHub({
               URL 입력
             </h2>
             <p className="text-sm text-ink-500 mt-0.5">
-              제목·URL → 본문·이미지 저장 → AI/수동 요약 → 팩트체크 여부 →
-              보고서 작성
+              제목·URL → 원문 전체를 보고서 본문(평문) · 사진은 본문 아래 ·
+              요약·팩트체크는 선택
             </p>
           </div>
         </div>
@@ -423,8 +423,8 @@ export function FactcheckReportHub({
             [
               {
                 id: "summary" as const,
-                label: "요약",
-                hint: "본문 · AI/수동 · 팩트체크 여부",
+                label: "원문",
+                hint: "가져오기 · 보고서 본문",
                 icon: Link2,
               },
               {
@@ -486,13 +486,13 @@ export function FactcheckReportHub({
         {inputStep === "factcheck" && (
           <div className="space-y-3">
             <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
-              요약한 뒤 「팩트체크 실시」를 고른 항목입니다. 고르면 검증 화면으로
-              이동합니다.
+              요약한 뒤 「팩트체크 실시」를 고른 항목입니다. URL 원문 보고서는
+              팩트체크가 선택이며, 아래에서 이어서 할 수 있습니다.
             </p>
             {stepItems.length === 0 ? (
               <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
-                팩트체크 진행 항목이 없습니다. 「요약」에서 본문을 저장하고
-                AI 또는 수동 요약을 마친 뒤, 팩트체크 실시를 고르세요.
+                팩트체크 진행 항목이 없습니다. URL은 원문 보고서 확정만으로도
+                됩니다. 검증이 필요하면 항목에서 「팩트체크 하기」를 고르세요.
               </p>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -516,13 +516,13 @@ export function FactcheckReportHub({
         {inputStep === "report" && (
           <div className="space-y-3">
             <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50/80 px-3 py-2">
-              본문을 정리하고 이미지를 넣은 뒤 확정합니다. 확정 후에는 기존
-              조회·PDF·공유를 그대로 씁니다.
+              원문 보고서를 다듬고 확정합니다. 받은 사진은 본문 아래에 있습니다.
+              요약·팩트체크는 선택입니다.
             </p>
             {stepItems.length === 0 ? (
               <p className="text-sm text-ink-500 rounded-xl border border-dashed border-ink-200 px-4 py-8 text-center">
-                보고서 작성 대기 항목이 없습니다. 팩트체크를 마치거나 pass하면
-                여기로 옵니다.
+                보고서 작성 대기 항목이 없습니다. URL에서 원문을 가져와
+                「보고서 만들기」를 누르면 여기로 옵니다.
               </p>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -626,7 +626,7 @@ export function FactcheckReportHub({
               URL 입력
             </span>
             <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-              제목·URL → 본문·이미지 저장 → AI/수동 요약 · 팩트체크 여부 · 삭제
+              제목·URL → 원문 보고서 · 사진은 본문 아래 · 삭제
             </span>
           </button>
           <HubPreviewItemList

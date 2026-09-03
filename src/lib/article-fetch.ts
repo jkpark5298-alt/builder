@@ -265,16 +265,39 @@ function collectImageUrls(html: string, base: URL): string[] {
     const h = parseInt(attr(tag, "height") || "0", 10);
     if ((w > 0 && w < 40) || (h > 0 && h < 40)) continue;
     const raw =
-      pickSrcset(attr(tag, "srcset") || attr(tag, "data-srcset")) ||
+      pickSrcset(
+        attr(tag, "srcset") ||
+          attr(tag, "data-srcset") ||
+          attr(tag, "data-lazy-srcset")
+      ) ||
       attr(tag, "data-original") ||
+      attr(tag, "data-original-src") ||
+      attr(tag, "data-orig-src") ||
       attr(tag, "data-full") ||
       attr(tag, "data-large") ||
+      attr(tag, "data-image") ||
+      attr(tag, "data-img-src") ||
       attr(tag, "src") ||
       attr(tag, "data-src") ||
       attr(tag, "data-lazy-src") ||
+      attr(tag, "data-lazy") ||
       attr(tag, "data-url");
     const abs = raw ? absoluteUrl(base, raw) : null;
     if (!abs || seen.has(abs) || skipImageUrl(abs)) continue;
+    seen.add(abs);
+    out.push(abs);
+  }
+  const sources = html.match(/<source\b[^>]*>/gi) ?? [];
+  for (const tag of sources) {
+    const raw =
+      pickSrcset(attr(tag, "srcset") || attr(tag, "data-srcset")) ||
+      attr(tag, "src") ||
+      attr(tag, "data-src");
+    const abs = raw ? absoluteUrl(base, raw) : null;
+    if (!abs || seen.has(abs) || skipImageUrl(abs)) continue;
+    if (!/\.(png|jpe?g|webp|gif)(\?|$)/i.test(abs.split("?")[0] || abs)) {
+      continue;
+    }
     seen.add(abs);
     out.push(abs);
   }
@@ -336,6 +359,11 @@ async function fetchWithRedirects(start: URL): Promise<{
       continue;
     }
     if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(
+          "로그인이 필요한 페이지입니다. 브라우저에서 본문을 복사해 붙여 넣어 주세요."
+        );
+      }
       throw new Error(`페이지를 열 수 없습니다 (${res.status}).`);
     }
     const contentType = res.headers.get("content-type") || "";
@@ -431,6 +459,51 @@ function titleFromHtml(html: string): string {
   return decodeEntities(t.replace(/\s+/g, " ")).trim();
 }
 
+function extractJsonLdArticle(html: string): { title?: string; text?: string } {
+  const blocks = html.match(
+    /<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi
+  );
+  if (!blocks?.length) return {};
+  for (const block of blocks) {
+    const raw = block.replace(/<\/?script\b[^>]*>/gi, "").trim();
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      const nodes = Array.isArray(parsed)
+        ? parsed
+        : parsed && typeof parsed === "object" && "@graph" in parsed
+          ? (parsed as { "@graph": unknown[] })["@graph"]
+          : [parsed];
+      for (const node of nodes) {
+        if (!node || typeof node !== "object") continue;
+        const rec = node as Record<string, unknown>;
+        const type = String(rec["@type"] ?? "");
+        if (!/Article|NewsArticle|BlogPosting/i.test(type)) continue;
+        const headline =
+          typeof rec.headline === "string" ? rec.headline.trim() : "";
+        const body =
+          typeof rec.articleBody === "string"
+            ? rec.articleBody.trim()
+            : typeof rec.text === "string"
+              ? rec.text.trim()
+              : "";
+        if (headline || body.length >= 40) {
+          return { title: headline || undefined, text: body || undefined };
+        }
+      }
+    } catch {
+      /* ignore bad json-ld */
+    }
+  }
+  return {};
+}
+
+function looksGated(html: string, text: string): boolean {
+  if (text.length >= 400) return false;
+  return /paywall|subscribe|metered|로그인\s*(후|하고)|구독자만|회원만|유료\s*회원/i.test(
+    html
+  );
+}
+
 /**
  * 공개 웹 페이지에서 본문 텍스트와 이미지를 가져와 저장소에 보관한다.
  */
@@ -442,7 +515,8 @@ export async function fetchArticleFromUrl(
   const fetched = await fetchWithRedirects(start);
   const html = decodeHtmlBuffer(fetched.buffer, fetched.contentType);
   const articleHtml = pickArticleHtml(html);
-  const title = titleFromHtml(html);
+  const jsonLd = extractJsonLdArticle(html);
+  const title = (jsonLd.title || titleFromHtml(html)).slice(0, 200);
   const siteName =
     metaContent(html, "og:site_name") ||
     metaContent(html, "application-name") ||
@@ -480,17 +554,15 @@ export async function fetchArticleFromUrl(
   if (!text || text.length < 40) {
     text = htmlToText(articleHtml);
   }
+  if ((!text || text.length < 40) && jsonLd.text && jsonLd.text.length >= 40) {
+    text = jsonLd.text;
+  }
   if (!text || text.length < 40) {
     throw new Error(
-      "본문을 찾지 못했습니다. 로그인·구독이 필요한 페이지이거나 본문이 비어 있습니다."
+      looksGated(html, text)
+        ? "로그인·구독이 필요한 페이지로 보입니다. 브라우저에서 본문을 복사해 붙여 넣어 주세요."
+        : "본문을 찾지 못했습니다. 로그인·구독이 필요하거나, 자바스크립트로만 그려지는 페이지일 수 있습니다. 본문을 복사해 붙여 넣어 주세요."
     );
-  }
-
-  if (persisted.length && !/\[이미지\s+\d+\]/.test(text)) {
-    const extra = persisted
-      .map((_, i) => `[이미지 ${i + 1}]`)
-      .join("\n");
-    text = `${text}\n\n${extra}`;
   }
 
   const thumb = persisted[0];
