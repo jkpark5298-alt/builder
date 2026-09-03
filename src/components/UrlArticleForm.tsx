@@ -6,10 +6,8 @@ import {
   ImagePlus,
   Link2,
   Loader2,
-  Save,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { extractVideoId } from "@/lib/youtube";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
@@ -63,8 +61,6 @@ export function UrlArticleForm({
   draftId?: string;
   initial?: Partial<UrlArticleFormValues>;
 }) {
-  const router = useRouter();
-  const [activeDraftId, setActiveDraftId] = useState(draftId);
   const [title, setTitle] = useState(initial?.title ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
   const [channel, setChannel] = useState(initial?.channel ?? "");
@@ -77,7 +73,6 @@ export function UrlArticleForm({
   );
   const [fetching, setFetching] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [draftSaving, setDraftSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(Boolean(draftId || initial));
@@ -125,7 +120,7 @@ export function UrlArticleForm({
   const scriptLen = normalizePastedText(pastedScript).length;
   const hasScript = hasUsablePastedScript(pastedScript);
   const step1Done = title.trim().length >= 2 && Boolean(sourceUrl.trim());
-  const isContinuing = Boolean(activeDraftId);
+  const isContinuing = Boolean(draftId);
 
   function formPayload() {
     return {
@@ -196,7 +191,7 @@ export function UrlArticleForm({
           article.skippedImages
             ? ` (건너뛴 이미지 ${article.skippedImages}장)`
             : ""
-        } 저장하거나 요약을 시작하세요.`
+        } 다음으로 「보고서 만들기」를 누르세요.`
       );
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -208,54 +203,6 @@ export function UrlArticleForm({
     } finally {
       clearTimeout(timer);
       setFetching(false);
-    }
-  }
-
-  async function saveDraft() {
-    setError(null);
-    if (title.trim().length < 2) {
-      setError("제목을 2자 이상 입력해 주세요.");
-      return;
-    }
-    if (!sourceUrl.trim()) {
-      setError("URL을 입력해 주세요.");
-      return;
-    }
-
-    setDraftSaving(true);
-    setStatus(null);
-    try {
-      if (activeDraftId) {
-        const res = await fetch(`/api/videos/${activeDraftId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updateReportInput: formPayload() }),
-        });
-        const data = await parseJsonResponse(res);
-        if (!res.ok) throw new Error(data.error || "임시 저장 실패");
-        setStatus("본문을 저장했습니다. 위에서 항목을 눌러 이어서 열 수 있습니다.");
-        router.refresh();
-      } else {
-        const res = await fetch("/api/videos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "report_draft", ...formPayload() }),
-        });
-        const data = await parseJsonResponse(res);
-        if (!res.ok || !data.video?.id) {
-          throw new Error(data.error || "임시 저장 실패");
-        }
-        setActiveDraftId(data.video.id);
-        cacheVideoSnapshot(data.video);
-        setStatus(
-          "본문을 저장했습니다. 위 「URL 본문·요약 이어하기」에서 눌러 여세요."
-        );
-        router.refresh();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "임시 저장 실패");
-    } finally {
-      setDraftSaving(false);
     }
   }
 
@@ -280,8 +227,8 @@ export function UrlArticleForm({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
     try {
-      if (activeDraftId) {
-        const res = await fetch(`/api/videos/${activeDraftId}`, {
+      if (draftId) {
+        const res = await fetch(`/api/videos/${draftId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
@@ -344,10 +291,10 @@ export function UrlArticleForm({
       await fetchArticle();
       return;
     }
-    await saveDraft();
+    await startSummary(false);
   }
 
-  const busy = fetching || loading || draftSaving;
+  const busy = fetching || loading;
 
   return (
     <form
@@ -423,7 +370,7 @@ export function UrlArticleForm({
         {fetchedOk && (
           <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
             <p className="text-xs font-medium text-emerald-800">
-              저장 본문 미리보기
+              가져온 본문 미리보기
               {hasScript
                 ? ` · ${scriptLen.toLocaleString()}자 · 이미지 ${articleImages.length}장`
                 : ""}
@@ -482,27 +429,9 @@ export function UrlArticleForm({
         <div className="flex flex-col sm:flex-row gap-2">
           <button
             type="button"
-            onClick={() => void saveDraft()}
-            disabled={busy || !step1Done}
-            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-ink-300 bg-white min-h-12 px-5 py-3.5 text-ink-800 font-medium hover:border-accent hover:bg-accent-muted/30 disabled:opacity-50 transition-colors"
-          >
-            {draftSaving ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                저장 중…
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                본문 저장
-              </>
-            )}
-          </button>
-          <button
-            type="button"
             onClick={() => void startSummary(false)}
             disabled={busy || !step1Done || !hasScript}
-            className="w-full sm:flex-[1.3] inline-flex items-center justify-center gap-2 rounded-xl bg-accent min-h-12 px-5 py-3.5 text-white font-medium hover:bg-ink-900 disabled:opacity-60 transition-colors shadow-lg sm:shadow-none"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-accent min-h-12 px-5 py-3.5 text-white font-medium hover:bg-ink-900 disabled:opacity-60 transition-colors shadow-lg sm:shadow-none"
           >
             {loading ? (
               <>
@@ -522,7 +451,7 @@ export function UrlArticleForm({
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript
               ? "보고서 만들기 → 원문 전체·사진은 본문 아래. 요약·팩트체크는 선택"
-              : "본문을 가져온 뒤 저장하거나 보고서를 만들 수 있습니다"}
+              : "본문을 가져온 뒤 보고서를 만들 수 있습니다"}
           </p>
         )}
       </div>

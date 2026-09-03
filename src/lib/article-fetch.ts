@@ -1,5 +1,6 @@
 import { persistMediaBuffer } from "./media-store";
 import { unwrapSoftLineBreaks } from "./paste";
+import { stripPressBoilerplate } from "./url-article-report";
 
 export const ARTICLE_FETCH_MAX_HTML_BYTES = 2 * 1024 * 1024;
 export const ARTICLE_FETCH_MAX_IMAGES = 16;
@@ -557,6 +558,7 @@ export async function fetchArticleFromUrl(
   if ((!text || text.length < 40) && jsonLd.text && jsonLd.text.length >= 40) {
     text = jsonLd.text;
   }
+  text = stripPressBoilerplate(text);
   if (!text || text.length < 40) {
     throw new Error(
       looksGated(html, text)

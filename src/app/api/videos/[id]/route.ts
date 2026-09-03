@@ -45,8 +45,13 @@ import {
 } from "@/lib/answer-parts";
 import { slimVideoForClient } from "@/lib/media-budget";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { reportThumbnailUrl, withUrlArticleTag } from "@/lib/input-mode";
+import { reportThumbnailUrl, withUrlArticleTag, isUrlArticleInput } from "@/lib/input-mode";
 import { fetchArticleFromUrl } from "@/lib/article-fetch";
+import {
+  applyUrlArticleBodyToReport,
+  stripArticleImageMarkers,
+  URL_ARTICLE_REPORT_NOTICE,
+} from "@/lib/url-article-report";
 import { dropUrlsFromReport, replaceUrlsInReport } from "@/lib/report-images";
 import { thumbnailUrl as youtubeThumbnailUrl } from "@/lib/youtube";
 import { afterIncrementalFactEdit } from "@/lib/factcheck-sync";
@@ -298,6 +303,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     removeArticleImages?: string[];
     /** 잘라낸 사진으로 본문 이미지 URL 교체 */
     replaceArticleImage?: { from: string; to: string };
+    /** URL 원문 전체를 보고서 본문으로 넣기 */
+    applyUrlArticleBody?: boolean;
   };
 
   try {
@@ -408,6 +415,35 @@ async function patchVideo(req: Request, ctx: Ctx) {
         : next.report,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  if (body.applyUrlArticleBody) {
+    if (!isUrlArticleInput(next)) {
+      return NextResponse.json(
+        { error: "URL로 가져온 글만 원문을 보고서 본문에 넣을 수 있습니다." },
+        { status: 400 }
+      );
+    }
+    const script = stripArticleImageMarkers(next.transcript ?? "");
+    const images = (next.articleImages ?? []).filter(Boolean);
+    if (script.length < 40 && !images.length) {
+      return NextResponse.json(
+        { error: "URL 원문이 없어 보고서 본문에 넣을 수 없습니다." },
+        { status: 400 }
+      );
+    }
+    next = {
+      ...next,
+      report: applyUrlArticleBodyToReport(next),
+      reportSource: "assembled",
+      reportWriteNotice: URL_ARTICLE_REPORT_NOTICE,
+      reportSkeletonEdited: true,
+      pendingReportFinalize: "keep_body",
+      tags: withUrlArticleTag(next, next.tags ?? []),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "apply_url_article_body" });
   }
 
   if (body.updateUserTags) {

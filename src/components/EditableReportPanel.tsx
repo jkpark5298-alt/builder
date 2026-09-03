@@ -15,6 +15,7 @@ import {
   ClipboardCopy,
   ClipboardPaste,
   Crop,
+  FileText,
   Home,
   ImagePlus,
   Loader2,
@@ -123,6 +124,7 @@ import {
   parseBodySImageSlots,
   removeSSlotAtIndex,
 } from "@/lib/report-body-s-slots";
+import { stripArticleImageMarkers } from "@/lib/url-article-report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
@@ -451,6 +453,9 @@ export function EditableReportPanel({
     .find((u) => /^https?:\/\//i.test(u) && !/youtu\.?be/i.test(u)) || "";
   const urlArticle =
     isUrlArticleInput(localVideo) || Boolean(sourcePageUrl);
+  const urlTranscriptReady =
+    stripArticleImageMarkers(localVideo.transcript ?? "").trim().length >= 40 ||
+    (localVideo.articleImages ?? []).length > 0;
   const [openFcKey, setOpenFcKey] = useState<string | null>(null);
   const [handwritingFor, setHandwritingFor] = useState<number | null>(null);
   const [textImageFor, setTextImageFor] = useState<number | null>(null);
@@ -458,6 +463,7 @@ export function EditableReportPanel({
   const [rebuilding, setRebuilding] = useState(false);
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [articleImportBusy, setArticleImportBusy] = useState(false);
+  const [applyUrlBodyBusy, setApplyUrlBodyBusy] = useState(false);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [cropBusy, setCropBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -1395,9 +1401,11 @@ export function EditableReportPanel({
     }, { history: "immediate" });
     if (released) void releaseMediaUrls([released]);
     setArmedSSlot(null);
-    setImagePasteHint(
-      "칸을 삭제했습니다. 남은 칸 번호는 S1·S2… 순서로 다시 맞춰집니다."
-    );
+    if (!urlArticle) {
+      setImagePasteHint(
+        "칸을 삭제했습니다. 남은 칸 번호는 S1·S2… 순서로 다시 맞춰집니다."
+      );
+    }
     syncSectionEditorFigures(secIdx);
     (document.activeElement as HTMLElement | null)?.blur?.();
   }
@@ -1769,6 +1777,59 @@ export function EditableReportPanel({
       alert(e instanceof Error ? e.message : "사진을 가져오지 못했습니다.");
     } finally {
       setArticleImportBusy(false);
+    }
+  }
+
+  async function applyUrlArticleBody() {
+    if (!urlArticle) return;
+    if (!urlTranscriptReady) {
+      alert("URL 원문이 없어 보고서 본문에 넣을 수 없습니다.");
+      return;
+    }
+    const existingPlain = draft
+      ? draft.sections
+          .map((s) => reportBodyPlain(s.body || "", s.rich).trim())
+          .join("\n")
+          .trim()
+      : "";
+    if (
+      existingPlain.length > 40 &&
+      !confirm(
+        "지금 보고서 본문을 URL에서 가져온 원문으로 바꿀까요? 지금 본문은 덮어씁니다."
+      )
+    ) {
+      return;
+    }
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    setApplyUrlBodyBusy(true);
+    try {
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ applyUrlArticleBody: true }),
+      });
+      const data = (await res.json()) as { error?: string; video?: VideoRecord };
+      if (!res.ok) throw new Error(data.error || "원문을 본문에 넣지 못했습니다.");
+      if (data.video) {
+        setLocalVideo(data.video);
+        if (data.video.report) {
+          const nextReport = normalizeReportImageRefs(data.video.report);
+          setDraft(nextReport);
+          lastSavedSnapRef.current = JSON.stringify(nextReport);
+        }
+      }
+      setMode("view");
+      setActiveSectionIdx(0);
+      setAutoSaveStatus("idle");
+      resetHistory();
+      router.refresh();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "원문을 본문에 넣지 못했습니다.");
+    } finally {
+      setApplyUrlBodyBusy(false);
     }
   }
 
@@ -2428,6 +2489,28 @@ export function EditableReportPanel({
         id="report"
         className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-5 scroll-mt-20"
       >
+        {urlArticle ? (
+          <div className="print:hidden rounded-xl border border-accent/30 bg-accent-muted/40 px-3 py-3 sm:px-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <p className="text-sm text-ink-800 flex-1">
+              {urlTranscriptReady
+                ? "가져온 URL 글 전체를 지금 보고서 본문으로 넣을 수 있습니다. 받은 사진은 본문 아래 S칸에 붙습니다."
+                : "URL 원문이 아직 없어 본문에 넣을 수 없습니다."}
+            </p>
+            <button
+              type="button"
+              disabled={applyUrlBodyBusy || !urlTranscriptReady}
+              onClick={() => void applyUrlArticleBody()}
+              className="inline-flex items-center justify-center gap-1.5 min-h-10 shrink-0 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95 disabled:opacity-60"
+            >
+              {applyUrlBodyBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
+              URL 원문을 보고서 본문으로
+            </button>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
           <h2 className="font-display text-lg sm:text-xl">
             {draftPhase ? "3. 보고서 초안" : "3. 보고서"}
@@ -2483,10 +2566,14 @@ export function EditableReportPanel({
                 type="button"
                 onClick={() => {
                   goBodyMode();
-                  setImportOpen(true);
+                  if (!urlArticle) setImportOpen(true);
                 }}
                 className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
-                title="본문 편집을 열고 붙여넣기 정리·분류 패널을 표시합니다"
+                title={
+                  urlArticle
+                    ? "본문 글을 고칩니다"
+                    : "본문 편집을 열고 붙여넣기 정리·분류 패널을 표시합니다"
+                }
               >
                 <ClipboardPaste className="h-4 w-4" />
                 보고서 편집
@@ -2603,12 +2690,11 @@ export function EditableReportPanel({
           <p className="text-sm">작성일 · {draft.meta.writtenAt}</p>
         </div>
 
-        {editing && (
+        {editing && !urlArticle && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2 flex flex-wrap items-center gap-2">
             <span>
-              {draftPhase
-                ? "문장 끝 S → 다음 번호 빈 칸(S1·S2…) → Ctrl+V로 이미지. 칸 삭제 시 번호는 자동 재정렬됩니다."
-                : "문장 끝 S → 다음 번호 빈 칸(S1·S2…) → Ctrl+V로 이미지. 칸 삭제 시 번호는 자동 재정렬됩니다."}
+              문장 끝 S → 다음 번호 빈 칸(S1·S2…) → Ctrl+V로 이미지. 칸 삭제 시
+              번호는 자동 재정렬됩니다.
             </span>
             {autoSaveStatus === "pending" && (
               <span className="text-ink-400">저장 대기…</span>
@@ -2627,6 +2713,20 @@ export function EditableReportPanel({
             )}
           </p>
         )}
+        {editing && urlArticle && autoSaveStatus !== "idle" && (
+          <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
+            {autoSaveStatus === "pending" && "저장 대기…"}
+            {autoSaveStatus === "saving" && "자동 저장 중…"}
+            {autoSaveStatus === "saved" && (
+              <span className="text-verify-true">자동 저장됨</span>
+            )}
+            {autoSaveStatus === "error" && (
+              <span className="text-verify-false">
+                자동 저장 실패 · 편집 끝내기를 누르세요
+              </span>
+            )}
+          </p>
+        )}
         {factcheckMode && !hideFactCheck && (
           <div className="print:hidden space-y-3">
             <p className="text-xs text-ink-500 rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
@@ -2641,7 +2741,7 @@ export function EditableReportPanel({
 
         <div
           className={`lg:grid lg:gap-4 lg:items-start ${
-            mode === "view"
+            mode === "view" || (urlArticle && hideFactCheck)
               ? ""
               : factcheckMode
                 ? "lg:grid-cols-[minmax(16rem,22rem)_minmax(0,1fr)]"
@@ -2726,6 +2826,8 @@ export function EditableReportPanel({
 
         {editing && (
           <div className="rounded-xl border border-ink-200 bg-white print:hidden">
+            {!urlArticle && (
+            <>
             <div className="md:sticky md:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] z-30 border-b border-ink-100 bg-white md:bg-white/95 md:backdrop-blur-md px-3 py-2 space-y-2 md:shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-500">
@@ -3190,6 +3292,8 @@ export function EditableReportPanel({
                 </p>
               )}
             </div>
+            </>
+            )}
 
             <div className="p-4 sm:p-5">
               {draft.sections.map((sec, idx) => {
@@ -3499,6 +3603,7 @@ export function EditableReportPanel({
               })}
             </div>
 
+            {!urlArticle && (
             <div className="border-t border-ink-100 p-3">
               <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
                 문장 끝에 <strong>S</strong>만 입력하세요. 기존 이미지가 있으면
@@ -3507,24 +3612,7 @@ export function EditableReportPanel({
                 다시 맞춰집니다.
               </div>
             </div>
-          </div>
-        )}
-        {urlArticle && editing && (
-          <div className="space-y-1">
-            <p className="px-3 text-[11px] text-ink-500">
-              URL에서 받은 사진입니다. 「선택 본문에 넣기」는 문장 끝 S칸에
-              붙입니다. 칸이 없으면 본문 아래에 S칸을 만듭니다. 직접 넣으려면
-              문장 끝에 S를 친 뒤 Ctrl+V 또는 사진첩을 쓰세요.
-            </p>
-            <UrlArticleImageGallery
-              urls={urlArticleImages}
-              onRemoveMany={(srcs) => void removeArticleImages(srcs)}
-              onInsertMany={insertArticleImagesToBody}
-              onCopy={(src) => void copyArticleImage(src)}
-              onImport={() => void importArticleImagesFromSource()}
-              importBusy={articleImportBusy}
-              onCrop={setCropSrc}
-            />
+            )}
           </div>
         )}
         <div
@@ -3895,7 +3983,7 @@ export function EditableReportPanel({
         fcByItem={fcByItem}
       />
       )}
-      {editing && mode === "body" && (
+      {editing && mode === "body" && !urlArticle && (
         <MobileFormatBubble
           active
           onBold={() =>
