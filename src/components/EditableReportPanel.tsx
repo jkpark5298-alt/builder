@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import {
+  BookOpen,
   Check,
   ChevronDown,
   ChevronUp,
@@ -91,6 +92,8 @@ import { MobileFormatBubble } from "@/components/MobileFormatBubble";
 import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
 import { ImageCropModal } from "@/components/ImageCropModal";
+import { ArticleReaderView } from "@/components/ArticleReaderView";
+import { readerDocFromReport } from "@/lib/reader-view";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
@@ -477,6 +480,7 @@ export function EditableReportPanel({
   const [imageRoomBusy, setImageRoomBusy] = useState(false);
   const [articleImportBusy, setArticleImportBusy] = useState(false);
   const [applyUrlBodyBusy, setApplyUrlBodyBusy] = useState(false);
+  const [readerOpen, setReaderOpen] = useState(false);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [cropBusy, setCropBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -2598,6 +2602,15 @@ export function EditableReportPanel({
             </a>
             <button
               type="button"
+              onClick={() => setReaderOpen(true)}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
+              title="광고·도구 없이 본문만 크게 읽습니다"
+            >
+              <BookOpen className="h-4 w-4" />
+              읽기 도구
+            </button>
+            <button
+              type="button"
               onClick={() => void copyDraftReport("report")}
               className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent hover:text-accent"
             >
@@ -4145,6 +4158,12 @@ export function EditableReportPanel({
             </button>
           </div>
         </div>
+      )}
+      {readerOpen && draft && (
+        <ArticleReaderView
+          doc={readerDocFromReport(draft, urlArticleImages)}
+          onClose={() => setReaderOpen(false)}
+        />
       )}
     </>
   );

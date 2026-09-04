@@ -229,37 +229,77 @@ function parseImportHeadingLine(line: string): string | null {
   return null;
 }
 
+/** 뉴스 CMS가 남기는 `&ldquo;` 등 이름 엔티티 → 실제 문자 */
+const HTML_NAMED_ENTITIES: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  ldquo: '"',
+  rdquo: '"',
+  lsquo: "'",
+  rsquo: "'",
+  bdquo: '"',
+  sbquo: "'",
+  laquo: '"',
+  raquo: '"',
+  ndash: "-",
+  mdash: "-",
+  minus: "-",
+  hellip: "...",
+  middot: "·",
+  bull: "·",
+  times: "×",
+  divide: "÷",
+  copy: "",
+  reg: "",
+  trade: "",
+  deg: "°",
+};
+
+function decodeHtmlEntitiesOnce(raw: string): string {
+  const names = Object.keys(HTML_NAMED_ENTITIES)
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  let t = raw.replace(
+    new RegExp(`&(${names});?`, "gi"),
+    (all, name: string) => HTML_NAMED_ENTITIES[name.toLowerCase()] ?? all
+  );
+  t = t.replace(/&#0*39;/gi, "'").replace(/&#x0*27;/gi, "'");
+  t = t.replace(/&#(\d+);/g, (all, n: string) => {
+    const code = Number(n);
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return all;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return all;
+    }
+  });
+  t = t.replace(/&#x([0-9a-f]+);/gi, (all, h: string) => {
+    const code = parseInt(h, 16);
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return all;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return all;
+    }
+  });
+  // 나머지 `&unknown;` 형태는 본문에 코드로 남기지 않음
+  return t.replace(/&[a-zA-Z][a-zA-Z0-9]{1,31};/g, "");
+}
+
+/** `&ldquo;` `&amp;ldquo;` 이중 인코딩까지 풀어 실제 따옴표·기호로 바꾼다 */
+export function decodeHtmlEntities(raw: string): string {
+  return decodeHtmlEntitiesOnce(decodeHtmlEntitiesOnce(raw || ""));
+}
+
 /** AI/웹 붙여넣기: HTML 엔티티·워드 글머리 기호 정리 */
 export function sanitizeAiPasteText(raw: string): string {
-  const decoded = raw
+  const decoded = decodeHtmlEntities(raw)
     .replace(/\u200B|\uFEFF/g, "")
     .replace(/\r\n/g, "\n")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&apos;/gi, "'")
-    .replace(/&#0*39;/gi, "'")
-    .replace(/&#x0*27;/gi, "'")
-    .replace(/&#(\d+);/g, (_, n) => {
-      const code = Number(n);
-      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return _;
-      try {
-        return String.fromCodePoint(code);
-      } catch {
-        return _;
-      }
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
-      const code = parseInt(h, 16);
-      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return _;
-      try {
-        return String.fromCodePoint(code);
-      } catch {
-        return _;
-      }
-    })
     // Word/PDF 글머리( U+F0B7 등) → "-"
     .replace(
       /^[\t ]*[\u2022\u2023\u2043\u2219\u25CF\u25E6\u25AA\uF0B7]\s*/gm,

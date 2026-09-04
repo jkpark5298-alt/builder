@@ -1,4 +1,4 @@
-import { plainTextToHtml, reportBodyPlain, sanitizeAiPasteText } from "./report";
+import { plainTextToHtml, reportBodyPlain, sanitizeAiPasteText, decodeHtmlEntities } from "./report";
 import { reportSourceLink } from "./input-mode";
 import { stabilizeReportFcAnchors } from "./fc-markers";
 import {
@@ -53,6 +53,21 @@ function isChromeLine(line: string): boolean {
     return true;
   }
   if (/^https?:\/\/\S+$/i.test(t)) return true;
+  if (/^\[?광고\]?$/.test(t)) return true;
+  if (/^\[광고\]/.test(t)) return true;
+  if (/^(AD|Advertisement|Sponsored)\b/i.test(t) && t.length < 50) return true;
+  if (/쿠팡\s*파트너스|파트너스\s*활동|이 포스팅은.+(수수료|광고)/.test(t)) {
+    return true;
+  }
+  if (/^(스폰서|협찬|광고)\s*[:：]/.test(t) && t.length < 80) return true;
+  if (
+    t.length < 40 &&
+    /지금\s*(가입|신청|구매)|최저가\s*보장|클릭\s*(한\s*번|하세요)|구매하기/.test(
+      t
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -71,7 +86,7 @@ export function stripPressBoilerplate(text: string): string {
 
 function stripTrailingRelatedBlocks(text: string): string {
   const cuts = [
-    /(?:^|\n)\s*(?:▶\s*)?(?:관련\s*(?:기사|뉴스|소식)|함께\s*(?:본|볼)\s*(?:기사|뉴스)|이\s*시각\s*주요\s*뉴스|많이\s*본\s*(?:뉴스|기사)|추천\s*(?:기사|뉴스)|이런\s*기사\s*어때요)\s*:?\s*(?:\n[\s\S]*)?$/i,
+    /(?:^|\n)\s*(?:▶\s*)?(?:관련\s*(?:기사|뉴스|소식)|함께\s*(?:본|볼)\s*(?:기사|뉴스)|이\s*시각\s*주요\s*뉴스|많이\s*본\s*(?:뉴스|기사)|추천\s*(?:기사|뉴스|콘텐츠)|이런\s*기사\s*어때요|당신이 좋아할|스폰서(?:\s*콘텐츠)?)\s*:?\s*(?:\n[\s\S]*)?$/i,
     /(?:^|\n)\s*(?:댓글|한줄평|독자\s*댓글)\s*\d*\s*(?:\n[\s\S]*)?$/i,
   ];
   let out = text;
@@ -98,9 +113,18 @@ export type OrganizeUrlArticleOptions = {
   keepImageMarkers?: boolean;
 };
 
+function stripInlinePhotoCaptions(text: string): string {
+  return text
+    .replace(
+      /\s*[\(（][^)）]{0,120}(?:사진|영상|그래픽)\s*[=:：][^)）]*[\)）]/g,
+      ""
+    )
+    .replace(/[ \t]{2,}/g, " ");
+}
+
 /**
  * URL에서 가져온 기사 본문 정리.
- * 저작권·관련기사·공유 버튼·마크다운 잡음을 걷고 문단만 남긴다.
+ * 저작권·관련기사·공유 버튼·HTML 엔티티(&ldquo; 등)·마크다운 잡음을 걷고 문단만 남긴다.
  */
 export function organizeUrlArticleText(
   raw: string,
@@ -111,11 +135,14 @@ export function organizeUrlArticleText(
     .replace(/\r\n/g, "\n")
     .replace(/\u00a0/g, " ");
   if (!t.trim()) return "";
+  t = decodeHtmlEntities(t);
   // 줄 단위 잡음은 문장 이어붙이기(unwrap) 전에 제거
   t = stripChromeLines(t);
   t = stripTrailingRelatedBlocks(t);
   t = stripPressBoilerplate(t);
   t = sanitizeAiPasteText(t);
+  t = decodeHtmlEntities(t);
+  t = stripInlinePhotoCaptions(t);
   t = t.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_\n]+?)__/g, "$1");
   t = t.replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, "");
   t = t.replace(/^#{1,6}[ \t]+/gm, "");

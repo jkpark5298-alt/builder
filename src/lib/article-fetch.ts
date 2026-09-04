@@ -1,5 +1,6 @@
 import { persistMediaBuffer } from "./media-store";
 import { unwrapSoftLineBreaks } from "./paste";
+import { decodeHtmlEntities } from "./report";
 import { organizeUrlArticleText } from "./url-article-report";
 
 export const ARTICLE_FETCH_MAX_HTML_BYTES = 2 * 1024 * 1024;
@@ -83,21 +84,7 @@ export function assertPublicHttpUrl(raw: string): URL {
 }
 
 function decodeEntities(input: string): string {
-  return input
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => {
-      const n = parseInt(h, 16);
-      return Number.isFinite(n) ? String.fromCodePoint(n) : "";
-    })
-    .replace(/&#(\d+);/g, (_, d) => {
-      const n = parseInt(d, 10);
-      return Number.isFinite(n) ? String.fromCodePoint(n) : "";
-    });
+  return decodeHtmlEntities(input);
 }
 
 function attr(tag: string, name: string): string {
@@ -164,15 +151,115 @@ function looksMojibake(text: string): boolean {
   return text.length > 400 && bad / text.length > 0.015;
 }
 
+const VOID_TAGS = new Set([
+  "img",
+  "br",
+  "hr",
+  "input",
+  "meta",
+  "link",
+  "source",
+  "area",
+  "col",
+  "embed",
+  "wbr",
+  "track",
+  "param",
+]);
+
+const AD_CLASS_TOKENS = new Set([
+  "ad",
+  "ads",
+  "advert",
+  "advertisement",
+  "advertising",
+  "adsense",
+  "adfit",
+  "adbox",
+  "adwrap",
+  "adslot",
+  "adunit",
+  "sponsor",
+  "sponsored",
+  "sponsorship",
+  "taboola",
+  "outbrain",
+  "googletag",
+  "gpt",
+  "dfp",
+  "criteo",
+  "adnxs",
+  "doubleclick",
+  "adservice",
+  "powerlink",
+  "affiliate",
+  "adsbygoogle",
+  "googleads",
+  "pagead",
+]);
+
+function classIdLooksLikeAd(value: string): boolean {
+  if (!value.trim()) return false;
+  if (/광고|스폰서/.test(value)) return true;
+  const tokens = value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return tokens.some((t) => AD_CLASS_TOKENS.has(t));
+}
+
+function openTagLooksLikeAd(openTag: string): boolean {
+  const name = /^<\/?([a-z][a-z0-9]*)/i.exec(openTag)?.[1]?.toLowerCase() || "";
+  if (name === "ins" || name === "amp-ad" || name === "amp-embed") return true;
+  const cls = attr(openTag, "class");
+  const id = attr(openTag, "id");
+  const aria = attr(openTag, "aria-label");
+  const slot = attr(openTag, "data-ad") || attr(openTag, "data-ad-slot");
+  return classIdLooksLikeAd(`${cls} ${id} ${aria} ${slot}`);
+}
+
+/** 광고·스폰서 모듈 HTML을 본문에서 뺀다 */
+function stripAdHtml(html: string): string {
+  const tagRe = /<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi;
+  let result = "";
+  let last = 0;
+  const skip: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(html))) {
+    const full = m[0];
+    const name = (m[1] || "").toLowerCase();
+    const isClose = /^<\//.test(full);
+    const isVoid = /\/>$/.test(full) || VOID_TAGS.has(name);
+    if (!skip.length) {
+      result += html.slice(last, m.index);
+      last = m.index + full.length;
+      if (isClose) {
+        result += full;
+        continue;
+      }
+      if (openTagLooksLikeAd(full)) {
+        if (!isVoid) skip.push(name);
+        continue;
+      }
+      result += full;
+      continue;
+    }
+    last = m.index + full.length;
+    if (isClose && name === skip[skip.length - 1]) skip.pop();
+    else if (!isClose && !isVoid && name === skip[skip.length - 1]) skip.push(name);
+  }
+  if (!skip.length) result += html.slice(last);
+  return result;
+}
+
 function stripNoise(html: string): string {
-  return html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
-    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
-    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, " ")
-    .replace(/<form\b[\s\S]*?<\/form>/gi, " ")
-    .replace(/<(nav|footer|header|aside|button)\b[\s\S]*?<\/\1>/gi, " ");
+  return stripAdHtml(
+    html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+      .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, " ")
+      .replace(/<form\b[\s\S]*?<\/form>/gi, " ")
+      .replace(/<(nav|footer|header|aside|button)\b[\s\S]*?<\/\1>/gi, " ")
+  );
 }
 
 function extractByTag(html: string, tag: string): string {
@@ -251,6 +338,13 @@ function skipImageUrl(url: string): boolean {
   ) {
     return true;
   }
+  if (
+    /googlesyndication|googleadservices|pagead2?|adfit\.|taboola|outbrain|criteo|adnxs|adsrvr|\/ads?(?:\/|_|\.)|\/ad\/|adserver|adimg|\bad\.daum|ads?\.(?:nate|naver|kakao)/.test(
+      u
+    )
+  ) {
+    return true;
+  }
   const path = u.split("?")[0] || u;
   if (/\.(svg|ico)(\?|$)/.test(path)) return true;
   if (/\/(?:icon|logo|badge|button)s?\//.test(path)) return true;
@@ -262,6 +356,7 @@ function collectImageUrls(html: string, base: URL): string[] {
   const seen = new Set<string>();
   const tags = html.match(/<img\b[^>]*>/gi) ?? [];
   for (const tag of tags) {
+    if (openTagLooksLikeAd(tag)) continue;
     const w = parseInt(attr(tag, "width") || "0", 10);
     const h = parseInt(attr(tag, "height") || "0", 10);
     if ((w > 0 && w < 40) || (h > 0 && h < 40)) continue;

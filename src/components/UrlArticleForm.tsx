@@ -6,6 +6,7 @@ import {
   ImagePlus,
   Link2,
   Loader2,
+  BookOpen,
   Sparkles,
   Trash2,
   X,
@@ -19,6 +20,8 @@ import {
   organizeUrlArticleText,
 } from "@/lib/url-article-report";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
+import { ArticleReaderView } from "./ArticleReaderView";
+import { readerDocFromArticle } from "@/lib/reader-view";
 
 const STORAGE_KEY = "yfc-url-article-form-v1";
 const POST_TIMEOUT_MS = 150_000;
@@ -87,6 +90,7 @@ export function UrlArticleForm({
   const [fetchedOk, setFetchedOk] = useState(
     Boolean(initial?.pastedScript && hasUsablePastedScript(initial.pastedScript))
   );
+  const [readerOpen, setReaderOpen] = useState(false);
 
   useEffect(() => {
     if (draftId || initial) return;
@@ -349,6 +353,7 @@ export function UrlArticleForm({
   }
 
   return (
+    <>
     <form
       id="url-article"
       onSubmit={onSubmit}
@@ -437,6 +442,15 @@ export function UrlArticleForm({
               >
                 <Sparkles className="h-3.5 w-3.5" />
                 본문 정리
+              </button>
+              <button
+                type="button"
+                disabled={busy || !hasScript}
+                onClick={() => setReaderOpen(true)}
+                className="inline-flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-800 hover:border-accent disabled:opacity-50"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                읽기 도구
               </button>
               {articleImages.length > 0 && (
                 <button
@@ -547,5 +561,18 @@ export function UrlArticleForm({
         )}
       </div>
     </form>
+    {readerOpen && (
+      <ArticleReaderView
+        doc={readerDocFromArticle({
+          title: title.trim() || "본문",
+          source: channel.trim() || undefined,
+          url: sourceUrl.trim() || undefined,
+          text: pastedScript,
+          images: articleImages,
+        })}
+        onClose={() => setReaderOpen(false)}
+      />
+    )}
+    </>
   );
 }
