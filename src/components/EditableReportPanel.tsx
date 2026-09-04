@@ -124,7 +124,10 @@ import {
   parseBodySImageSlots,
   removeSSlotAtIndex,
 } from "@/lib/report-body-s-slots";
-import { stripArticleImageMarkers } from "@/lib/url-article-report";
+import {
+  organizeUrlArticleReport,
+  stripArticleImageMarkers,
+} from "@/lib/url-article-report";
 
 type ReportWorkMode = "view" | "body" | "factcheck";
 type RoomImageItem = ReturnType<typeof normalizeRoomItems>[number];
@@ -308,6 +311,16 @@ function UrlArticleImageGallery({
                       {on && <Check className="h-3 w-3" />}
                     </span>
                   </label>
+                )}
+                {onRemoveMany && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveMany([src])}
+                    className="absolute top-1 right-1 print:hidden rounded-md bg-white/95 border border-ink-200 p-1 hover:border-verify-false"
+                    title={`${i + 1}번 사진 삭제`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 )}
               </div>
             );
@@ -1628,11 +1641,17 @@ export function EditableReportPanel({
     return next;
   }
 
-  async function persistReport(opts?: { exit?: boolean; sectionIdx?: number }) {
-    flushDebouncedHistory();
-    // TipTap 화면에만 있고 draft 에 안 들어간 붙여넣기·입력을 저장 직전 반영
-    const flushed = flushLiveEditorsToDraft();
-    const working = flushed ?? draftRef.current;
+  async function persistReport(opts?: {
+    exit?: boolean;
+    sectionIdx?: number;
+    skipFlush?: boolean;
+  }) {
+    if (!opts?.skipFlush) {
+      flushDebouncedHistory();
+      // TipTap 화면에만 있고 draft 에 안 들어간 붙여넣기·입력을 저장 직전 반영
+      flushLiveEditorsToDraft();
+    }
+    const working = draftRef.current;
     if (!working) return;
     const sectionIdx = opts?.sectionIdx;
     if (sectionIdx !== undefined) {
@@ -1778,6 +1797,34 @@ export function EditableReportPanel({
     } finally {
       setArticleImportBusy(false);
     }
+  }
+
+  async function organizeUrlReportBody() {
+    if (editing) flushLiveEditorsToDraft();
+    const current = draftRef.current;
+    if (!current) return;
+    const next = organizeUrlArticleReport(current);
+    const same = current.sections.every(
+      (sec, i) =>
+        (sec.body || "") === (next.sections[i]?.body || "") &&
+        sec.heading === (next.sections[i]?.heading || "")
+    );
+    if (same) {
+      alert("더 정리할 내용이 없습니다.");
+      return;
+    }
+    if (
+      !confirm(
+        "본문에서 관련기사·저작권·공유 문구 등 잡음을 걷어낼까요?\n본문에 붙인 사진은 그대로 둡니다."
+      )
+    ) {
+      return;
+    }
+    draftRef.current = next;
+    setDraft(next);
+    setSavedSections(next.sections.map(sectionSnapshot));
+    setMode("view");
+    await persistReport({ exit: false, skipFlush: true });
   }
 
   async function applyUrlArticleBody() {
@@ -2490,25 +2537,51 @@ export function EditableReportPanel({
         className="rounded-2xl border border-ink-200 bg-white/80 p-4 sm:p-5 space-y-5 scroll-mt-20"
       >
         {urlArticle ? (
-          <div className="print:hidden rounded-xl border border-accent/30 bg-accent-muted/40 px-3 py-3 sm:px-4 flex flex-col sm:flex-row sm:items-center gap-3">
-            <p className="text-sm text-ink-800 flex-1">
-              {urlTranscriptReady
-                ? "가져온 URL 글 전체를 지금 보고서 본문으로 넣을 수 있습니다. 받은 사진은 본문 아래 S칸에 붙습니다."
-                : "URL 원문이 아직 없어 본문에 넣을 수 없습니다."}
-            </p>
-            <button
-              type="button"
-              disabled={applyUrlBodyBusy || !urlTranscriptReady}
-              onClick={() => void applyUrlArticleBody()}
-              className="inline-flex items-center justify-center gap-1.5 min-h-10 shrink-0 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95 disabled:opacity-60"
-            >
-              {applyUrlBodyBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4" />
-              )}
-              URL 원문을 보고서 본문으로
-            </button>
+          <div className="print:hidden space-y-3">
+            <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-3 py-3 sm:px-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <p className="text-sm text-ink-800 flex-1">
+                {urlTranscriptReady
+                  ? "가져온 URL 글을 본문으로 넣거나, 관련기사·저작권 문구를 걷어 정리할 수 있습니다. 사진은 아래 갤러리에서 지울 수 있습니다."
+                  : "URL 원문이 아직 없어 본문에 넣을 수 없습니다."}
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={saving || rebuilding}
+                  onClick={() => void organizeUrlReportBody()}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-white px-3 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-60"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  본문 정리
+                </button>
+                <button
+                  type="button"
+                  disabled={applyUrlBodyBusy || !urlTranscriptReady}
+                  onClick={() => void applyUrlArticleBody()}
+                  className="inline-flex items-center justify-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95 disabled:opacity-60"
+                >
+                  {applyUrlBodyBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="h-4 w-4" />
+                  )}
+                  URL 원문을 보고서 본문으로
+                </button>
+              </div>
+            </div>
+            <UrlArticleImageGallery
+              urls={urlArticleImages}
+              onRemoveMany={(srcs) => void removeArticleImages(srcs)}
+              onInsertMany={insertArticleImagesToBody}
+              onCopy={(src) => void copyArticleImage(src)}
+              onImport={
+                sourcePageUrl
+                  ? () => void importArticleImagesFromSource()
+                  : undefined
+              }
+              importBusy={articleImportBusy}
+              onCrop={(src) => setCropSrc(src)}
+            />
           </div>
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">

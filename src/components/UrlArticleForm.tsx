@@ -6,10 +6,18 @@ import {
   ImagePlus,
   Link2,
   Loader2,
+  Sparkles,
+  Trash2,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { extractVideoId } from "@/lib/youtube";
+import { releaseMediaUrls } from "@/lib/media-upload-client";
+import {
+  dropArticleImages,
+  organizeUrlArticleText,
+} from "@/lib/url-article-report";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
 
 const STORAGE_KEY = "yfc-url-article-form-v1";
@@ -179,19 +187,23 @@ export function UrlArticleForm({
         throw new Error(data.error || "본문을 가져오지 못했습니다.");
       }
       const article = data.article;
+      const cleaned = organizeUrlArticleText(article.text, {
+        keepImageMarkers: true,
+      });
       setSourceUrl(article.url || url);
       if (!title.trim() && article.title) setTitle(article.title);
       if (!channel.trim() && article.siteName) setChannel(article.siteName);
-      setPastedScript(article.text);
+      setPastedScript(cleaned || article.text);
       setArticleImages(article.images ?? []);
       if (article.thumbnailUrl) setThumbnailUrl(article.thumbnailUrl);
       setFetchedOk(true);
+      const shown = cleaned || article.text;
       setStatus(
-        `본문 ${article.text.length.toLocaleString()}자 · 이미지 ${article.imageCount}장을 가져왔습니다.${
+        `본문 ${shown.length.toLocaleString()}자 · 이미지 ${article.imageCount}장을 가져와 정리했습니다.${
           article.skippedImages
             ? ` (건너뛴 이미지 ${article.skippedImages}장)`
             : ""
-        } 다음으로 「보고서 만들기」를 누르세요.`
+        } 필요 없는 사진은 지운 뒤 「보고서 만들기」를 누르세요.`
       );
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -296,6 +308,46 @@ export function UrlArticleForm({
 
   const busy = fetching || loading;
 
+  function organizePreview() {
+    const next = organizeUrlArticleText(pastedScript, {
+      keepImageMarkers: true,
+    });
+    if (!next) {
+      setError("정리할 본문이 없습니다.");
+      return;
+    }
+    setError(null);
+    setPastedScript(next);
+    setStatus(
+      `본문을 정리했습니다 · ${next.length.toLocaleString()}자 · 이미지 ${articleImages.length}장`
+    );
+  }
+
+  function removePreviewImages(drop: string[]) {
+    const urls = drop.map((u) => u.trim()).filter(Boolean);
+    if (!urls.length) return;
+    const next = dropArticleImages(pastedScript, articleImages, urls);
+    setPastedScript(next.text);
+    setArticleImages(next.images);
+    if (!next.images.includes(thumbnailUrl)) {
+      setThumbnailUrl(next.images[0] || "");
+    }
+    void releaseMediaUrls(urls);
+    setStatus(
+      next.images.length
+        ? `사진 ${urls.length}장을 뺐습니다 · 남은 이미지 ${next.images.length}장`
+        : "사진을 모두 뺐습니다. 본문만 보고서로 만듭니다."
+    );
+  }
+
+  function removeAllPreviewImages() {
+    if (!articleImages.length) return;
+    if (!confirm(`가져온 사진 ${articleImages.length}장을 모두 지울까요?`)) {
+      return;
+    }
+    removePreviewImages(articleImages);
+  }
+
   return (
     <form
       id="url-article"
@@ -314,10 +366,11 @@ export function UrlArticleForm({
             {isContinuing ? "URL 본문 이어서 작성" : "URL로 보고서 만들기"}
           </h2>
           <p className="text-sm text-ink-600 leading-relaxed">
-            제목과 기사 URL을 넣은 뒤 본문·이미지를 가져옵니다.{" "}
-            <strong>보고서 만들기</strong>를 누르면 원문 전체가 보고서 본문(평문)이
-            되고, 받은 사진은 본문 아래에 붙습니다. 요약(수동·추후 AI)과
-            팩트체크는 선택입니다.
+            제목과 기사 URL을 넣은 뒤 본문·이미지를 가져옵니다. 가져온 뒤{" "}
+            <strong>본문 정리</strong>로 관련기사·저작권 문구를 걷고, 필요 없는
+            사진은 지울 수 있습니다. <strong>보고서 만들기</strong>를 누르면
+            정리한 글이 본문이 되고, 남긴 사진은 본문 아래에 붙습니다.
+            요약(수동·추후 AI)과 팩트체크는 선택입니다.
           </p>
         </div>
 
@@ -375,16 +428,54 @@ export function UrlArticleForm({
                 ? ` · ${scriptLen.toLocaleString()}자 · 이미지 ${articleImages.length}장`
                 : ""}
             </p>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                disabled={busy || !pastedScript.trim()}
+                onClick={organizePreview}
+                className="inline-flex items-center gap-1 rounded-lg border border-accent/40 bg-white px-2.5 py-1.5 text-xs font-medium text-ink-800 hover:border-accent disabled:opacity-50"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                본문 정리
+              </button>
+              {articleImages.length > 0 && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={removeAllPreviewImages}
+                  className="inline-flex items-center gap-1 rounded-lg border border-verify-false/40 bg-white px-2.5 py-1.5 text-xs font-medium text-verify-false hover:border-verify-false disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  사진 모두 삭제
+                </button>
+              )}
+            </div>
             {articleImages.length > 0 && (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {articleImages.map((src, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <div
                     key={`${src}-${i}`}
-                    src={src}
-                    alt={`본문 이미지 ${i + 1}`}
-                    className="aspect-video w-full rounded-lg object-cover border border-ink-200 bg-ink-50"
-                  />
+                    className="relative overflow-hidden rounded-lg border border-ink-200 bg-ink-50"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt={`본문 이미지 ${i + 1}`}
+                      className="aspect-video w-full object-cover"
+                    />
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                      {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => removePreviewImages([src])}
+                      className="absolute top-1 right-1 rounded-md bg-white/95 border border-ink-200 p-1 hover:border-verify-false disabled:opacity-50"
+                      title={`${i + 1}번 사진 삭제`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -450,7 +541,7 @@ export function UrlArticleForm({
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript
-              ? "보고서 만들기 → 원문 전체·사진은 본문 아래. 요약·팩트체크는 선택"
+              ? "보고서 만들기 → 정리한 본문·남긴 사진. 요약·팩트체크는 선택"
               : "본문을 가져온 뒤 보고서를 만들 수 있습니다"}
           </p>
         )}
