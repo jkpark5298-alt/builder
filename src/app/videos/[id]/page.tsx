@@ -1,29 +1,25 @@
+import { AiPasteInbox } from "@/components/AiPasteInbox";
 import { ReportCreateForm } from "@/components/ReportCreateForm";
-import { UrlArticleForm } from "@/components/UrlArticleForm";
 import { ThumbnailEditor } from "@/components/ThumbnailEditor";
 import { getVideo, upsertVideo } from "@/lib/store";
 import { ensureSkeletonReport } from "@/lib/report-skeleton";
+import { applyFactCheckPass } from "@/lib/process";
 import { ActionBar } from "@/components/ActionBar";
+import { CollapsibleSummaryStep } from "@/components/CollapsibleSummaryStep";
 import { EditableReportPanel } from "@/components/EditableReportPanel";
 import { InfographicPanel } from "@/components/InfographicPanel";
-import { ManualFactCheckWizard } from "@/components/ManualFactCheckWizard";
-import { FactCheckDecisionPanel, PassReportConfirmBar } from "@/components/FactCheckDecisionPanel";
+import { PassReportConfirmBar } from "@/components/FactCheckDecisionPanel";
 import { OverviewSummaryPanel } from "@/components/OverviewSummaryPanel";
 import { PasteScriptPanel } from "@/components/PasteScriptPanel";
 import { PrintOnLoad } from "@/components/PrintOnLoad";
 import { ReprocessButton } from "@/components/ReprocessButton";
-import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
-import { ReportActions } from "@/components/ReportActions";
 import { UserTagsEditor } from "@/components/UserTagsEditor";
 import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
-import { factCheckProgress } from "@/lib/factcheck";
-import { isHistoryFactCheckFlow } from "@/lib/history-flow";
-import { isYoutubeInput, isFactCheckPass, needsFactCheckDecision, isUrlArticleInput } from "@/lib/input-mode";
+import { isYoutubeInput, isUrlArticleInput } from "@/lib/input-mode";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
 import { formatTagList } from "@/lib/tags";
-import { REPORT_TYPE_LABELS } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +34,20 @@ export default async function VideoDetailPage({
     return <VideoNotFoundRecovery id={id} />;
   }
 
+  // 기존 팩트체크 진행 중 항목 → 요약·보고서 경로로 전환
+  if (
+    video.status === "awaiting_factcheck" &&
+    video.overview.trim().length >= 40 &&
+    video.skipFactCheck !== true &&
+    video.factCheckDecision !== "pass"
+  ) {
+    try {
+      video = await applyFactCheckPass(video);
+    } catch {
+      /* 요약 미완 등은 그대로 둠 */
+    }
+  }
+
   if (
     !video.report &&
     (isUrlArticleInput(video) ||
@@ -48,120 +58,61 @@ export default async function VideoDetailPage({
   }
 
   if (video.status === "report_input_draft") {
-    const urlDraft = isUrlArticleInput(video);
     return (
       <div className="space-y-6 pb-24 sm:pb-8">
         <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-700">
-          {urlDraft ? (
-            <>
-              <strong>URL 입력 중</strong> — 본문·이미지를 가져온 뒤 「보고서
-              만들기」를 누르면 원문 전체가 본문이 됩니다. 받은 사진은 본문 아래
-              S칸에 붙습니다.
-            </>
-          ) : (
-            <>
-              <strong>입력 중</strong> — 제목을 채운 뒤 임시 저장하거나, 스크립트
-              없이도 요약·검증을 시작하세요.
-            </>
-          )}
+          <strong>입력 중</strong> — 제목을 채운 뒤 임시 저장하거나, 스크립트
+          없이도 요약을 시작하세요.
         </div>
-        {urlDraft ? (
-          <UrlArticleForm
-            draftId={video.id}
-            initial={{
-              title: video.title,
-              sourceUrl: video.sourceUrl ?? "",
-              channel:
-                video.channel === "직접 입력" || video.channel === "웹 기사"
-                  ? ""
-                  : video.channel,
-              pastedScript: video.transcript ?? "",
-              thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+        <ReportCreateForm
+          draftId={video.id}
+          initial={{
+            title: video.title,
+            channel:
+              video.channel === "직접 입력" || video.channel === "웹 기사"
                 ? ""
-                : video.thumbnailUrl,
-              articleImages: video.articleImages,
-            }}
-          />
-        ) : (
-          <ReportCreateForm
-            draftId={video.id}
-            initial={{
-              title: video.title,
-              channel: video.channel === "직접 입력" ? "" : video.channel,
-              creatorNotes: video.description ?? "",
-              pastedScript: video.transcript ?? "",
-              thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
-                ? ""
-                : video.thumbnailUrl,
-            }}
-          />
-        )}
+                : video.channel,
+            creatorNotes: video.description ?? "",
+            pastedScript: video.transcript ?? "",
+            thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+              ? ""
+              : video.thumbnailUrl,
+          }}
+        />
       </div>
     );
   }
 
   const awaiting = video.status === "awaiting_factcheck";
   const ready = video.status === "ready";
-  const progress = factCheckProgress(video);
-  const historyFlow = isHistoryFactCheckFlow(video);
-  const showReportDraft =
-    awaiting &&
-    Boolean(video.report) &&
-    (!historyFlow || progress.gateComplete);
+  const showReportDraft = awaiting && Boolean(video.report);
   const stage = libraryStage(video);
   const stageLabel = libraryCardLabel(video);
   const isYoutube = isYoutubeInput(video);
-  const fcPass = isFactCheckPass(video);
-  const showFcChoice = needsFactCheckDecision(video);
   const urlArticle = isUrlArticleInput(video);
   const summaryStepLabel = isYoutube
-    ? "유튜브 내용 요약"
+    ? "자막·요약"
     : urlArticle
       ? "요약 (선택)"
       : "내용 요약";
-  const writeStepLabel = isYoutube
-    ? "유형 보고서"
-    : urlArticle
-      ? "원문 보고서"
-      : "보고서 작성";
 
-  const stepItems = urlArticle && fcPass
-    ? [
-        { n: "1", t: "원문 보고서", on: Boolean(video.report) },
-        { n: "2", t: "요약 (선택)", on: video.overview.trim().length >= 40 },
-        { n: "3", t: "확정·공유", on: ready },
-      ]
-    : fcPass
-    ? [
-        { n: "1", t: summaryStepLabel, on: true },
-        { n: "2", t: writeStepLabel, on: ready || Boolean(video.report) },
-        { n: "3", t: "인포 이미지·공유", on: ready },
-      ]
-    : showFcChoice
-    ? [
-        { n: "1", t: summaryStepLabel, on: true },
-        { n: "2", t: "팩트체크 또는 pass", on: true },
-        { n: "3", t: writeStepLabel, on: false },
-        { n: "4", t: "인포 이미지·공유", on: false },
-      ]
-    : historyFlow
-    ? [
-        { n: "1", t: summaryStepLabel, on: true },
-        { n: "2", t: "팩트체크", on: awaiting || ready },
-        {
-          n: "3",
-          t: "초안·재수정",
-          on: (awaiting && progress.gateComplete) || ready,
-        },
-        { n: "4", t: "확정 보고서·이미지", on: ready },
-        { n: "5", t: "인포 이미지·공유", on: ready },
-      ]
-    : [
-        { n: "1", t: summaryStepLabel, on: true },
-        { n: "2", t: "팩트체크 정리", on: awaiting || ready },
-        { n: "3", t: writeStepLabel, on: ready },
-        { n: "4", t: "인포 이미지·공유", on: ready },
-      ];
+  const stepItems = [
+    {
+      n: "1–4",
+      t: "자막",
+      on: true,
+    },
+    {
+      n: "5–8",
+      t: "요약",
+      on: video.overview.trim().length >= 40 || awaiting || ready,
+    },
+    {
+      n: "9–10",
+      t: "보고서",
+      on: ready || Boolean(video.report),
+    },
+  ];
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-24 sm:pb-8">
@@ -170,17 +121,7 @@ export default async function VideoDetailPage({
         status={video.status}
         errorMessage={video.errorMessage}
       />
-      <ol
-        className={`grid gap-2 text-center text-xs sm:text-sm ${
-          fcPass
-            ? "grid-cols-3"
-            : showFcChoice
-              ? "grid-cols-2 sm:grid-cols-4"
-            : historyFlow
-              ? "grid-cols-2 sm:grid-cols-5"
-              : "grid-cols-2 sm:grid-cols-4"
-        }`}
-      >
+      <ol className="grid grid-cols-3 gap-2 text-center text-xs sm:text-sm">
         {stepItems.map((s) => (
           <li
             key={s.n}
@@ -196,6 +137,10 @@ export default async function VideoDetailPage({
           </li>
         ))}
       </ol>
+
+      {!ready && video.overview.trim().length < 40 ? (
+        <AiPasteInbox video={video} />
+      ) : null}
 
       <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] print:hidden">
         <ThumbnailEditor
@@ -228,23 +173,16 @@ export default async function VideoDetailPage({
                 {video.sourceUrl}
               </a>
             ) : (
-              <p className="text-sm text-ink-400 mt-2">
-                팩트체크보고서 · 직접 입력
-              </p>
+              <p className="text-sm text-ink-400 mt-2">정보 보관소 · 직접 입력</p>
             )}
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-ink-500">
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {isYoutube
-                ? fcPass
-                  ? "유튜브 · 팩트체크 pass"
-                  : "유튜브"
+                ? "유튜브"
                 : video.sourceUrl
-                  ? "팩트체크보고서 · URL"
-                  : "팩트체크보고서"}
-            </span>
-            <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-              {REPORT_TYPE_LABELS[video.reportType]}
+                  ? "정보 보관소 · URL"
+                  : "정보 보관소"}
             </span>
             {!!video.userTags?.length && (
               <span className="rounded-md bg-accent-muted/60 border border-accent/30 px-2 py-1 text-accent">
@@ -279,18 +217,13 @@ export default async function VideoDetailPage({
               }`}
             >
               {stage === "factcheck_draft"
-                ? fcPass
-                  ? "임시 저장 · 요약 입력"
-                  : `임시 저장 · 팩트체크 ${progress.doneCount}/${progress.total}`
+                ? "임시 저장 · 요약 입력"
                 : stage === "report_pending"
                   ? "작성 대기"
                   : stageLabel}
             </span>
           </div>
-          <UserTagsEditor
-            videoId={video.id}
-            initialTags={video.userTags}
-          />
+          <UserTagsEditor videoId={video.id} initialTags={video.userTags} />
           {video.scriptNotice && (
             <div className="rounded-xl border border-accent/30 bg-accent-muted/50 px-3 py-2.5 text-sm text-ink-800">
               {video.scriptNotice}
@@ -299,16 +232,15 @@ export default async function VideoDetailPage({
           {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") &&
             isYoutube && (
-            <PasteScriptPanel
-              videoId={video.id}
-              youtubeUrl={video.youtubeUrl}
-            />
-          )}
+              <PasteScriptPanel
+                videoId={video.id}
+                youtubeUrl={video.youtubeUrl}
+              />
+            )}
           <div className="flex flex-wrap gap-2">
-            <ReprocessButton videoId={video.id} skipFactCheck={fcPass} />
+            <ReprocessButton videoId={video.id} skipFactCheck />
           </div>
           <SavedTranscriptPanel video={video} />
-          {ready && !fcPass && <ReopenAsDraftButton videoId={video.id} />}
           <ActionBar video={video} />
           {ready && (
             <a
@@ -322,35 +254,25 @@ export default async function VideoDetailPage({
       </section>
       {ready && <PrintOnLoad />}
 
-      <section
-        id="general-summary"
-        className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden"
+      <CollapsibleSummaryStep
+        title={summaryStepLabel}
+        defaultCollapsed={Boolean(video.report)}
       >
-        <div className="bg-accent px-4 sm:px-5 py-3.5">
-          <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
-            1. {summaryStepLabel}
-          </h2>
-        </div>
-        <div className="p-4 sm:p-5 space-y-3">
-          <OverviewSummaryPanel video={video} />
-          {(video.transcriptSource === "creator_meta" ||
-            video.transcriptSource === "none") &&
-            isYoutube && (
+        <OverviewSummaryPanel
+          key={`${video.id}-${video.updatedAt}`}
+          video={video}
+        />
+        {(video.transcriptSource === "creator_meta" ||
+          video.transcriptSource === "none") &&
+          isYoutube && (
             <PasteScriptPanel
               videoId={video.id}
               youtubeUrl={video.youtubeUrl}
             />
           )}
-        </div>
-      </section>
+      </CollapsibleSummaryStep>
 
-      {showFcChoice && <FactCheckDecisionPanel video={video} />}
-
-      {awaiting && !fcPass && !showFcChoice && (
-        <ManualFactCheckWizard video={video} />
-      )}
-
-      {fcPass && awaiting && video.report && (
+      {showReportDraft && (
         <section
           id="report-draft"
           className="space-y-3 scroll-mt-20 print:hidden"
@@ -365,104 +287,24 @@ export default async function VideoDetailPage({
         </section>
       )}
 
-      {showReportDraft && !fcPass && !showFcChoice && (
-        <section
-          id="report-draft"
-          className="space-y-3 scroll-mt-20 print:hidden"
-        >
-          <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800">
-            {historyFlow ? (
-              <>
-                <strong>3. FC 반영 초안 · 재수정</strong> — 본문을 다듬은 뒤
-                「확정 보고서 만들기」로 확정하세요. 번호별 이미지는 확정 후에
-                붙입니다.
-              </>
-            ) : (
-              <>
-                <strong>보고서 초안</strong> — 팩트체크를 하는 동안 골격 보고서를
-                미리 보거나 본문을 다듬을 수 있습니다. 본문을 수정하면 완료 시 그
-                내용이 유지됩니다.
-              </>
-            )}
-          </div>
+      {ready && video.report && (
+        <div className="space-y-3">
           {video.reportWriteNotice ? (
-            <div className="rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-700">
+            <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800 print:hidden">
+              <span className="font-medium">
+                {video.reportSource === "llm"
+                  ? "글쓰기 AI"
+                  : "내용 적응형 조립"}
+              </span>
+              {" — "}
               {video.reportWriteNotice}
             </div>
           ) : null}
-          <EditableReportPanel video={video} draftPhase />
-        </section>
+          <EditableReportPanel video={video} />
+        </div>
       )}
 
-      {ready && (
-        <>
-          {!fcPass && (
-          <section className="rounded-2xl border border-accent/30 bg-white shadow-sm overflow-hidden print:hidden">
-            <div className="bg-accent px-4 sm:px-5 py-3.5">
-              <h2 className="font-display text-xl sm:text-2xl text-white text-center sm:text-left">
-                2. 팩트체크 완료
-              </h2>
-            </div>
-            <div className="p-4 sm:p-5 space-y-3">
-              <div className="rounded-xl border border-verify-true/30 bg-verify-true/10 px-3 py-2.5 text-sm text-ink-800">
-                <p className="font-medium text-verify-true">팩트체크 완료</p>
-                <p className="mt-1.5 text-ink-700 leading-relaxed">
-                  {historyFlow ? (
-                    <>
-                      이제 할 일: 아래 <strong>확정 보고서</strong>에서 본문을
-                      확인하고, 이미지 룸·인포 이미지를 붙인 뒤 공유하세요.
-                    </>
-                  ) : (
-                    <>
-                      이제 할 일: 아래 보고서에서{" "}
-                      <strong>보기 / 본문</strong>으로 문장을 다듬고, 이미지는
-                      보고서 이미지 룸·인포 이미지(붙여넣기·사진첩)를 붙인 뒤
-                      공유로 마무리하세요.
-                    </>
-                  )}
-                </p>
-                <p className="mt-1.5 text-xs text-ink-500">
-                  여러 항목을 처음부터 다시 할 때만 「팩트체크 다시하기」를
-                  쓰세요. 문장만 고치려면 보고서 본문 수정이면 됩니다.
-                </p>
-              </div>
-              <ReopenAsDraftButton videoId={video.id} />
-            </div>
-          </section>
-          )}
-
-          {video.report && (
-            <div className="space-y-3">
-              {video.reportWriteNotice ? (
-                <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800 print:hidden">
-                  <span className="font-medium">
-                    {video.reportSource === "llm"
-                      ? "글쓰기 AI"
-                      : "내용 적응형 조립"}
-                  </span>
-                  {" — "}
-                  {video.reportWriteNotice}
-                </div>
-              ) : null}
-              <div className="rounded-2xl border border-accent/30 bg-white shadow-sm p-4 sm:p-5 print:hidden">
-                <h2 className="font-display text-lg sm:text-xl mb-3">
-                  {fcPass
-                    ? isYoutube
-                      ? "2. 보고서"
-                      : "2. 보고서 작성"
-                    : historyFlow
-                      ? "4. 확정 보고서"
-                      : "보고서"}
-                </h2>
-                <ReportActions video={video} />
-              </div>
-              <EditableReportPanel video={video} />
-            </div>
-          )}
-
-          <InfographicPanel video={video} />
-        </>
-      )}
+      {ready && <InfographicPanel video={video} />}
 
       {!awaiting && !ready && (
         <div className="rounded-2xl border border-ink-200 bg-white/80 p-5 text-center text-ink-600 text-sm">

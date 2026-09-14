@@ -171,7 +171,7 @@ export function ReportCreateForm({
         }
         setActiveDraftId(data.video.id);
         cacheVideoSnapshot(data.video);
-        setStatus("임시 저장됨. 홈 「팩트체크 보고서」 탭에서 이어서 작성할 수 있습니다.");
+        setStatus("임시 저장됨. 홈 「정보 보관소」 탭에서 이어서 작성할 수 있습니다.");
         if (!draftId) {
           window.history.replaceState(null, "", `/videos/${data.video.id}`);
         }
@@ -240,7 +240,7 @@ export function ReportCreateForm({
         });
         const data = await parseJsonResponse(res);
         if (!res.ok || !data.video?.id) {
-          throw new Error(data.error || "팩트체크보고서 생성 실패");
+          throw new Error(data.error || "정보 보관소 항목 생성 실패");
         }
         if (data.video.status === "report_input_draft") {
           throw new Error(
@@ -265,7 +265,7 @@ export function ReportCreateForm({
 
       const data = await parseJsonResponse(res);
       if (!res.ok || !data.video?.id) {
-        throw new Error(data.error || "팩트체크보고서 생성 실패");
+        throw new Error(data.error || "정보 보관소 항목 생성 실패");
       }
 
       cacheVideoSnapshot(data.video);
@@ -296,7 +296,7 @@ export function ReportCreateForm({
         <div className="flex items-center gap-2 text-accent">
           <FileText className="h-5 w-5" />
           <span className="text-sm font-medium tracking-wide uppercase">
-            팩트체크보고서
+            정보 보관소
           </span>
         </div>
         <div>
@@ -316,10 +316,9 @@ export function ReportCreateForm({
                 </>
               ) : (
                 <>
-                  유튜브 URL 없이 <strong>제목만</strong> 있어도 다음 단계로 갈
-                  수 있습니다. 스크립트가 있으면 자동 요약에 쓰고, 없으면{" "}
-                  <strong>수동 요약</strong>부터 진행합니다. 일부만 입력해도{" "}
-                  <strong>임시 저장</strong>할 수 있습니다.
+                  유튜브 URL 없이 <strong>제목만</strong> 있어도 됩니다. 원문·요약은
+                  다음 화면 위쪽 칸에 그대로 붙이면 됩니다. 형식을 맞출 필요는
+                  없습니다.
                 </>
               )}
             </p>
@@ -380,7 +379,7 @@ export function ReportCreateForm({
             ) : null}
           </div>
           <p className="text-xs text-ink-400">
-            목록·상세 상단에 보이는 표지입니다. 없으면 기본 팩트체크보고서
+            목록·상세 상단에 보이는 표지입니다. 없으면 기본 정보 보관소
             이미지가
             사용됩니다.
           </p>
@@ -435,8 +434,8 @@ export function ReportCreateForm({
         )}
         {scriptLen === 0 && (
           <p className="text-xs text-ink-500">
-            스크립트 없이 시작하면 「내용 요약」을 직접 입력한 뒤 팩트체크로
-            이어집니다.
+            스크립트 없이 시작하면 「내용 요약」을 직접 입력한 뒤 팩트체크
+            실시 또는 pass를 고릅니다.
           </p>
         )}
 
@@ -525,8 +524,8 @@ export function ReportCreateForm({
           <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
             <Check className="h-3.5 w-3.5 text-emerald-600" />
             {hasScript
-              ? "스크립트로 자동 요약 후 팩트체크·보고서"
-              : "제목만으로 시작 · 요약은 직접 입력"}
+              ? "스크립트로 자동 요약 후 팩트체크 실시 또는 pass"
+              : "제목만으로 시작 · 요약 후 팩트체크 실시 또는 pass"}
           </p>
         )}
       </div>

@@ -48,7 +48,7 @@ export function ReportListPanel({
           완성된 보고서가 없습니다
         </p>
         <p className="text-ink-500 mt-2 text-sm">
-          유튜브·팩트체크 보고서에서 확정하면 여기에 보관됩니다.
+          유튜브·정보 보관소에서 확정하면 여기에 보관됩니다.
         </p>
       </div>
     );
@@ -87,7 +87,7 @@ export function ReportListPanel({
                     </span>
                     {isReportInput(video) ? (
                       <span className="text-xs px-2 py-0.5 rounded-md bg-ink-900/90 text-white">
-                        팩트체크보고서
+                        정보 보관소
                       </span>
                     ) : (
                       <span className="text-xs px-2 py-0.5 rounded-md bg-ink-100 text-ink-600">

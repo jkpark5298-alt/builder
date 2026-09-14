@@ -1,5 +1,10 @@
 /** iPhone / iPad (터치 Mac 포함) — HTML 붙여넣기 charset 깨짐 회피용 */
 export function preferPlainPaste(): boolean {
+  return isIosLikeDevice();
+}
+
+/** iPhone·iPad·터치 iPadOS — Pages 편집 안내 등 */
+export function isIosLikeDevice(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
   if (/iPhone|iPad|iPod/i.test(ua)) return true;

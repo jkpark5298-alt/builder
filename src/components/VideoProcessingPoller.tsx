@@ -16,7 +16,7 @@ const STATUS_LABEL: Partial<Record<PipelineStatus, string>> = {
   queued: "대기열",
   fetching: "유튜브 정보 조회",
   summarizing: "요약 생성",
-  fact_checking: "팩트체크 준비",
+  fact_checking: "보고서 준비",
 };
 
 export function VideoProcessingPoller({
@@ -87,8 +87,7 @@ export function VideoProcessingPoller({
             {STATUS_LABEL[status] ?? "처리 중"}…
           </p>
           <p className="text-xs text-ink-600 mt-0.5">
-            요약·팩트체크를 준비합니다. 보통 30초~2분 걸립니다. 화면을
-            닫지 마세요.
+            요약을 준비합니다. 보통 30초~2분 걸립니다. 화면을 닫지 마세요.
           </p>
         </div>
       </div>

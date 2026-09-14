@@ -256,6 +256,70 @@ export function normalizeAiFactCheckAnswer(raw: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** 제미나이 등에서 흔한 단독 `.` / 장식 줄 제거 */
+function stripDecorativeOnlyLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => {
+      const s = line.trim();
+      if (!s) return true;
+      if (/^[.。．…·・‧･]+$/.test(s)) return false;
+      if (/^[-–—_*~=]{1,6}$/.test(s)) return false;
+      return true;
+    })
+    .join("\n");
+}
+
+/**
+ * 빈 줄로만 끊긴 미완성 문장 단락을 이어 붙입니다.
+ * (제미나이가 문장마다 빈 줄을 넣는 경우)
+ */
+export function collapseSoftParagraphBreaks(text: string): string {
+  const parts = text
+    .replace(/\r\n/g, "\n")
+    .split(/\n\s*\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return text.trim();
+
+  const sentenceEnd = /[.。!！?？…」』”"'”)\]】]$/;
+  const listOrHeading =
+    /^(?:[-*•▪◦\u2022\uF0B7–—]\s+|\d+[.)](?:\s+|(?=[가-힣A-Za-z(「『“"']))|#{1,6}\s+|■\s+|제\s*\d+\s*장|최종\s*결론)/;
+  const topicLabel = /^[가-힣A-Za-z0-9()（）\[\]「」『』·\-\s]{2,40}:\s+\S/;
+  const cjkTail = /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]$/;
+  const cjkHead = /^[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/;
+
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!out.length) {
+      out.push(part);
+      continue;
+    }
+    const prev = out[out.length - 1];
+    const prevLast = prev.split("\n").at(-1) || prev;
+    if (
+      listOrHeading.test(part) ||
+      topicLabel.test(part) ||
+      listOrHeading.test(prevLast)
+    ) {
+      out.push(part);
+      continue;
+    }
+    if (!sentenceEnd.test(prev)) {
+      const join =
+        cjkTail.test(prev) && cjkHead.test(part)
+          ? prev.length < 8 || part.length < 4
+            ? ""
+            : " "
+          : " ";
+      out[out.length - 1] = `${prev}${join}${part}`;
+      continue;
+    }
+    out.push(part);
+  }
+  return out.join("\n\n");
+}
+
 /**
  * 외부 AI가 준 마크다운 요약을 앱 요약 형식에 맞게 정리.
  * 목표 형식:
@@ -264,9 +328,10 @@ export function normalizeAiFactCheckAnswer(raw: string): string {
  *   최종 결론
  */
 export function normalizeAiOverviewPaste(raw: string): string {
-  let t = unwrapSoftLineBreaks(
-    raw.replace(/\u200B|\uFEFF/g, "").replace(/\r\n/g, "\n").trim()
-  );
+  let t = (raw || "")
+    .replace(/\u200B|\uFEFF/g, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
   if (!t) return "";
 
   // 코드 펜스 제거
@@ -274,6 +339,16 @@ export function normalizeAiOverviewPaste(raw: string): string {
   // 굵게·이탤릭 (내용은 유지)
   t = t.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
   t = t.replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1");
+
+  // 단독 `.` 줄 제거 → 번호 제목 뒤 빈 줄 확보 → 소프트 단락/줄바꿈 정리
+  t = stripDecorativeOnlyLines(t);
+  t = t.replace(
+    /^(\d+[.)]\s+\S[^\n]{0,78})$/gm,
+    (m) => (/[.。:：]$/.test(m) ? m : `${m}\n`)
+  );
+  t = collapseSoftParagraphBreaks(t);
+  t = unwrapSoftLineBreaks(t);
+  t = stripDecorativeOnlyLines(t);
 
   const lines = t.split("\n");
   const out: string[] = [];
@@ -284,7 +359,11 @@ export function normalizeAiOverviewPaste(raw: string): string {
       s
     ) ||
     (/요약입니다\.?$/.test(s) && s.length < 40) ||
-    (/도움이\s*되셨|추가\s*질문|궁금한\s*점/.test(s) && s.length < 80);
+    (/도움이\s*되셨|추가\s*질문|궁금한\s*점/.test(s) && s.length < 80) ||
+    (/제공해\s*주신|정리해\s*드립|핵심\s*주제로\s*(?:상세히\s*)?정리|다음과\s*같이\s*정리/.test(
+      s
+    ) &&
+      s.length < 220);
 
   for (const rawLine of lines) {
     let s = rawLine.trim();
@@ -293,6 +372,7 @@ export function normalizeAiOverviewPaste(raw: string): string {
       continue;
     }
 
+    if (/^[.。．…·・‧･]+$/.test(s)) continue;
     if (isFluff(s)) continue;
 
     // # / ## / ### 제목 → 대주제 번호
@@ -326,8 +406,8 @@ export function normalizeAiOverviewPaste(raw: string): string {
       continue;
     }
 
-    // 불릿 / • / - → 소주제
-    const bullet = s.match(/^[-*•▪◦]\s+(.+)$/);
+    // 불릿 / • / - / – / — → 소주제
+    const bullet = s.match(/^[-*•▪◦–—]\s+(.+)$/);
     if (bullet) {
       let body = bullet[1].trim();
       // "라벨: 설명" 유지, 없으면 그대로

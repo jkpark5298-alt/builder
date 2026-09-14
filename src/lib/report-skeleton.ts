@@ -24,7 +24,7 @@ export function withArticleImages(
 }
 
 export const SKELETON_REPORT_NOTICE =
-  "요약·팩트체크 항목으로 골격 보고서를 만들었습니다. 팩트체크를 이어가며 아래에서 미리 보거나 본문을 다듬을 수 있습니다. 팩트체크 완료 후 「보고서 만들기」를 누르면 글쓰기 AI로 본문을 다시 쓰거나, 이미 수정한 본문은 그대로 유지됩니다.";
+  "요약 저장됨 · 8. 요약 복사 → 제미나이 보고서 → 9. 보고서 붙여넣기 → 10. 확정";
 
 /** 요약·FC 항목만으로 조립 보고서(골격) 생성 — 초안 단계에서는 이미지 제외 */
 export function buildSkeletonReport(

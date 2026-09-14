@@ -81,11 +81,11 @@ export function libraryCardLabel(
       case "complete":
       return "보고서";
     case "report_pending":
-      return "작성 대기";
+      return "보고서 작성";
     case "report_input_draft":
       return "입력 중";
     case "factcheck_draft":
-      return video.skipFactCheck ? "요약 입력" : "임시 저장";
+      return "요약 입력";
     case "error":
       return "오류";
     case "processing":
@@ -102,7 +102,7 @@ export function libraryStatusLabel(status: PipelineStatus): string {
     case "report_input_draft":
       return "입력 중";
     case "awaiting_factcheck":
-      return "임시 저장";
+      return "요약·보고서";
     case "queued":
       return "대기";
     case "fetching":
@@ -110,7 +110,7 @@ export function libraryStatusLabel(status: PipelineStatus): string {
     case "summarizing":
       return "요약 중";
     case "fact_checking":
-      return "자동 검증";
+      return "처리 중";
     case "error":
       return "오류";
     default:

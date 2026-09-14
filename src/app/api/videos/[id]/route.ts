@@ -27,7 +27,11 @@ import {
   StorageConflictError,
   upsertVideo,
 } from "@/lib/store";
-import { buildFactCheckPrompt, normalizeAiAnswer } from "@/lib/text-format";
+import {
+  buildFactCheckPrompt,
+  normalizeAiAnswer,
+  normalizeAiOverviewPaste,
+} from "@/lib/text-format";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import { normalizeSimpleVerdict } from "@/lib/labels";
 import type {
@@ -213,6 +217,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     }>;
     /** 간편 붙여넣기란 원문 보관 */
     factCheckPasteDraft?: string;
+    /** 원문만 저장 (재요약 없음) */
+    pastedScript?: string;
     reportType?: ReportType;
     /** Report 입력 임시 저장 필드 수정 */
     updateReportInput?: {
@@ -283,13 +289,17 @@ async function patchVideo(req: Request, ctx: Ctx) {
     updateOverview?: {
       overview: string;
       summaryBullets?: string[];
-      /** 수동 요약 완료 → 팩트체크·보고서 자동 갱신 */
+      /** 요약 저장 완료 */
       complete?: boolean;
       /**
-       * true면 요약 문구만 바꾸고 기존 팩트체크·보고서 본문을 유지.
-       * false/생략이면 팩트체크 항목을 요약 기준으로 다시 만듦.
+       * true면 요약만 바꾸고 기존 팩트체크·보고서 본문 유지.
        */
       preserveFactChecks?: boolean;
+      /**
+       * true면 저장 후 내부 AI로 보고서 초안 생성.
+       * 생략/false면 요약만 저장하고 골격 보고서만 준비 (외부 AI 보고서용).
+       */
+      buildInternalReport?: boolean;
     };
     /** 요약 변경으로 생긴 팩트체크 갱신 안내 닫기 */
     dismissFactCheckRevisionNotice?: boolean;
@@ -564,6 +574,26 @@ async function patchVideo(req: Request, ctx: Ctx) {
     };
     const saved = await upsertVideo(next, expectedUpdatedAt);
     return jsonVideo(saved);
+  }
+
+  if (typeof body.pastedScript === "string") {
+    const script = normalizePastedText(body.pastedScript);
+    if (script.length < 80) {
+      return NextResponse.json(
+        { error: "원문을 조금 더 붙여넣어 주세요." },
+        { status: 400 }
+      );
+    }
+    next = {
+      ...next,
+      transcript: script,
+      transcriptSource:
+        next.transcriptSource === "web" || next.sourceUrl ? "web" : "pasted",
+      scriptNotice: `붙여넣은 원문 ${script.length.toLocaleString()}자`,
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = await upsertVideo(next, expectedUpdatedAt);
+    return jsonVideo(saved, { mode: "pasted_script" });
   }
 
   if (body.reportType && ["H", "S", "C", "P"].includes(body.reportType)) {
@@ -962,7 +992,10 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   if (typeof body.updateOverview?.overview === "string") {
-    const overview = body.updateOverview.overview.trim();
+    const rawOverview = body.updateOverview.overview.trim();
+    const tidied = normalizeAiOverviewPaste(rawOverview);
+    const overview =
+      tidied.trim().length >= 40 ? tidied.trim() : rawOverview;
     if (overview.length < 40) {
       return NextResponse.json(
         { error: "요약을 조금 더 자세히 입력해 주세요. (40자 이상)" },
@@ -1001,8 +1034,11 @@ async function patchVideo(req: Request, ctx: Ctx) {
       return jsonVideo(saved, { mode: "overview_preserve_fc" });
     }
 
-    if (next.skipFactCheck) {
+    {
+      // 팩트체크 제거 — 요약 저장. 보고서는 요청 시에만 내부 AI 생성
       const parsed = itemsFromManualOverview(overview, next.videoId);
+      const wantInternalReport =
+        body.updateOverview.buildInternalReport === true;
       next = {
         ...next,
         overview,
@@ -1016,6 +1052,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
         factChecks: [],
         factCheckNotice: undefined,
         factCheckRevisionNotice: null,
+        skipFactCheck: true,
+        factCheckDecision: "pass",
         errorMessage: undefined,
         tags: Array.from(new Set([...next.tags, "fc-pass"])),
         updatedAt: new Date().toISOString(),
@@ -1031,58 +1069,27 @@ async function patchVideo(req: Request, ctx: Ctx) {
               .slice(0, 8)
               .join("\n") || next.report.summaryExcerpt,
         };
+        if (wantInternalReport && next.status === "awaiting_factcheck") {
+          next = await finalizeReport(next, undefined, expectedUpdatedAt);
+          return jsonVideo(next, { mode: "overview_pass_finalize" });
+        }
         const saved = await upsertVideo(next, expectedUpdatedAt);
-        return jsonVideo(saved, { mode: "overview_pass" });
+        return jsonVideo(saved, { mode: "overview_saved" });
       }
-      next = await finalizeReport(next, undefined, expectedUpdatedAt);
-      return jsonVideo(next, { mode: "overview_pass_finalize" });
+      if (wantInternalReport) {
+        next = await finalizeReport(next, undefined, expectedUpdatedAt);
+        return jsonVideo(next, { mode: "overview_pass_finalize" });
+      }
+      next = {
+        ...(await ensureSkeletonReport(next)),
+        status: "awaiting_factcheck",
+        reportWriteNotice:
+          "요약을 저장했습니다. 외부 AI로 보고서를 작성한 뒤 「AI 붙여넣기 정리」로 반영하거나, 「내부 AI로 초안 만들기」를 누르세요.",
+        updatedAt: new Date().toISOString(),
+      };
+      const saved = await upsertVideo(next, expectedUpdatedAt);
+      return jsonVideo(saved, { mode: "overview_saved" });
     }
-
-    // 수동 요약 완료: 팩트체크·보고서를 새 요약에 맞춰 자동 갱신
-    const rebuilt = rebuildFactChecksFromOverview(
-      overview,
-      next.videoId,
-      body.updateOverview.summaryBullets
-    );
-    if (!rebuilt.items.length) {
-      return NextResponse.json(
-        {
-          error:
-            "요약에서 ‘근거 확인이 필요한’ 사실 단정·주장·의견을 찾지 못했습니다. 수치·시기·인명·인과가 드러나는 문장으로 조금 더 구체적으로 적어 주세요.",
-        },
-        { status: 400 }
-      );
-    }
-
-    next = {
-      ...next,
-      overview,
-      summaryBullets: rebuilt.summaryBullets,
-      summarySource: "manual",
-      items: rebuilt.items,
-      factChecks: rebuilt.factChecks,
-      factCheckSource: "heuristic",
-      factCheckNotice:
-        "요약을 수정해 팩트체크 항목을 다시 만들었습니다. 위 「전체 질문 복사 → 답변 한 번에 붙여넣기」로 채우거나, 「인앱 AI 초안 생성」을 쓰세요.",
-      factCheckRevisionNotice: {
-        at: new Date().toISOString(),
-        itemCount: rebuilt.items.filter((i) => i.needsFactCheck).length,
-        reason: "summary_edit",
-      },
-      errorMessage: undefined,
-      updatedAt: new Date().toISOString(),
-    };
-
-    // 변경된 요약 기준으로 조립 보고서 골격 (답변 비어 있음)
-    next.report = buildSkeletonReport(next);
-    next.reportSource = "assembled";
-    next.reportWriteNotice = SKELETON_REPORT_NOTICE;
-    next.reportSkeletonEdited = undefined;
-    // 새 FC 답변은 비어 있으므로 팩트체크 화면에서 이어서 정리
-    next.status = "awaiting_factcheck";
-
-    const saved = await upsertVideo(next, expectedUpdatedAt);
-    return jsonVideo(saved, { mode: "overview_complete" });
   }
 
   if (body.redraftFactChecks) {
@@ -1320,9 +1327,10 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   if (body.factCheckDecision === "do" || body.factCheckDecision === "pass") {
+    // 팩트체크 실시 경로 제거 — pass만 허용
     if (next.status !== "awaiting_factcheck") {
       return NextResponse.json(
-        { error: "요약이 끝난 뒤에 팩트체크 여부를 선택할 수 있습니다." },
+        { error: "요약을 먼저 완료해 주세요." },
         { status: 400 }
       );
     }
@@ -1331,16 +1339,6 @@ async function patchVideo(req: Request, ctx: Ctx) {
         { error: "요약을 먼저 완료해 주세요." },
         { status: 400 }
       );
-    }
-    if (body.factCheckDecision === "do") {
-      next = {
-        ...next,
-        factCheckDecision: "do",
-        skipFactCheck: false,
-        updatedAt: new Date().toISOString(),
-      };
-      const saved = await upsertVideo(next, expectedUpdatedAt);
-      return jsonVideo(saved, { mode: "factcheck_do" });
     }
     next = await applyFactCheckPass(next, expectedUpdatedAt);
     return jsonVideo(next, { mode: "factcheck_pass" });

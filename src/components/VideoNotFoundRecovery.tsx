@@ -40,7 +40,7 @@ export function VideoNotFoundRecovery({ id }: { id: string }) {
       if (n >= 8) {
         if (!cancelled) {
           setMessage(
-            "영상을 찾지 못했습니다. 홈에서 스크립트를 다시 붙여넣고 「스크립트로 요약 · 검증」을 눌러 주세요."
+            "영상을 찾지 못했습니다. 홈에서 자막을 다시 가져온 뒤 「요약 화면으로」를 눌러 주세요."
           );
         }
         return;

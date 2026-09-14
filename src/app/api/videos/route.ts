@@ -9,6 +9,7 @@ import {
 } from "@/lib/process";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import { readAllVideos, searchVideos, storageMode } from "@/lib/store";
+import { slimVideoForList } from "@/lib/media-budget";
 import { extractVideoId } from "@/lib/youtube";
 import { checkRateLimit } from "@/lib/rate-limit";
 
@@ -19,7 +20,9 @@ export const maxDuration = 180;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q") ?? "";
-  const videos = q ? await searchVideos(q) : await readAllVideos();
+  const videos = (q ? await searchVideos(q) : await readAllVideos()).map(
+    slimVideoForList
+  );
   return NextResponse.json({ videos, storage: storageMode() });
 }
 

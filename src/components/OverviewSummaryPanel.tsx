@@ -14,8 +14,14 @@ import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { VideoRecord } from "@/lib/types";
 import { factCheckProgress } from "@/lib/factcheck-client";
-import { isFactCheckPass, isUrlArticleInput, isYoutubeInput } from "@/lib/input-mode";
+import { isFactCheckPass } from "@/lib/input-mode";
 import { normalizeAiOverviewPaste } from "@/lib/text-format";
+import { FLOW, flowLabel } from "@/lib/flow-steps";
+import {
+  EXTERNAL_APP_LABEL,
+  launchExternalApp,
+  type ExternalAppId,
+} from "@/lib/external-apps";
 
 /** API와 동일 — 클라이언트에서 unpdf를 끌어오지 않도록 상수만 둠 */
 const PDF_MAX_BYTES = 4 * 1024 * 1024;
@@ -32,7 +38,7 @@ const SOURCE_UI: Record<
   },
   manual: {
     label: "수동 입력 요약",
-    hint: "직접 작성·PDF 읽기·AI 답변 붙인 뒤 「AI 답변 정리」할 수 있습니다. 「완료」로 저장합니다.",
+    hint: `요약을 확인한 뒤 「${flowLabel("tidySummary")}」→「${flowLabel("saveSummary")}」(이미 저장됐으면 ${FLOW.copySummary.n}번으로).`,
     ai: false,
     className: "bg-sky-50 text-sky-900 border-sky-200",
   },
@@ -89,6 +95,30 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
     } catch {
       setError("복사에 실패했습니다. 텍스트를 직접 드래그해 복사해 주세요.");
     }
+  }
+
+  /** 같은 탭에서 복사 + 앱 실행 (iOS 제스처 유지) */
+  function copyOverviewAndOpenApp(app: ExternalAppId) {
+    const text = (editing ? draft : video.overview || "").trim();
+    const label = EXTERNAL_APP_LABEL[app];
+    if (!text) {
+      setError("복사할 요약이 없습니다.");
+      return;
+    }
+    setError(null);
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setHint(
+          `요약 전체를 복사했습니다 · ${label}에서 붙여넣기 하세요.`
+        );
+        window.setTimeout(() => setCopied(false), 2500);
+      })
+      .catch(() => {
+        setError("복사에 실패했습니다. 전체 복사 후 앱에서 붙여넣기 하세요.");
+      });
+    launchExternalApp(app);
   }
 
   async function importFromPdf(files: FileList | null) {
@@ -155,13 +185,21 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
     }
   }
 
-  async function completeManualOverview() {
+  async function completeManualOverview(opts?: {
+    buildInternalReport?: boolean;
+  }) {
     setError(null);
     setHint(null);
-    const text = (editing ? draft : video.overview || draft).trim();
+    let text = (editing ? draft : video.overview || draft).trim();
     if (text.length < 40) {
       setError("요약을 40자 이상 입력해 주세요.");
       return;
+    }
+    // 저장 전 문장·마크다운 정리
+    const cleaned = normalizeAiOverviewPaste(text);
+    if (cleaned.trim().length >= 40) {
+      text = cleaned.trim();
+      if (editing) setDraft(text);
     }
     setSaving(true);
     try {
@@ -174,6 +212,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             overview: text,
             complete: true,
             preserveFactChecks: keepFc,
+            buildInternalReport: opts?.buildInternalReport === true,
           },
         }),
       });
@@ -186,46 +225,22 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       if (!res.ok) throw new Error(data.error || "완료 처리 실패");
       if (keepFc) {
         setHint("요약만 저장했습니다. 기존 팩트체크는 유지됩니다.");
-      } else if (fcPass || data.mode === "overview_pass_finalize") {
-        setHint("요약 완료. 보고서를 만들었습니다.");
-      } else if (isYoutubeInput(video) || isUrlArticleInput(video)) {
-        setHint(
-          "요약 완료. 아래에서 팩트체크 실시 또는 pass를 고르세요."
-        );
+      } else if (data.mode === "overview_pass_finalize") {
+        setHint("요약 저장 · 내부 AI 보고서 초안을 만들었습니다.");
       } else {
-        const n = data.progress?.total ?? data.video?.items?.length ?? 0;
         setHint(
-          `요약 완료. 팩트체크 ${n}건·보고서 초안을 만들었습니다.`
+          `${flowLabel("saveSummary")} 완료. 다음: 「${flowLabel("copySummary")}」→ 제미나이 보고서 → 「${flowLabel("pasteReport")}」.`
         );
       }
       setEditing(false);
       router.refresh();
       window.setTimeout(() => {
-        if (
-          (keepFc && video.status === "ready") ||
-          fcPass
-        ) {
-          document
-            .getElementById("report")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
-          return;
-        }
-        document
-          .getElementById("fc-decision")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        if (!document.getElementById("fc-decision")) {
-          document
-            .getElementById("manual-factcheck")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-        if (
-          !document.getElementById("fc-decision") &&
-          !document.getElementById("manual-factcheck")
-        ) {
-          document
-            .getElementById("report")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
+        const target = opts?.buildInternalReport
+          ? document.getElementById("report") ||
+            document.getElementById("report-draft")
+          : document.getElementById("report-draft") ||
+            document.getElementById("report");
+        target?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 250);
     } catch (e) {
       setError(e instanceof Error ? e.message : "완료 처리 실패");
@@ -246,9 +261,51 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
     const bullets = (cleaned.match(/^•\s+/gm) || []).length;
     setHint(
       sections || bullets
-        ? `AI 답변 정리 완료 · 대주제 ${sections}개 · 소주제 ${bullets}개. 확인 후 「완료」를 누르세요.`
-        : "AI 답변 정리 완료. 마크다운·군더더기를 걷어냈습니다. 확인 후 「완료」를 누르세요."
+        ? `${flowLabel("tidySummary")} 완료 · 대주제 ${sections}개 · 소주제 ${bullets}개. 확인 후 「${flowLabel("saveSummary")}」.`
+        : `${flowLabel("tidySummary")} 완료. 확인 후 「${flowLabel("saveSummary")}」.`
     );
+  }
+
+  /** 저장된 요약 문장 정리 후 다시 저장 (보기 모드 「AI 답변 정리」) */
+  async function tidySavedOverview() {
+    setError(null);
+    setHint(null);
+    const source = (video.overview || "").trim();
+    if (source.length < 40) {
+      setError("정리할 요약이 없습니다.");
+      return;
+    }
+    const cleaned = normalizeAiOverviewPaste(source);
+    if (!cleaned || cleaned.trim().length < 40) {
+      setError("정리 결과가 너무 짧습니다. 「요약 수정」에서 확인해 주세요.");
+      return;
+    }
+    if (cleaned.trim() === source) {
+      setHint("이미 문장이 정리된 요약입니다.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updateOverview: {
+            overview: cleaned,
+            complete: true,
+            preserveFactChecks: true,
+          },
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "정리 저장 실패");
+      setHint(`${flowLabel("tidySummary")}를 반영했습니다. 다음: 「${flowLabel("copySummary")}」.`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "정리 저장 실패");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const pdfButton = (
@@ -317,7 +374,23 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               ) : (
                 <ClipboardCopy className="h-3.5 w-3.5" />
               )}
-              {copied ? "복사됨" : "전체 복사"}
+              {copied ? "복사됨" : flowLabel("copySummary", "전체 복사")}
+            </button>
+            <button
+              type="button"
+              disabled={!(video.overview?.trim())}
+              onClick={() => copyOverviewAndOpenApp("gemini")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              제미나이
+            </button>
+            <button
+              type="button"
+              disabled={!(video.overview?.trim())}
+              onClick={() => copyOverviewAndOpenApp("daglo")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              다글로
             </button>
             {(needsManual || source === "ai" || source === "manual") && (
               <button
@@ -334,26 +407,48 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
                 {needsManual ? "수동으로 요약 입력·수정" : "요약 수정"}
               </button>
             )}
+            {!!video.overview?.trim() && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void tidySavedOverview()}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent-muted/40 px-3 text-xs font-medium text-ink-900 hover:border-accent disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" />
+                )}
+                {flowLabel("tidySummary")}
+              </button>
+            )}
             {pdfButton}
           </div>
           {fcPass && video.status === "awaiting_factcheck" && video.overview.trim().length >= 40 && (
             <button
               type="button"
               disabled={saving}
-              onClick={() => void completeManualOverview()}
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl bg-ink-900 px-4 text-sm font-medium text-white hover:bg-accent disabled:opacity-60"
+              onClick={() =>
+                void completeManualOverview({ buildInternalReport: true })
+              }
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-300 bg-white px-4 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-60"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <CheckCircle2 className="h-4 w-4" />
+                <Sparkles className="h-4 w-4" />
               )}
-              {saving ? "보고서 만드는 중…" : "이 요약으로 보고서 만들기"}
+              {saving ? "초안 만드는 중…" : "고급 · 내부 AI로 초안 만들기"}
             </button>
           )}
         </>
       ) : (
         <div className="space-y-2">
+          <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
+            <strong>순서</strong> {flowLabel("pasteSummary")} →{" "}
+            {flowLabel("tidySummary")} → {flowLabel("saveSummary")} →{" "}
+            {flowLabel("copySummary")}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             {pdfButton}
             <button
@@ -363,7 +458,7 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent-muted/30 px-3 text-xs font-medium text-ink-900 hover:bg-accent-muted disabled:opacity-50"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              AI 답변 정리
+              {flowLabel("tidySummary")}
             </button>
             <button
               type="button"
@@ -376,27 +471,42 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               ) : (
                 <ClipboardCopy className="h-3.5 w-3.5" />
               )}
-              {copied ? "복사됨" : "전체 복사"}
+              {copied ? "복사됨" : flowLabel("copySummary", "전체 복사")}
+            </button>
+            <button
+              type="button"
+              disabled={saving || pdfBusy || !draft.trim()}
+              onClick={() => copyOverviewAndOpenApp("gemini")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              제미나이
+            </button>
+            <button
+              type="button"
+              disabled={saving || pdfBusy || !draft.trim()}
+              onClick={() => copyOverviewAndOpenApp("daglo")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              다글로
             </button>
             <p className="text-xs text-ink-500">
-              Gemini 등 요약을 붙여넣은 뒤 정리 · PDF {(PDF_MAX_BYTES / (1024 * 1024)).toFixed(0)}MB 이하
+              {FLOW.copySummary.n}번 복사 후 제미나이에서 보고서 · PDF{" "}
+              {(PDF_MAX_BYTES / (1024 * 1024)).toFixed(0)}MB 이하
             </p>
           </div>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={14}
-            placeholder={`Gemini/ChatGPT 요약을 붙여넣은 뒤 「AI 답변 정리」를 누르세요.\n\n예시 형식:\n1. 대주제 제목\n• 소주제: 상세 설명…\n\n최종 결론\n…`}
+            placeholder={`${flowLabel("pasteSummary")}: 제미나이 요약을 붙여넣은 뒤 「${flowLabel("tidySummary")}」→「${flowLabel("saveSummary")}」.\n\n예시:\n1. 대주제\n• 소주제: 설명…\n\n최종 결론\n…`}
             className="w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
           />
           <p className="text-xs text-ink-500">{charCount.toLocaleString()}자</p>
           <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            <strong>AI 답변 정리</strong>는 마크다운·군더더기를 걷어{" "}
-            <code className="text-[11px]">1. 대주제 / • 소주제</code> 형으로
-            맞춥니다. <strong>완료</strong>를 누르면 저장하고{" "}
-            {fcPass
-              ? "바로 보고서를 만듭니다."
-              : "팩트체크·보고서를 새 요약에 맞춥니다."}
+            <strong>절차</strong> {flowLabel("pasteSummary")} →{" "}
+            <strong>{flowLabel("tidySummary")}</strong> →{" "}
+            <strong>{flowLabel("saveSummary")}</strong> →{" "}
+            {flowLabel("copySummary")} → {flowLabel("pasteReport")}
           </p>
           {error && (
             <p className="text-sm text-verify-false" role="alert">
@@ -461,8 +571,25 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              {saving ? "반영 중…" : "완료"}
+              {saving ? "저장 중…" : flowLabel("saveSummary")}
             </button>
+            {fcPass && (
+              <button
+                type="button"
+                disabled={saving || pdfBusy}
+                onClick={() =>
+                  void completeManualOverview({ buildInternalReport: true })
+                }
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-300 bg-white px-4 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-60"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+                고급 · 내부 AI 초안
+              </button>
+            )}
             <button
               type="button"
               disabled={saving || pdfBusy}

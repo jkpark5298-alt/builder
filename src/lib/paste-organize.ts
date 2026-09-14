@@ -1,4 +1,5 @@
 import { normalizeAiFactCheckPaste } from "./bulk-factcheck-paste";
+import { tidyReportPasteSpacing } from "./paste";
 import {
   inspectImportedReportText,
   normalizeAiReportPaste,
@@ -33,7 +34,7 @@ export type OrganizePasteResult = {
   summary: string;
 };
 
-/** 공통: 불필요 기호·마크다운 헤딩·잡음 제거 */
+/** 공통: 불필요 기호·마크다운 헤딩·잡음 제거 + 띄어쓰기·문단 정리 */
 export function cleanPastedText(raw: string): string {
   let t = sanitizeAiPasteText(raw);
   if (!t) return "";
@@ -43,6 +44,8 @@ export function cleanPastedText(raw: string): string {
   // 단독 *** --- ___ 구분선
   t = t.replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, "");
   t = t.replace(/^```(?:markdown|md|text)?\s*$/gim, "").replace(/^```\s*$/gm, "");
+  // 번호 뒤 공백·문장 뒤 소제목/라벨 문단 분리 (sanitize 안 unwrap 이후 한 번 더)
+  t = tidyReportPasteSpacing(t);
   return t.replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -139,7 +142,14 @@ export function detectPasteKind(text: string): {
   if (overviewCue) {
     return { kind: "overview", confidence: 0.75, signals };
   }
-  if (conclusionHit && t.length < 800 && verdictN === 0) {
+  // 맺음말「~드림」만으로 긴 보고서를 결론으로 보지 않음
+  if (
+    conclusionHit &&
+    t.length < 500 &&
+    verdictN === 0 &&
+    numberedShort < 2 &&
+    bullets < 4
+  ) {
     return { kind: "conclusion", confidence: 0.65, signals };
   }
   return { kind: "unknown", confidence: 0.3, signals };

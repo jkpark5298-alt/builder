@@ -3,9 +3,9 @@ import "./globals.css";
 import { HomeSectionLink } from "@/components/HomeSectionLink";
 
 export const metadata: Metadata = {
-  title: "YouTube FactCheck — 요약 · 검증 · 보고서",
+  title: "YouTube FactCheck — 정보 보관소",
   description:
-    "유튜브 링크 요약, 수동/자동 팩트체크, PDF 보고서, 인포 이미지, 검색·공유 (iPhone·PC)",
+    "유튜브 링크 요약, 정보 보관소, PDF 보고서, 인포 이미지, 검색·공유 (iPhone·PC)",
   appleWebApp: {
     capable: true,
     title: "YouTube FactCheck",
@@ -35,7 +35,7 @@ export default function RootLayout({
                   YouTube FactCheck
                 </p>
                 <p className="text-[11px] sm:text-xs text-ink-500 mt-0.5 truncate">
-                  요약 · 팩트체크 · 보고서 · 인포 이미지
+                  요약 · 정보 보관소 · 보고서 · 인포 이미지
                 </p>
               </a>
               <nav className="flex items-center gap-1.5 sm:gap-2 text-sm text-ink-600 shrink-0">
@@ -49,7 +49,7 @@ export default function RootLayout({
                   hash="factcheck"
                   className="hidden md:inline hover:text-accent transition-colors px-2 py-2"
                 >
-                  팩트체크 보고서
+                  정보 보관소
                 </HomeSectionLink>
                 <HomeSectionLink
                   hash="topics"
@@ -57,6 +57,12 @@ export default function RootLayout({
                 >
                   주제
                 </HomeSectionLink>
+                <a
+                  href="/sample/odyssey"
+                  className="hover:text-accent transition-colors px-2 py-2"
+                >
+                  오딧세이 샘플
+                </a>
                 <HomeSectionLink
                   hash="paste"
                   className="rounded-xl bg-ink-900 text-white px-3 py-2.5 min-h-11 inline-flex items-center hover:bg-accent transition-colors text-sm font-medium"

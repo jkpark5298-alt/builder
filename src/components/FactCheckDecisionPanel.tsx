@@ -4,6 +4,7 @@ import { CheckCircle2, FileText, Loader2, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { isUrlArticleInput, isYoutubeInput } from "@/lib/input-mode";
+import { flowLabel } from "@/lib/flow-steps";
 import type { VideoRecord } from "@/lib/types";
 
 function sourceKindLabel(video: VideoRecord): "youtube" | "url" | "report" {
@@ -131,7 +132,9 @@ export function FactCheckDecisionPanel({ video }: { video: VideoRecord }) {
           <p className="text-sm text-ink-600 rounded-xl border border-ink-200 bg-ink-50 px-4 py-3">
             {kind === "url"
               ? "AI가 URL 본문 요약을 바탕으로 보고서 초안을 작성하는 중입니다. 화면을 끄지 마세요."
-              : "AI가 요약을 조합해 상세 보고서를 작성하는 중입니다. 화면을 끄지 마세요."}
+              : kind === "report"
+                ? "AI가 요약을 바탕으로 보고서 초안을 작성하는 중입니다. 화면을 끄지 마세요."
+                : "AI가 요약을 조합해 상세 보고서를 작성하는 중입니다. 화면을 끄지 마세요."}
           </p>
         )}
         {error && (
@@ -190,9 +193,17 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
           </>
         ) : (
           <>
-            <strong>보고서 작성</strong> — 요약을 참고해 AI가 초안을 만들었습니다.
-            본문을 정리하고 이미지를 넣은 뒤 확정하세요. 팩트체크 탭은 보이지
-            않습니다. 확정 후에는 기존과 같이 조회·PDF·공유를 씁니다.
+            <strong>다음 순서</strong>
+            <ol className="mt-1 ml-4 list-none space-y-0.5 text-sm">
+              <li>{flowLabel("copySummary")} → 제미나이에서 보고서 받기</li>
+              <li>
+                {flowLabel("pasteReport")} → 「본문에 반영」
+              </li>
+              <li>
+                문장 끝 <strong>S</strong> 이미지(선택) →{" "}
+                {flowLabel("confirmReport")}
+              </li>
+            </ol>
           </>
         )}
       </p>
@@ -207,7 +218,7 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
         ) : (
           <CheckCircle2 className="h-4 w-4" />
         )}
-        {busy ? "확정 중…" : "보고서 확정"}
+        {busy ? "확정 중…" : flowLabel("confirmReport")}
       </button>
       {error && (
         <p className="text-sm text-verify-false" role="alert">

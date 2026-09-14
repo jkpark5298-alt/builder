@@ -60,6 +60,7 @@ export function HubPreviewItemList({
             {href ? (
               <a
                 href={href}
+                onClick={(e) => e.stopPropagation()}
                 className="truncate min-w-0 flex-1 hover:underline"
                 title={title}
               >
@@ -74,7 +75,10 @@ export function HubPreviewItemList({
               type="button"
               disabled={busy}
               aria-label={`${title} 삭제`}
-              onClick={() => void remove(v)}
+              onClick={(e) => {
+                e.stopPropagation();
+                void remove(v);
+              }}
               className="shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-md text-verify-false hover:bg-verify-false/10 disabled:opacity-50"
             >
               <Trash2 className="h-3.5 w-3.5" />

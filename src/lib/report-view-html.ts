@@ -4,6 +4,10 @@ import {
   htmlWithSImages,
 } from "@/lib/report-body-s-slots";
 import {
+  bodyUsesInlineRichImages,
+  prepareInlineBodyForView,
+} from "@/lib/report-inline-images";
+import {
   orderedSlotUrls,
   sectionSlotCapacity,
 } from "@/lib/report-images";
@@ -18,7 +22,7 @@ export function sectionViewSlotUrls(
   return orderedSlotUrls(sec, room, slotCount);
 }
 
-/** 보기 탭과 동일한 섹션 본문 HTML (FC 뱃지 + S 이미지) */
+/** 보기 탭과 동일한 섹션 본문 HTML (FC 뱃지 + 인라인/S 이미지) */
 export function buildSectionViewHtml(
   report: TypedReport,
   sectionIdx: number
@@ -31,6 +35,14 @@ export function buildSectionViewHtml(
     sectionIdx,
     markers
   );
+
+  if (bodyUsesInlineRichImages(sec.body || "")) {
+    return {
+      html: prepareInlineBodyForView(markedHtml),
+      unmatchedCount: unmatched.length,
+    };
+  }
+
   const sSlotCount = countTrailingSMarkers(sec.body || "");
   const slotUrls = sectionViewSlotUrls(
     sec,

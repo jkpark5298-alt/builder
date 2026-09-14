@@ -13,6 +13,7 @@ import { isComplete, isReportPending } from "@/lib/library";
 import { UrlPasteForm } from "@/components/UrlPasteForm";
 import { ReportListPanel } from "@/components/ReportListPanel";
 import { VideoListCard } from "@/components/VideoListCard";
+import { HubPreviewItemList } from "@/components/HubPreviewItemList";
 
 type HubView = "home" | "input" | "status";
 
@@ -123,7 +124,7 @@ export function YoutubeReportHub({
               정보/요약 입력
             </h2>
             <p className="text-sm text-ink-500 mt-0.5">
-              유튜브 URL · 자막 자동 가져오기 · 요약 후 팩트체크 또는 pass
+              유튜브 URL · 자막 자동 가져오기 · 요약 · 보고서
             </p>
           </div>
         </div>
@@ -212,67 +213,62 @@ export function YoutubeReportHub({
   return (
     <section id="yt-home" className="space-y-4 scroll-mt-24">
       <div className="grid gap-3 sm:grid-cols-2">
-        <button
-          type="button"
-          onClick={() => go("input", "yt-input")}
-          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
-        >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <ClipboardPaste className="h-5 w-5" />
-          </span>
-          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
-            정보/요약 입력
-          </span>
-          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            URL 붙여넣기 · 자막 자동 가져오기 · 요약 후 팩트체크 또는 pass
-          </span>
-          {latestWorkFive.length > 0 ? (
-            <ol className="mt-3 space-y-1 text-xs font-medium text-accent">
-              {latestWorkFive.map((v, i) => (
-                <li key={v.id} className="flex gap-1.5 min-w-0">
-                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
-                  <span className="truncate">{v.title || "제목 없음"}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
-              <FileText className="h-3.5 w-3.5" />
-              작업 중 없음
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+          <button
+            type="button"
+            onClick={() => go("input", "yt-input")}
+            className="w-full text-left"
+          >
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent">
+              <ClipboardPaste className="h-5 w-5" />
             </span>
-          )}
-        </button>
+            <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+              정보/요약 입력
+            </span>
+            <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+              URL 붙여넣기 · 자막 자동 가져오기 · 요약 · 보고서
+            </span>
+          </button>
+          <HubPreviewItemList
+            items={latestWorkFive}
+            accent
+            empty={
+              <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+                <FileText className="h-3.5 w-3.5" />
+                작업 중 없음
+              </span>
+            }
+            hrefFor={(v) => `/videos/${v.id}`}
+          />
+        </article>
 
-        <button
-          type="button"
-          onClick={() => go("status", "yt-status")}
-          className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all"
-        >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-ink-900 text-white">
-            <Library className="h-5 w-5" />
-          </span>
-          <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
-            유튜브 보고서 현황
-          </span>
-          <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-            최신 5건 · 전체 보기 · 조회·삭제
-          </span>
-          {latestFive.length > 0 ? (
-            <ol className="mt-3 space-y-1 text-xs font-medium text-ink-700">
-              {latestFive.map((v, i) => (
-                <li key={v.id} className="flex gap-1.5 min-w-0">
-                  <span className="shrink-0 tabular-nums">{i + 1}.</span>
-                  <span className="truncate">{v.title || "제목 없음"}</span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
-              <Youtube className="h-3.5 w-3.5" />
-              확정 보고서 없음
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+          <button
+            type="button"
+            onClick={() => go("status", "yt-status")}
+            className="w-full text-left"
+          >
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-ink-900 text-white">
+              <Library className="h-5 w-5" />
             </span>
-          )}
-        </button>
+            <span className="mt-4 block font-display text-xl text-ink-900 group-hover:text-accent">
+              유튜브 보고서 현황
+            </span>
+            <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
+              최신 5건 · 전체 보기 · 조회·삭제
+            </span>
+          </button>
+          <HubPreviewItemList
+            items={latestFive}
+            empty={
+              <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-ink-400">
+                <Youtube className="h-3.5 w-3.5" />
+                확정 보고서 없음
+              </span>
+            }
+            hrefFor={(v) => `/videos/${v.id}#report`}
+          />
+        </article>
       </div>
     </section>
   );

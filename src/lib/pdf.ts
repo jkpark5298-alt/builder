@@ -7,8 +7,12 @@ import { normalizeImageUrls } from "./image-urls";
 import { collectSectionImages } from "./report-images";
 import { readLocalMedia } from "./media-store";
 import { getNeonMedia } from "./neon-media";
-import { reportBodyPlain } from "./report";
+import { exportableReportSections, reportBodyPlain } from "./report";
 import { parseBodySImageSlots } from "./report-body-s-slots";
+import {
+  bodyUsesInlineRichImages,
+  splitPreparedBodyParts,
+} from "./report-inline-images";
 import { sectionSlotCapacity } from "./report-images";
 import { sectionViewSlotUrls } from "./report-view-html";
 import { verdictBadge } from "./text-format";
@@ -18,7 +22,6 @@ import {
   reportSourceLink,
 } from "./input-mode";
 import type { VideoRecord } from "./types";
-import { REPORT_TYPE_LABELS } from "./types";
 
 const FONT_FAMILY = "NanumGothic";
 let fontsReady: Promise<void> | null = null;
@@ -274,7 +277,7 @@ export async function buildReportPdf(
 
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 52;
+  const margin = 48;
   const maxW = pageW - margin * 2;
   const bottomLimit = pageH - margin;
   /** 본문 시작 y — 첫 줄 ascent가 잘리지 않게 폰트 크기만큼 아래로 */
@@ -294,7 +297,7 @@ export async function buildReportPdf(
   };
 
   /** 한글 폰트 기준 줄 간격 (너무 촘촘하면 글자가 찍혀 보임) */
-  const lineAdvance = (fontSize: number) => Math.ceil(fontSize * 1.55);
+  const lineAdvance = (fontSize: number) => Math.ceil(fontSize * 1.58);
 
   const writeWrapped = (text: string, fontSize = 11, gap = 8) => {
     if (!text?.trim()) return;
@@ -302,7 +305,7 @@ export async function buildReportPdf(
     const advance = lineAdvance(fontSize);
     const lines = doc.splitTextToSize(text, maxW) as string[];
     for (const line of lines) {
-      ensureSpace(advance);
+      ensureSpace(advance + 2);
       doc.text(line, margin, y);
       y += advance;
     }
@@ -326,12 +329,16 @@ export async function buildReportPdf(
     const natural = imageNaturalSize(data);
     const aspect = natural ? natural.w / Math.max(natural.h, 1) : 4 / 3;
     const captionH = caption ? 18 : 0;
-    const padBefore = 10;
-    const padAfter = 12;
+    const padBefore = 8;
+    const padAfter = 14;
+    /** A4 본문 높이의 약 45% — 텍스트와 같은 페이지에 붙이기 쉽게 */
+    const pageImgCap = Math.min(280, (bottomLimit - margin) * 0.45);
 
-    // 페이지에 남을 높이 기준으로 맞춤 — 절대 페이지를 가로질러 자르지 않음
     const fitOnPage = (avail: number) => {
-      const maxImgH = Math.min(300, Math.max(60, avail - captionH - padAfter));
+      const maxImgH = Math.min(
+        pageImgCap,
+        Math.max(72, avail - captionH - padAfter)
+      );
       let drawW = maxW;
       let drawH = drawW / aspect;
       if (drawH > maxImgH) {
@@ -341,8 +348,8 @@ export async function buildReportPdf(
       return { drawW, drawH };
     };
 
-    // 아래쪽에 사진이 들어갈 여유가 거의 없으면 먼저 넘김
-    if (remaining() < 120) {
+    // 사진+캡션이 들어갈 최소 여유가 없으면 새 페이지
+    if (remaining() < 130) {
       doc.addPage();
       y = margin + 14;
     }
@@ -350,7 +357,6 @@ export async function buildReportPdf(
     y += padBefore;
     let avail = remaining();
     let { drawW, drawH } = fitOnPage(avail);
-    // 남은 칸이 부족하면 새 페이지 — 사진을 중간에서 자르지 않음
     if (drawH + captionH + padAfter > avail - 2) {
       doc.addPage();
       y = margin + 14 + padBefore;
@@ -360,7 +366,7 @@ export async function buildReportPdf(
 
     try {
       doc.addImage(data, format, margin, y, drawW, drawH, undefined, "FAST");
-      y += drawH + 8;
+      y += drawH + 6;
       if (caption) {
         setFace("normal");
         doc.setFontSize(8);
@@ -368,9 +374,9 @@ export async function buildReportPdf(
         ensureSpace(14);
         doc.text(caption, margin, y);
         doc.setTextColor(0);
-        y += 14;
+        y += 12;
       } else {
-        y += padAfter - 8;
+        y += padAfter - 6;
       }
     } catch {
       /* skip broken image */
@@ -401,12 +407,7 @@ export async function buildReportPdf(
   writeWrapped(
     `최종 수정: ${new Date(video.updatedAt).toLocaleString("ko-KR")}`,
     10,
-    4
-  );
-  writeWrapped(
-    `보고서 유형: ${REPORT_TYPE_LABELS[video.reportType]}`,
-    11,
-    14
+    12
   );
 
   if (!report) {
@@ -425,7 +426,7 @@ export async function buildReportPdf(
   // 보고서 본문: 보기와 같이 S 자리마다 이미지 삽입 (텍스트 후 몰아넣기 금지)
   const urlArticle = isUrlArticleInput(video);
   const drawnAll = new Set<string>();
-  for (const sec of report.sections) {
+  for (const sec of exportableReportSections(report.sections)) {
     ensureSpace(56);
     setFace("bold");
     writeWrapped(sec.heading, 13, 10);
@@ -440,7 +441,22 @@ export async function buildReportPdf(
     let slotImg = 0;
     const drawn = new Set<string>();
 
-    if (segments.length) {
+    if (bodyUsesInlineRichImages(sec.body || "")) {
+      const parts = splitPreparedBodyParts(sec.body || "");
+      for (const part of parts) {
+        if (part.type === "html") {
+          const plain = reportBodyPlain(part.html, true)
+            .replace(/\bS\d{0,2}\.?\b/gi, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+          if (plain) writeWrapped(plain, 10, 10);
+        } else if (part.src && !isYoutubeThumb(part.src)) {
+          await drawImage(part.src);
+          drawn.add(part.src);
+          drawnAll.add(part.src);
+        }
+      }
+    } else if (segments.length) {
       for (const seg of segments) {
         const plain = reportBodyPlain(seg.html, true)
           .replace(/\bS\d{0,2}\.?\b/gi, "")

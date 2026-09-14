@@ -93,7 +93,7 @@ export function VideoListCard({
             )}
             {isReportInput(video) && (
               <span className="text-xs px-2 py-0.5 rounded-md bg-ink-900/90 text-white">
-                {video.sourceUrl ? "URL 보고서" : "팩트체크보고서"}
+                {video.sourceUrl ? "URL 보고서" : "정보 보관소"}
               </span>
             )}
             <span className="text-xs text-ink-400">
@@ -114,9 +114,17 @@ export function VideoListCard({
           )}
           <p className="text-xs text-ink-400 mt-2">
             {inputDraft
-              ? `스크립트 ${(video.transcript?.length ?? 0).toLocaleString()}자 · 입력 중`
+              ? `스크립트 ${(
+                  video.listHints?.transcriptChars ??
+                  video.transcript?.length ??
+                  0
+                ).toLocaleString()}자 · 입력 중`
               : isFactCheckPass(video)
-                ? `요약 ${(video.overview?.length ?? 0).toLocaleString()}자${
+                ? `요약 ${(
+                    video.listHints?.overviewChars ??
+                    video.overview?.length ??
+                    0
+                  ).toLocaleString()}자${
                     listKind === "draft" &&
                     video.status === "awaiting_factcheck"
                       ? " · 요약 입력"

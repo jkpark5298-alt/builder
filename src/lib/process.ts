@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import { autoFactCheck, hasLlm, summarizeContent } from "./pipeline";
+import { summarizeContent } from "./pipeline";
 import {
   buildReportDocument,
   syncFactChecksIntoExistingReport,
@@ -32,9 +32,9 @@ function withoutFactCheckTargets(items: SummaryItem[]): SummaryItem[] {
 export async function createManualOverviewJob(
   youtubeUrl: string,
   pastedScript: string,
-  opts?: { skipFactCheck?: boolean }
+  _opts?: { skipFactCheck?: boolean }
 ): Promise<VideoRecord> {
-  const job = await createVideoJob(youtubeUrl, opts);
+  const job = await createVideoJob(youtubeUrl);
   const script = normalizePastedText(pastedScript);
   let title = job.title;
   let channel = job.channel;
@@ -53,15 +53,15 @@ export async function createManualOverviewJob(
     channel: channel || "알 수 없음",
     transcript: script,
     transcriptSource: "pasted",
-    scriptNotice: opts?.skipFactCheck
-      ? "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다."
-      : "AI 요약 없이 시작합니다. 「1. 유튜브 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
+    scriptNotice:
+      "자막을 준비했습니다. 「1. 유튜브 내용 요약」에 외부 AI 요약을 붙여 넣고 저장한 뒤, 보고서는 외부 AI로 작성·반영하세요.",
     overview: "",
     summarySource: "none",
     summaryBullets: [],
     items: [],
     factChecks: [],
-    skipFactCheck: Boolean(opts?.skipFactCheck),
+    skipFactCheck: true,
+    factCheckDecision: "pass",
     status: "awaiting_factcheck",
     errorMessage: undefined,
     tags: [
@@ -69,7 +69,7 @@ export async function createManualOverviewJob(
       "youtube",
       "has-script",
       "manual-overview",
-      ...(opts?.skipFactCheck ? ["fc-pass"] : []),
+      "fc-pass",
     ],
     updatedAt: new Date().toISOString(),
   };
@@ -79,7 +79,7 @@ export async function createManualOverviewJob(
 
 export async function createVideoJob(
   youtubeUrl: string,
-  opts?: { skipFactCheck?: boolean }
+  _opts?: { skipFactCheck?: boolean }
 ): Promise<VideoRecord> {
   const videoId = extractVideoId(youtubeUrl);
   if (!videoId) {
@@ -90,7 +90,8 @@ export async function createVideoJob(
   const record: VideoRecord = {
     id: uuid(),
     inputMode: "youtube",
-    skipFactCheck: Boolean(opts?.skipFactCheck),
+    skipFactCheck: true,
+    factCheckDecision: "pass",
     youtubeUrl: normalizeUrl(videoId, youtubeUrl),
     videoId,
     title: "불러오는 중…",
@@ -110,7 +111,7 @@ export async function createVideoJob(
     report: null,
     infographic: null,
     status: "queued",
-    tags: opts?.skipFactCheck ? ["fc-pass"] : [],
+    tags: ["fc-pass"],
     createdAt: now,
     updatedAt: now,
   };
@@ -161,13 +162,13 @@ export async function createReportJob(opts: {
     chapters,
     transcript: script,
     transcriptSource: script ? (fromWeb ? "web" : "pasted") : "none",
-    skipFactCheck: fromWeb || undefined,
-    factCheckDecision: fromWeb ? "pass" : undefined,
+    skipFactCheck: true,
+    factCheckDecision: "pass",
     scriptNotice: hasScript
       ? fromWeb
         ? `웹 원문 전체(${script.length.toLocaleString()}자${
             articleImages.length ? ` · 이미지 ${articleImages.length}장` : ""
-          })를 보고서 본문으로 넣습니다. 요약·팩트체크는 선택입니다.`
+          })를 보고서 본문으로 넣습니다. 요약은 선택입니다.`
         : `붙여넣은 스크립트 전체(${script.length.toLocaleString()}자)를 기준으로 요약합니다.`
       : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
@@ -182,7 +183,8 @@ export async function createReportJob(opts: {
     tags: [
       "report",
       channel,
-      ...(fromWeb ? ["url-article", "fc-pass"] : []),
+      "fc-pass",
+      ...(fromWeb ? ["url-article"] : []),
       ...(hasScript ? ["has-script"] : ["no-script"]),
       ...(!hasScript ? ["manual-overview"] : []),
     ],
@@ -214,6 +216,8 @@ async function openReportManualOverview(
     summaryBullets: [],
     items: [],
     factChecks: [],
+    skipFactCheck: true,
+    factCheckDecision: "pass",
     status: "awaiting_factcheck",
     errorMessage: undefined,
     tags: Array.from(
@@ -222,6 +226,7 @@ async function openReportManualOverview(
         "report",
         "no-script",
         "manual-overview",
+        "fc-pass",
       ])
     ),
     updatedAt: new Date().toISOString(),
@@ -579,80 +584,40 @@ export async function runVideoPipeline(
     };
     await upsertVideo(record);
 
-    if (record.skipFactCheck) {
-      record = {
-        ...record,
-        items: withoutFactCheckTargets(summary.items),
-        factChecks: [],
-        factCheckSource: undefined,
-        factCheckNotice: undefined,
-        report: null,
-        infographic: null,
-        reportSource: undefined,
-        reportWriteNotice: undefined,
-        reportSkeletonEdited: undefined,
-        tags: Array.from(
-          new Set([
-            ...record.tags.filter(
-              (t) =>
-                t !== "fc-llm-draft" &&
-                t !== "auto-factcheck" &&
-                t !== "heuristic-factcheck" &&
-                t !== "manual-review"
-            ),
-            "fc-pass",
-          ])
-        ),
-        updatedAt: new Date().toISOString(),
-      };
-      if ((record.overview ?? "").trim().length >= 40) {
-        return finalizeReport(record);
-      }
-      record = {
-        ...record,
-        status: "awaiting_factcheck",
-        updatedAt: new Date().toISOString(),
-      };
-      record = await ensureSkeletonReport(record);
-      await upsertVideo(record);
-      return record;
-    }
-
+    // 팩트체크 단계 제거 — 요약 후 바로 보고서(pass) 경로
     record = {
       ...record,
-      status: "fact_checking",
-      updatedAt: new Date().toISOString(),
-    };
-    await upsertVideo(record);
-
-    const fcResult = await autoFactCheck(summary.items, {
-      ...meta,
-      transcriptSource: source,
-      videoId: record.videoId,
-    });
-    record = {
-      ...record,
-      items: summary.items,
-      factChecks: fcResult.factChecks,
-      factCheckSource: fcResult.source,
-      factCheckNotice: fcResult.notice,
+      skipFactCheck: true,
+      factCheckDecision: "pass",
+      items: withoutFactCheckTargets(summary.items),
+      factChecks: [],
+      factCheckSource: undefined,
+      factCheckNotice: undefined,
       report: null,
       infographic: null,
       reportSource: undefined,
       reportWriteNotice: undefined,
       reportSkeletonEdited: undefined,
-      status: "awaiting_factcheck",
       tags: Array.from(
         new Set([
-          ...record.tags,
-          fcResult.source === "llm_draft"
-            ? "fc-llm-draft"
-            : hasLlm()
-              ? "auto-factcheck"
-              : "heuristic-factcheck",
-          "manual-review",
+          ...record.tags.filter(
+            (t) =>
+              t !== "fc-llm-draft" &&
+              t !== "auto-factcheck" &&
+              t !== "heuristic-factcheck" &&
+              t !== "manual-review"
+          ),
+          "fc-pass",
         ])
       ),
+      updatedAt: new Date().toISOString(),
+    };
+    if ((record.overview ?? "").trim().length >= 40) {
+      return finalizeReport(record);
+    }
+    record = {
+      ...record,
+      status: "awaiting_factcheck",
       updatedAt: new Date().toISOString(),
     };
     record = await ensureSkeletonReport(record);
@@ -679,14 +644,15 @@ export async function runVideoPipeline(
           ? record.summaryBullets
           : [],
         items: record.items?.length ? record.items : [],
-        factChecks: record.factChecks?.length ? record.factChecks : [],
+        factChecks: [],
+        skipFactCheck: true,
+        factCheckDecision: "pass",
         status: "awaiting_factcheck",
         errorMessage: undefined,
         scriptNotice: isReport
           ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`
-          : record.skipFactCheck
-            ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다.`
-            : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`,
+          : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다.`,
+        tags: Array.from(new Set([...record.tags, "fc-pass"])),
         updatedAt: new Date().toISOString(),
       };
       await upsertVideo(record);
@@ -899,11 +865,22 @@ export async function prepareReprocess(
     infographic: urlArticle ? existing.infographic : null,
     pendingReportFinalize: urlArticle ? "keep_body" : null,
     reportSkeletonEdited: urlArticle ? true : undefined,
-    skipFactCheck: urlArticle ? true : false,
-    factCheckDecision: urlArticle ? "pass" : undefined,
+    skipFactCheck: true,
+    factCheckDecision: "pass",
     tags: withUrlArticleTag(
       existing,
-      existing.tags.filter((t) => (urlArticle ? true : t !== "fc-pass"))
+      Array.from(
+        new Set([
+          ...existing.tags.filter(
+            (t) =>
+              t !== "fc-llm-draft" &&
+              t !== "auto-factcheck" &&
+              t !== "heuristic-factcheck" &&
+              t !== "manual-review"
+          ),
+          "fc-pass",
+        ])
+      )
     ),
     status: "queued",
     errorMessage: undefined,

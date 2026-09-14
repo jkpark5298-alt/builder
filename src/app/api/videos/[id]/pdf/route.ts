@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildReportPdf } from "@/lib/pdf";
+import { buildInfPdfFileName } from "@/lib/pdf-filename";
+import { reportDocumentTitle } from "@/lib/input-mode";
 import { getVideo } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -27,11 +29,18 @@ export async function GET(req: Request, ctx: Ctx) {
 
   const origin = new URL(req.url).origin;
   const bytes = await buildReportPdf(video, { origin });
-  const filename = `factcheck-${video.videoId}.pdf`;
+  const filename = buildInfPdfFileName({
+    title:
+      video.report.meta.title?.trim() ||
+      video.title ||
+      reportDocumentTitle(video),
+    writtenAt: video.report.meta.writtenAt || video.updatedAt,
+  });
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_");
   return new NextResponse(Buffer.from(bytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "no-store, no-cache, must-revalidate",
       Pragma: "no-cache",
     },

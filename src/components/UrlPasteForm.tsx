@@ -10,7 +10,13 @@ import {
   Loader2,
   Link2,
 } from "lucide-react";
+import { FLOW, flowLabel } from "@/lib/flow-steps";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
+import {
+  EXTERNAL_APP_LABEL,
+  launchExternalApp,
+  type ExternalAppId,
+} from "@/lib/external-apps";
 import { extractVideoId } from "@/lib/youtube";
 import { ScriptCopyHelper } from "./ScriptCopyHelper";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
@@ -65,10 +71,38 @@ export function UrlPasteForm() {
     try {
       await navigator.clipboard.writeText(text);
       setScriptCopied(true);
+      setScriptNotice({
+        ok: true,
+        text: `${flowLabel("copyScript")} 완료 · ${text.length.toLocaleString()}자. 제미나이·다글로에 붙여 요약한 뒤 「${flowLabel("openSummary")}」를 누르세요.`,
+      });
       setTimeout(() => setScriptCopied(false), 2500);
     } catch {
       setError("복사에 실패했습니다. 스크립트 칸에서 직접 선택·복사해 주세요.");
     }
+  }
+
+  /** 같은 탭에서 자막 복사 + 외부 앱 실행 */
+  function copyScriptAndOpenApp(app: ExternalAppId) {
+    const text = normalizePastedText(pastedScript);
+    if (!text) {
+      setError("먼저 자막을 가져온 뒤 복사하세요.");
+      return;
+    }
+    setError(null);
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setScriptCopied(true);
+        setScriptNotice({
+          ok: true,
+          text: `${flowLabel("copyScript")} 완료 · ${EXTERNAL_APP_LABEL[app]}에서 붙여 요약하세요. 끝나면 「${flowLabel("openSummary")}」.`,
+        });
+        setTimeout(() => setScriptCopied(false), 2500);
+      })
+      .catch(() => {
+        setError("복사에 실패했습니다. 자막 복사 후 앱에서 붙여넣기 하세요.");
+      });
+    launchExternalApp(app);
   }
 
   useEffect(() => {
@@ -100,7 +134,7 @@ export function UrlPasteForm() {
     const len = normalizePastedText(script).length;
     setScriptNotice({
       ok: true,
-      text: `자막 복사 완료 · ${len.toLocaleString()}자를 ② 스크립트(자막) 칸에 넣었습니다.`,
+      text: `${flowLabel("fetchScript")} 완료 · ${len.toLocaleString()}자를 스크립트 칸에 넣었습니다. 다음: 「${flowLabel("copyScript")}」.`,
     });
     setError(null);
     requestAnimationFrame(() => {
@@ -114,7 +148,7 @@ export function UrlPasteForm() {
   function onScriptFetchError(message: string) {
     setScriptNotice({
       ok: false,
-      text: `자막 복사 실패 · ${message}`,
+      text: `자막 가져오기 실패 · ${message}`,
     });
   }
 
@@ -129,7 +163,7 @@ export function UrlPasteForm() {
       return;
     }
     setLoading(true);
-    setStatus("수동 요약 화면으로 여는 중…");
+    setStatus("요약 화면으로 여는 중…");
     try {
       const res = await fetch("/api/videos", {
         method: "POST",
@@ -144,17 +178,17 @@ export function UrlPasteForm() {
         error?: string;
         video?: { id: string };
       };
-      if (!res.ok) throw new Error(data.error || "수동 요약 시작 실패");
+      if (!res.ok) throw new Error(data.error || "시작 실패");
       if (!data.video?.id) throw new Error("영상 ID를 받지 못했습니다.");
       cacheVideoSnapshot(data.video);
       goToVideo(data.video.id);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "수동 요약 시작 실패";
+      const message = err instanceof Error ? err.message : "시작 실패";
       if (/정지|suspended/i.test(message)) {
         setError(message);
       } else if (/Blob|BLOB_|자격 증명/i.test(message)) {
         setError(
-          `${message}\n\n※ 저장소(Blob) 설정 문제입니다. AI 요약과 무관합니다. Vercel Environment Variables를 확인한 뒤 Redeploy 하세요.`
+          `${message}\n\n※ 저장소(Blob) 설정 문제입니다. Vercel Environment Variables를 확인한 뒤 Redeploy 하세요.`
         );
       } else {
         setError(message);
@@ -309,7 +343,7 @@ export function UrlPasteForm() {
       return;
     }
 
-    await startAnalyze(true);
+    await startManualOverview();
   }
 
   const busy = loading;
@@ -359,10 +393,10 @@ export function UrlPasteForm() {
                 )}
                 <div>
                   <p className="font-medium text-ink-900">
-                    1. 유튜브 주소 붙여넣기
+                    {flowLabel("url", "유튜브 주소 붙여넣기")}
                   </p>
                   <p className="text-xs text-ink-600 mt-0.5">
-                    유튜브 공유 → 링크 복사 → 아래 ① 칸에 붙여넣기
+                    유튜브 공유 → 링크 복사 → 아래 주소 칸에 붙여넣기
                     {step1Done ? " · 완료" : ""}
                   </p>
                 </div>
@@ -381,12 +415,10 @@ export function UrlPasteForm() {
                 )}
                 <div>
                   <p className="font-medium text-ink-900">
-                    2. 자막 자동 가져오기
+                    {flowLabel("fetchScript", "자막 자동 가져오기")}
                   </p>
                   <p className="text-xs text-ink-600 mt-0.5">
-                    「자막 자동 가져오기」버튼 →{" "}
-                    <strong>② 스크립트(자막)</strong> 칸에 채워짐 (팩트체크 칸
-                    아님)
+                    「자막 자동 가져오기」→ 스크립트(자막) 칸에 채워짐
                     {step2Done
                       ? ` · 완료 (${scriptLen.toLocaleString()}자)`
                       : ""}
@@ -395,39 +427,65 @@ export function UrlPasteForm() {
               </li>
               <li
                 className={`flex gap-2.5 rounded-lg px-2.5 py-2 ${
-                  nextStep === 3
+                  nextStep === 3 && !scriptCopied
                     ? "bg-accent-muted/50 ring-1 ring-accent/30"
                     : "bg-ink-50/80"
                 }`}
               >
-                {step1Done && step2Done ? (
+                {scriptCopied ? (
                   <CheckCircle2 className="h-5 w-5 text-accent shrink-0 mt-0.5" />
                 ) : (
                   <Circle className="h-5 w-5 text-ink-400 shrink-0 mt-0.5" />
                 )}
                 <div>
                   <p className="font-medium text-ink-900">
-                    3. 스크립트로 요약 · 검증
+                    {flowLabel("copyScript", "자막 복사 → 제미나이·다글로 요약")}
                   </p>
                   <p className="text-xs text-ink-600 mt-0.5">
-                    하단 버튼을 누르면 요약이 시작됩니다. 요약 후 팩트체크
-                    실시 또는 pass를 고릅니다
+                    「{flowLabel("copyScript")}」또는 제미나이·다글로 → 요약 받기
+                  </p>
+                </div>
+              </li>
+              <li
+                className={`flex gap-2.5 rounded-lg px-2.5 py-2 ${
+                  nextStep === 3 && scriptCopied
+                    ? "bg-accent-muted/50 ring-1 ring-accent/30"
+                    : "bg-ink-50/80"
+                }`}
+              >
+                {scriptCopied ? (
+                  <CheckCircle2 className="h-5 w-5 text-accent shrink-0 mt-0.5" />
+                ) : (
+                  <Circle className="h-5 w-5 text-ink-400 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-medium text-ink-900">
+                    {flowLabel("openSummary")}
+                  </p>
+                  <p className="text-xs text-ink-600 mt-0.5">
+                    다음 화면에서 {FLOW.pasteSummary.n}–{FLOW.saveSummary.n}번
+                    (요약 붙여넣기·정리·저장)
                   </p>
                 </div>
               </li>
             </ol>
             <p className="text-xs font-medium text-accent" role="status">
-              {nextStep === 1 && "👉 지금: ① 유튜브 주소를 붙여넣으세요."}
+              {nextStep === 1 &&
+                `👉 지금: ${flowLabel("url")}를 붙여넣으세요.`}
               {nextStep === 2 &&
-                "👉 지금: 「자막 자동 가져오기」를 눌러 주세요."}
+                `👉 지금: 「${flowLabel("fetchScript")}」를 눌러 주세요.`}
               {nextStep === 3 &&
-                "👉 지금: 하단 「스크립트로 요약 · 검증」을 누르세요."}
+                !scriptCopied &&
+                `👉 지금: 「${flowLabel("copyScript")}」또는 제미나이·다글로.`}
+              {nextStep === 3 &&
+                scriptCopied &&
+                `👉 지금: 요약 후 「${flowLabel("openSummary")}」.`}
             </p>
           </div>
         </div>
 
         <label className="block text-sm text-ink-600">
-          ① 유튜브 주소
+          1. 유튜브 주소
           <input
             value={url}
             onChange={(e) => {
@@ -473,7 +531,7 @@ export function UrlPasteForm() {
           )}
 
           <label className="block text-sm text-ink-600">
-            ② 스크립트(자막)
+            2. 스크립트(자막)
             <textarea
               ref={scriptBoxRef}
               value={pastedScript}
@@ -482,7 +540,7 @@ export function UrlPasteForm() {
                 if (!e.target.value.trim()) setScriptNotice(null);
               }}
               rows={5}
-              placeholder="「자막 자동 가져오기」후 여기에 채워집니다 (팩트체크 칸 아님)"
+              placeholder="「2. 자막 자동 가져오기」후 여기에 채워집니다"
               className={`mt-1.5 w-full rounded-xl border bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 ${
                 hasScript
                   ? "border-emerald-300 ring-1 ring-emerald-200"
@@ -501,18 +559,100 @@ export function UrlPasteForm() {
                   ? `✓ 자막 준비됨 · ${scriptLen.toLocaleString()}자`
                   : `${scriptLen}자 · 80자 이상 필요`}
               </p>
-              <button
-                type="button"
-                onClick={() => void copyScript()}
-                className="inline-flex items-center gap-1.5 min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium text-ink-700 hover:border-accent"
-              >
-                {scriptCopied ? (
-                  <Check className="h-3.5 w-3.5 text-emerald-600" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
-                {scriptCopied ? "복사됨" : "자막 복사"}
-              </button>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void copyScript()}
+                  className="inline-flex items-center gap-1.5 min-h-9 rounded-lg border border-accent/40 bg-accent-muted/40 px-3 text-xs font-medium text-ink-900 hover:border-accent"
+                >
+                  {scriptCopied ? (
+                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                  {scriptCopied
+                    ? `${FLOW.copyScript.n}. 복사됨`
+                    : flowLabel("copyScript", "자막 복사 (외부 AI용)")}
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasScript}
+                  onClick={() => copyScriptAndOpenApp("gemini")}
+                  className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+                >
+                  제미나이
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasScript}
+                  onClick={() => copyScriptAndOpenApp("daglo")}
+                  className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+                >
+                  다글로
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                <button
+                  type="button"
+                  disabled={!hasScript || loading}
+                  onClick={async () => {
+                    setError(null);
+                    setLoading(true);
+                    setStatus("✨ 외부 제미나이 API로 요약/분석 중...");
+                    try {
+                      // 1. 외부 API 호출 (iphone-calendar-2026.vercel.app)
+                      const res = await fetch("https://iphone-calendar-2026.vercel.app/api/gemini", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          // 필요한 경우 Authorization 헤더에 토큰 추가
+                          // "Authorization": `Bearer ${process.env.NEXT_PUBLIC_APP_API_TOKEN}` 
+                        },
+                        body: JSON.stringify({
+                          action: "fact-check", // API에 맞게 설정 (또는 summarize 추가 필요)
+                          text: pastedScript
+                        })
+                      });
+                      
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || "요약 API 호출 실패");
+                      
+                      const resultText = data.result;
+                      
+                      // 2. 결과를 클립보드에 복사
+                      await navigator.clipboard.writeText(resultText);
+                      setScriptNotice({
+                        ok: true,
+                        text: "✨ 요약 완료 및 복사됨! 다음 화면에서 붙여넣기(Ctrl+V) 하세요."
+                      });
+                      
+                      // 3. 기존 'startManualOverview' 파이프라인 태우기 (요약 화면으로 이동)
+                      setStatus("요약 화면으로 이동 중...");
+                      const createRes = await fetch("/api/videos", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          youtubeUrl: url.trim(),
+                          pastedScript: normalizePastedText(pastedScript),
+                          manualOverview: true,
+                        }),
+                      });
+                      const createData = await createRes.json();
+                      if (!createRes.ok) throw new Error(createData.error || "이동 실패");
+                      
+                      window.location.assign(`/videos/${createData.video.id}`);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "요약 중 오류가 발생했습니다.");
+                    } finally {
+                      setLoading(false);
+                      setStatus(null);
+                    }
+                  }}
+                  className="inline-flex items-center min-h-9 rounded-lg border border-accent bg-accent/10 px-3 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-50"
+                >
+                  ✨ 제미나이 API 자동 요약
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -557,24 +697,24 @@ export function UrlPasteForm() {
           {busy ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              접수 중…
+              여는 중…
             </>
           ) : hasScript ? (
-            "3. 스크립트로 요약 · 검증"
+            flowLabel("openSummary", "요약 화면으로 (AI 요약 붙여넣기)")
           ) : step1Done ? (
-            "먼저 2. 자막 자동 가져오기"
+            `먼저 ${flowLabel("fetchScript")}`
           ) : (
-            "먼저 1. 유튜브 주소 입력"
+            `먼저 ${flowLabel("url")}`
           )}
         </button>
         {hasScript && step1Done && (
           <button
             type="button"
             disabled={busy}
-            onClick={() => void startManualOverview()}
+            onClick={() => void startAnalyze(true)}
             className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-ink-300 bg-white min-h-11 px-5 text-sm font-medium text-ink-800 hover:border-accent disabled:opacity-60"
           >
-            AI 요약 실패 시 · 수동 요약으로 시작
+            고급 · 앱에서 AI 요약 실행
           </button>
         )}
       </div>

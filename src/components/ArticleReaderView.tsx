@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { BookOpen, Minus, Plus, X } from "lucide-react";
 import type { ReaderDoc } from "@/lib/reader-view";
+import { READER_PDF_FONT_FAMILY } from "@/lib/reader-view";
 
 const PREF_KEY = "yfc-reader-prefs-v1";
 const FONT_STEPS = [17, 19, 21, 23, 26] as const;
@@ -179,8 +180,7 @@ export function ArticleReaderView({
         <article
           className="mx-auto w-full max-w-[40rem] px-5 py-8 sm:px-8"
           style={{
-            fontFamily:
-              'ui-serif, "Iowan Old Style", "Apple SD Gothic Neo", "Noto Serif KR", Georgia, serif',
+            fontFamily: READER_PDF_FONT_FAMILY,
             fontSize: fontPx,
             lineHeight: 1.85,
             wordBreak: "keep-all",
@@ -202,10 +202,17 @@ export function ArticleReaderView({
               {[doc.source, doc.url].filter(Boolean).join(" · ")}
             </p>
           )}
-          <div className="space-y-5">
+          <div className="space-y-5 reader-rich">
             {doc.blocks.map((b, i) => {
               if (b.type === "h") {
-                return (
+                return b.html ? (
+                  <h2
+                    key={`h-${i}`}
+                    className="font-display pt-2"
+                    style={{ fontSize: "1.15em", lineHeight: 1.4 }}
+                    dangerouslySetInnerHTML={{ __html: b.html }}
+                  />
+                ) : (
                   <h2
                     key={`h-${i}`}
                     className="font-display pt-2"
@@ -231,7 +238,13 @@ export function ArticleReaderView({
                   </figure>
                 );
               }
-              return (
+              return b.html ? (
+                <p
+                  key={`p-${i}`}
+                  className="m-0"
+                  dangerouslySetInnerHTML={{ __html: b.html }}
+                />
+              ) : (
                 <p key={`p-${i}`} className="m-0">
                   {b.text}
                 </p>

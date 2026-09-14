@@ -286,6 +286,14 @@ export interface VideoRecord {
    * 주제 통합 보고서 선별·자동 분류에 사용. 시스템 tags 와 분리.
    */
   userTags?: string[];
+  /**
+   * 목록 응답에서 원문·요약을 비웠을 때 글자 수 표시용.
+   * 상세 GET에는 두지 않음.
+   */
+  listHints?: {
+    overviewChars: number;
+    transcriptChars: number;
+  };
   createdAt: string;
   updatedAt: string;
   sharedAt?: string;

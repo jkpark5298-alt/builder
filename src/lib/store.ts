@@ -375,7 +375,8 @@ export async function searchVideos(query: string): Promise<VideoRecord[]> {
   try {
     const q = query.trim().toLowerCase();
     const all = await readAllVideos();
-    if (!q) return all;
+    // 「전체」·all → 필터 없이 작성된 전체 목록
+    if (!q || q === "전체" || q === "all" || q === "*") return all;
     return all.filter((v) => {
       const hay = [
         v.title,

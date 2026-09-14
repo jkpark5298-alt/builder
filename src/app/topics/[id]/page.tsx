@@ -1,5 +1,6 @@
 import { TopicWorkspace } from "@/components/TopicWorkspace";
 import { collectEntryTags } from "@/lib/tags";
+import { slimVideoForList } from "@/lib/media-budget";
 import { getTopic, getVideo, readAllVideos } from "@/lib/store";
 import { notFound } from "next/navigation";
 
@@ -21,9 +22,13 @@ export default async function TopicDetailPage({
   }
 
   const allVideos = await readAllVideos();
-  const libraryCandidates = allVideos.filter(
-    (v) => v.status !== "report_input_draft" && Boolean(v.overview?.trim())
-  );
+  const libraryCandidates = allVideos
+    .map(slimVideoForList)
+    .filter(
+      (v) =>
+        v.status !== "report_input_draft" &&
+        (v.listHints?.overviewChars ?? 0) >= 40
+    );
 
   return (
     <TopicWorkspace

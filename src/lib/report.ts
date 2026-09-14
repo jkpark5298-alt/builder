@@ -60,6 +60,38 @@ export function reportBodyPlain(body: string, rich?: boolean): string {
   return rich ? stripHtml(body) : body;
 }
 
+/**
+ * 내보내기·읽기 도구에서 빼도 되는 「요약」섹션인지.
+ * 본문 제목의 "결론 요약" 등은 제외하지 않음.
+ */
+export function isExportSummarySectionHeading(heading: string): boolean {
+  const plain = reportBodyPlain(heading || "", true)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return false;
+  const normalized = plain
+    .replace(/^[0-9]+[\.\)]\s*/, "")
+    .replace(/^#+\s*/, "")
+    .trim();
+  return (
+    /^(유튜브\s*)?(내용\s*)?요약$/.test(normalized) ||
+    /^핵심\s*요약$/.test(normalized) ||
+    /^요약\s*\(선택\)$/.test(normalized) ||
+    /^summary$/i.test(normalized)
+  );
+}
+
+/** PDF·Word·읽기·복사에 넣을 섹션 (요약 섹션은 다른 본문이 있을 때만 제외) */
+export function exportableReportSections<
+  T extends { heading: string; body?: string },
+>(sections: T[]): T[] {
+  if (!sections.length) return sections;
+  const kept = sections.filter(
+    (s) => !isExportSummarySectionHeading(s.heading || "")
+  );
+  return kept.length > 0 ? kept : sections;
+}
+
 export function formatSectionText(
   report: TypedReport,
   sectionIdx: number
@@ -67,14 +99,19 @@ export function formatSectionText(
   const sec = report.sections[sectionIdx];
   if (!sec) return "";
   const body = reportBodyPlain(sec.body, sec.rich).trim();
-  const lines = [`## ${sec.heading}`];
+  const headingPlain = reportBodyPlain(sec.heading || "", true).trim() || (sec.heading || "").trim();
+  const lines = headingPlain ? [`## ${headingPlain}`] : [];
   if (body) lines.push(body);
   return lines.join("\n\n").trim();
 }
 
 export function formatReportText(report: TypedReport): string {
-  return report.sections
-    .map((_, idx) => formatSectionText(report, idx))
+  const sections = exportableReportSections(report.sections);
+  return sections
+    .map((sec) => {
+      const idx = report.sections.indexOf(sec);
+      return formatSectionText(report, idx);
+    })
     .filter(Boolean)
     .join("\n\n");
 }
@@ -649,7 +686,7 @@ export function normalizeAiReportPaste(raw: string): string {
       if (/항목별\s*팩트|팩트\s*체크/.test(title)) {
         continue;
       }
-      out.push(`## ${title}`);
+      out.push(`## ${sectionHead[1]}. ${title}`);
       out.push("");
       continue;
     }

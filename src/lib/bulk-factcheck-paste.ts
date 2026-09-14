@@ -43,19 +43,11 @@ const VERDICT_PATTERNS: Array<{ re: RegExp; verdict: FactCheckVerdict }> = [
 export function buildBulkFactCheckPrompt(items: SummaryItem[]): string {
   const targets = items.filter((i) => i.needsFactCheck);
   const lines: string[] = [
-    `아래 ${targets.length}개 주장을 각각 팩트체크해 주세요.`,
+    `아래 ${targets.length}개만 확인해 주세요. 번호만 맞으면 되고, 형식은 자유입니다.`,
     "",
-    "항목마다 아래 형식으로만 답하세요 (** 표시 없이, 퍼센트·기호 없이):",
+    "예: 1. (짧은 답) 사실/의견 구분과 근거를 한두 문장으로.",
     "",
-    "1. (주장 한 문장)",
-    "판정: 사실|대체로 사실|거짓|검증 불가",
-    "근거(출처): …",
-    "",
-    "2. (다음 주장)",
-    "판정: …",
-    "근거(출처): …",
-    "",
-    "--- 검증 대상 ---",
+    "--- 대상 ---",
   ];
 
   targets.forEach((item, i) => {

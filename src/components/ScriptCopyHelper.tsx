@@ -185,10 +185,8 @@ export function ScriptCopyHelper({
         <p className="text-base font-medium text-ink-900">스크립트(자막) 가져오기</p>
         <p className="text-xs text-ink-500 mt-1">
           <strong>youtube-transcript.ai</strong>로 자막을 가져와{" "}
-          <strong>② 스크립트(자막)</strong> 칸에 자동 붙여넣기합니다.
-          <span className="block mt-0.5 text-ink-400">
-            ※ 팩트체크(AI 답변) 칸이 아닙니다.
-          </span>
+          <strong>② 스크립트(자막)</strong> 칸에 넣습니다. 외부 AI에 쓰려면
+          아래에서 <strong>자막 복사</strong>를 누르세요.
         </p>
       </div>
 
@@ -246,7 +244,7 @@ export function ScriptCopyHelper({
               aria-live="polite"
             >
               <Check className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>자막 복사 완료 — {fetchMsg}</span>
+              <span>자막 가져오기 완료 — {fetchMsg}</span>
             </p>
           )}
           {fetchErr && (
@@ -254,7 +252,7 @@ export function ScriptCopyHelper({
               className="text-sm font-medium text-verify-false rounded-lg border border-verify-false/30 bg-verify-false/5 px-3 py-2.5"
               role="alert"
             >
-              자막 복사 실패 — {fetchErr} 「앱 열기」탭을 사용하세요.
+              자막 가져오기 실패 — {fetchErr} 「앱 열기」탭을 사용하세요.
             </p>
           )}
           <p className="text-[11px] text-ink-500 leading-relaxed">

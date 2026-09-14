@@ -1,3 +1,4 @@
+import { isItemChecked } from "./factcheck-client";
 import type { AnswerPart, FactCheckResult, SummaryItem, VideoRecord } from "./types";
 
 /** Neon/서버리스 요청·응답이 버틸 수 있는 대략적 JSON 문자 수 */
@@ -87,6 +88,57 @@ function stripInlineSvg(video: VideoRecord): VideoRecord {
     };
   }
   return video;
+}
+
+/**
+ * 홈·검색·목록 API용. 제목·상태·썸네일만 남기고 자막·요약·본문은 비움.
+ */
+export function slimVideoForList(video: VideoRecord): VideoRecord {
+  const overviewChars = (video.overview ?? "").length;
+  const transcriptChars = (video.transcript ?? "").length;
+  const hasOverview = overviewChars >= 40;
+  return {
+    ...video,
+    listHints: { overviewChars, transcriptChars },
+    transcript: "",
+    overview: hasOverview ? "\u00a0".repeat(40) : "",
+    description: "",
+    chapters: [],
+    scriptNotice: undefined,
+    factCheckPasteDraft: undefined,
+    factCheckTrash: [],
+    factCheckNotice: undefined,
+    reportWriteNotice: undefined,
+    articleImages: undefined,
+    items: video.items.map((item) => ({
+      id: item.id,
+      type: item.type,
+      statement: "",
+      evidence: [],
+      needsFactCheck: item.needsFactCheck,
+      factCheckOptional: item.factCheckOptional,
+    })),
+    factChecks: video.factChecks.map((fc) => ({
+      itemId: fc.itemId,
+      mode: fc.mode,
+      verdict: fc.verdict,
+      explanation: isItemChecked(fc.itemId, video.factChecks) ? "checked" : "",
+      sources: [],
+      checkedAt: fc.checkedAt,
+    })),
+    report: video.report
+      ? {
+          ...video.report,
+          sections: [],
+          summaryExcerpt: "",
+          imageRoom: [],
+          factChecks: [],
+        }
+      : null,
+    infographic: video.infographic
+      ? { ...video.infographic, svgMarkup: "", highlights: [], sectionHints: [] }
+      : null,
+  };
 }
 
 /** API 응답용: 무거운 data URL만 빼고 HTTP(S)·/api/media URL은 유지 */

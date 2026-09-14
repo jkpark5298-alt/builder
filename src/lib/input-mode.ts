@@ -38,27 +38,30 @@ export function reportSourceLink(
 ): string {
   const src = video.sourceUrl?.trim();
   if (src) return src;
-  if (video.inputMode === "report") return "팩트체크보고서 (직접 입력)";
+  if (video.inputMode === "report") return "정보 보관소 (직접 입력)";
   return video.youtubeUrl;
 }
 
-/** 유튜브 팩트체크 pass — 검증 UI·게이트를 건너뛴다 */
+/**
+ * 팩트체크 중간 단계 제거 — 항상 요약→보고서(pass) 경로.
+ * 기존 skipFactCheck / factCheckDecision=pass 기록과도 호환.
+ */
 export function isFactCheckPass(
-  video: Pick<VideoRecord, "skipFactCheck" | "factCheckDecision">
+  _video?: Pick<VideoRecord, "skipFactCheck" | "factCheckDecision">
 ): boolean {
-  return video.skipFactCheck === true || video.factCheckDecision === "pass";
+  return true;
 }
 
-/** 요약 이후 팩트체크 실시 vs pass 를 고르는 경로 (유튜브 · URL 입력) */
+/** 팩트체크 실시/pass 선택 UI는 더 이상 쓰지 않음 */
 export function offersFactCheckDecision(
-  video: Pick<VideoRecord, "inputMode" | "sourceUrl" | "tags" | "transcriptSource">
+  _video?: Pick<VideoRecord, "inputMode" | "sourceUrl" | "tags" | "transcriptSource">
 ): boolean {
-  return isYoutubeInput(video) || isUrlArticleInput(video);
+  return false;
 }
 
-/** 요약 이후, 팩트체크 실시 vs pass 를 아직 고르지 않음 */
+/** 팩트체크 선택 화면 — 비활성 */
 export function needsFactCheckDecision(
-  video: Pick<
+  _video?: Pick<
     VideoRecord,
     | "inputMode"
     | "status"
@@ -68,14 +71,10 @@ export function needsFactCheckDecision(
     | "sourceUrl"
     | "tags"
     | "transcriptSource"
+    | "factChecks"
   >
 ): boolean {
-  if (!offersFactCheckDecision(video)) return false;
-  if (video.status !== "awaiting_factcheck") return false;
-  if ((video.overview ?? "").trim().length < 40) return false;
-  if (isFactCheckPass(video)) return false;
-  if (video.factCheckDecision === "do") return false;
-  return true;
+  return false;
 }
 
 /** PDF·인쇄 표지 제목 */
@@ -90,16 +89,11 @@ export function reportDocumentTitle(
     | "transcriptSource"
   >
 ): string {
-  if (isFactCheckPass(video)) {
-    return isYoutubeInput(video) ? "유튜브 요약 보고서" : "요약 보고서";
-  }
-  return isYoutubeInput(video)
-    ? "유튜브 요약 · 팩트체크 보고서"
-    : "팩트체크 보고서";
+  return isYoutubeInput(video) ? "유튜브 요약 보고서" : "정보 보관소 보고서";
 }
 
-/** 팩트체크보고서 항목용 썸네일 (외부 URL 없음) */
+/** 정보 보관소 항목용 썸네일 (외부 URL 없음) */
 export function reportThumbnailUrl(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><rect fill="#1a2430" width="480" height="270"/><rect x="40" y="50" width="400" height="170" rx="12" fill="#2a3648"/><text x="240" y="125" text-anchor="middle" fill="#f4f6f8" font-family="system-ui,sans-serif" font-size="20" font-weight="600">팩트체크보고서</text><text x="240" y="155" text-anchor="middle" fill="#c45c26" font-family="system-ui,sans-serif" font-size="14">직접 입력 · 요약 · 팩트체크</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270" viewBox="0 0 480 270"><rect fill="#1a2430" width="480" height="270"/><rect x="40" y="50" width="400" height="170" rx="12" fill="#2a3648"/><text x="240" y="125" text-anchor="middle" fill="#f4f6f8" font-family="system-ui,sans-serif" font-size="20" font-weight="600">정보 보관소</text><text x="240" y="155" text-anchor="middle" fill="#c45c26" font-family="system-ui,sans-serif" font-size="14">직접 입력 · 요약 · 보고서</text></svg>`;
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }

@@ -6,7 +6,7 @@ import { Search } from "lucide-react";
 
 export function SearchBar({
   initialQuery = "",
-  placeholder = "제목, 채널, 주장, 팩트체크 결과 검색…",
+  placeholder = "제목·채널·요약·본문·태그 검색 · 「전체」로 모든 목록",
 }: {
   initialQuery?: string;
   placeholder?: string;
