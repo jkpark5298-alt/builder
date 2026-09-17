@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardPaste, Loader2 } from "lucide-react";
 import type { VideoRecord } from "@/lib/types";
 import { isYoutubeInput } from "@/lib/input-mode";
 import { detectPasteKind } from "@/lib/paste-organize";
 import { normalizeAiOverviewPaste } from "@/lib/text-format";
-import { FLOW, flowLabel } from "@/lib/flow-steps";
+import { FLOW, flowLabel, PENDING_OVERVIEW_KEY } from "@/lib/flow-steps";
 import {
   EXTERNAL_APP_LABEL,
   launchExternalApp,
@@ -41,6 +41,19 @@ export function AiPasteInbox({ video }: { video: VideoRecord }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const pending = sessionStorage.getItem(PENDING_OVERVIEW_KEY);
+      if (!pending?.trim()) return;
+      sessionStorage.removeItem(PENDING_OVERVIEW_KEY);
+      setPaste(pending.trim());
+      setRole("overview");
+      setHint("제미나이 API 요약이 자동으로 채워졌습니다. 확인 후 저장하세요.");
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const guessed = useMemo(
     () => (paste.trim().length >= 20 ? guessRole(video, paste) : null),

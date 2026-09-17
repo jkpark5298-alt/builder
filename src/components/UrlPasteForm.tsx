@@ -10,7 +10,7 @@ import {
   Loader2,
   Link2,
 } from "lucide-react";
-import { FLOW, flowLabel } from "@/lib/flow-steps";
+import { FLOW, flowLabel, PENDING_OVERVIEW_KEY } from "@/lib/flow-steps";
 import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
 import {
   EXTERNAL_APP_LABEL,
@@ -598,51 +598,74 @@ export function UrlPasteForm() {
                   onClick={async () => {
                     setError(null);
                     setLoading(true);
-                    setStatus("✨ 외부 제미나이 API로 요약/분석 중...");
+                    setStatus("✨ 제미나이 API로 요약 중...");
                     try {
-                      // 1. 외부 API 호출 (iphone-calendar-2026.vercel.app)
-                      const res = await fetch("https://iphone-calendar-2026.vercel.app/api/gemini", {
+                      const script = normalizePastedText(pastedScript);
+                      // same-origin proxy — auth token stays on the server
+                      const res = await fetch("/api/gemini", {
                         method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          // 필요한 경우 Authorization 헤더에 토큰 추가
-                          // "Authorization": `Bearer ${process.env.NEXT_PUBLIC_APP_API_TOKEN}` 
-                        },
+                        headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                          action: "fact-check", // API에 맞게 설정 (또는 summarize 추가 필요)
-                          text: pastedScript
-                        })
+                          action: "summarize",
+                          text: script,
+                        }),
                       });
-                      
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || "요약 API 호출 실패");
-                      
-                      const resultText = data.result;
-                      
-                      // 2. 결과를 클립보드에 복사
-                      await navigator.clipboard.writeText(resultText);
+
+                      const data = (await res.json().catch(() => ({}))) as {
+                        result?: string;
+                        error?: string;
+                      };
+                      if (!res.ok) {
+                        throw new Error(data.error || "요약 API 호출 실패");
+                      }
+
+                      const resultText =
+                        typeof data.result === "string" ? data.result.trim() : "";
+                      if (!resultText) {
+                        throw new Error("제미나이 API가 빈 요약을 반환했습니다.");
+                      }
+
+                      try {
+                        await navigator.clipboard.writeText(resultText);
+                      } catch {
+                        /* iOS 등 — sessionStorage로 넘김 */
+                      }
+                      try {
+                        sessionStorage.setItem(PENDING_OVERVIEW_KEY, resultText);
+                      } catch {
+                        /* quota */
+                      }
+
                       setScriptNotice({
                         ok: true,
-                        text: "✨ 요약 완료 및 복사됨! 다음 화면에서 붙여넣기(Ctrl+V) 하세요."
+                        text: "✨ 요약 완료. 다음 화면 붙여넣기 칸에 자동으로 채워집니다.",
                       });
-                      
-                      // 3. 기존 'startManualOverview' 파이프라인 태우기 (요약 화면으로 이동)
+
                       setStatus("요약 화면으로 이동 중...");
                       const createRes = await fetch("/api/videos", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           youtubeUrl: url.trim(),
-                          pastedScript: normalizePastedText(pastedScript),
+                          pastedScript: script,
                           manualOverview: true,
                         }),
                       });
-                      const createData = await createRes.json();
-                      if (!createRes.ok) throw new Error(createData.error || "이동 실패");
-                      
+                      const createData = (await createRes.json()) as {
+                        video?: { id: string };
+                        error?: string;
+                      };
+                      if (!createRes.ok || !createData.video?.id) {
+                        throw new Error(createData.error || "이동 실패");
+                      }
+
                       window.location.assign(`/videos/${createData.video.id}`);
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : "요약 중 오류가 발생했습니다.");
+                      setError(
+                        err instanceof Error
+                          ? err.message
+                          : "요약 중 오류가 발생했습니다."
+                      );
                     } finally {
                       setLoading(false);
                       setStatus(null);

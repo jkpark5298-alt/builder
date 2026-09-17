@@ -19,3 +19,6 @@ export function flowLabel(
   const s = FLOW[key];
   return extra ? `${s.n}. ${extra}` : `${s.n}. ${s.short}`;
 }
+
+/** Gemini API 자동 요약 → 요약 붙여넣기 칸으로 넘길 때 */
+export const PENDING_OVERVIEW_KEY = "yfc-pending-overview";
