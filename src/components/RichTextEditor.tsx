@@ -389,7 +389,7 @@ export function RichTextEditor({
     keepRange();
   };
 
-  /** Sentence-end S / s / ㄴ → image slot */
+  /** Sentence-end S / s → image slot */
   const handleInput = () => {
     const el = editorRef.current;
     if (!el) return;
@@ -415,7 +415,7 @@ export function RichTextEditor({
       return;
     }
     const ch = text[offset - 1];
-    if (ch !== "S" && ch !== "s" && ch !== "ㄴ") {
+    if (ch !== "S" && ch !== "s") {
       syncFromEditor();
       return;
     }
@@ -678,7 +678,7 @@ export function RichTextEditor({
       ) : null}
 
       <p className="text-[11px] text-stone-500">
-        문장 끝에 <b>S</b> / <b>s</b> / <b>ㄴ</b> 입력 → 이미지 칸(S1…) 생성 후
+        문장 끝에 <b>S</b> / <b>s</b> 입력 → 이미지 칸(S1…) 생성 후
         붙여넣기 또는 「이미지」. 빈 칸·붙여넣은 이미지는 오른쪽 <b>×</b>로
         삭제.{" "}
         <b>글자를 선택한 뒤</b> 굵게·밑줄·글자색·형광. ● · √ 는 커서 위치에 넣습니다.

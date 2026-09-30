@@ -2572,7 +2572,7 @@ export function EditableReportPanel({
     }
     setActiveSectionIdx(idx);
     setImagePasteHint(
-      "문장 끝에 S / s / ㄴ 입력 후 붙여넣기, 또는 본문 툴바 「이미지」로 파일을 고르세요."
+      "문장 끝에 S / s 입력 후 붙여넣기, 또는 본문 툴바 「이미지」로 파일을 고르세요."
     );
     try {
       const files = await readImagesFromClipboard();
@@ -2988,8 +2988,8 @@ export function EditableReportPanel({
         {editing && !urlArticle && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2 flex flex-wrap items-center gap-2">
             <span>
-              문장 끝에 <strong>S</strong> / <strong>s</strong> /{" "}
-              <strong>ㄴ</strong> → 이미지 칸(S1…) → 붙여넣기 또는 「이미지」.
+              문장 끝에 <strong>S</strong> / <strong>s</strong> → 이미지 칸(S1…) →
+              붙여넣기 또는 「이미지」.
               빈 칸·이미지는 ×로 삭제.
             </span>
             {autoSaveStatus === "pending" && (
@@ -3244,7 +3244,7 @@ export function EditableReportPanel({
                 </p>
                 <p className="text-[11px] text-ink-500">
                   이미지: 문장 끝 <strong className="font-medium text-ink-700">S</strong>
-                  {" "}/ s / ㄴ 후{" "}
+                  {" "}/ s 후{" "}
                   <strong className="font-medium text-ink-700">붙여넣기</strong>
                   {" "}또는 본문 툴바 「이미지」
                 </p>
@@ -3587,7 +3587,7 @@ export function EditableReportPanel({
                     <RichTextEditor
                       key={`body-${sectionEditKey(sec, idx)}`}
                       value={sec.body || ""}
-                      placeholder="본문을 입력하세요. 문장 끝에 S / s / ㄴ → 이미지 칸"
+                      placeholder="본문을 입력하세요. 문장 끝에 S / s → 이미지 칸"
                       minHeightClass="min-h-[8rem]"
                       onUploadImages={uploadSectionImages}
                       onChange={(html) => {
@@ -3660,8 +3660,8 @@ export function EditableReportPanel({
             {!urlArticle && (
             <div className="border-t border-ink-100 p-3">
               <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
-                문장 끝에 <strong>S</strong> / <strong>s</strong> /{" "}
-                <strong>ㄴ</strong>을 입력하면 이미지 칸(S1…)이 생깁니다.
+                문장 끝에 <strong>S</strong> / <strong>s</strong>를 입력하면 이미지
+                칸(S1…)이 생깁니다.
                 붙여넣기 또는 「이미지」로 넣고, 빈 칸·이미지는 ×로 삭제하세요.
               </div>
             </div>
