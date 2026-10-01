@@ -19,7 +19,6 @@ function tabFromHash(hash: string): Tab | null {
     h === "yt-home" ||
     h === "yt-input" ||
     h === "yt-status" ||
-    h === "yt-app-files" ||
     h === "youtube-reports"
   ) {
     return "youtube";
@@ -31,7 +30,6 @@ function tabFromHash(hash: string): Tab | null {
     h === "fc-input" ||
     h === "fc-url" ||
     h === "fc-status" ||
-    h === "fc-app-files" ||
     h === "report-create" ||
     h === "report-list" ||
     h === "paste" ||
@@ -119,13 +117,13 @@ export function HomeInputTabs({
   }
 
   const items: Array<{ id: Tab; label: string; hint: string }> = [
-    { id: "youtube", label: "유튜브", hint: "URL · 자막 · 보고서" },
+    { id: "youtube", label: "유튜브", hint: "URL · 자막 · 요약 · 보고서" },
     {
       id: "factcheck",
       label: "정보 보관소",
-      hint: "붙여넣기 · 보고서",
+      hint: "붙여넣기 · 요약 · 보고서",
     },
-    { id: "topic", label: "주제", hint: "태그 · 통합" },
+    { id: "topic", label: "주제", hint: "태그 모아 통합 보고서" },
   ];
 
   let body: ReactNode;
@@ -221,16 +219,14 @@ export function HomeInputTabs({
               role="tab"
               aria-selected={tab === item.id}
               onClick={() => selectTab(item.id)}
-              className={`flex-1 min-w-0 min-h-11 rounded-lg px-2 sm:px-3 py-2 text-left transition-colors ${
+              className={`flex-1 min-h-11 rounded-lg px-3 py-2 text-left transition-colors ${
                 tab === item.id
                   ? "bg-white text-ink-900 shadow-sm"
                   : "text-ink-500 hover:text-ink-800"
               }`}
             >
-              <span className="block text-sm font-semibold truncate">
-                {item.label}
-              </span>
-              <span className="block text-[11px] mt-0.5 opacity-80 truncate">
+              <span className="block text-sm font-semibold">{item.label}</span>
+              <span className="block text-[11px] mt-0.5 opacity-80">
                 {item.hint}
               </span>
             </button>

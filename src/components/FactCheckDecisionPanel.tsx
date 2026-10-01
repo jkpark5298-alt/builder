@@ -4,7 +4,7 @@ import { CheckCircle2, FileText, Loader2, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { isUrlArticleInput, isYoutubeInput } from "@/lib/input-mode";
-import { archiveFlowLabel, flowLabel } from "@/lib/flow-steps";
+import { flowLabel } from "@/lib/flow-steps";
 import type { VideoRecord } from "@/lib/types";
 
 function sourceKindLabel(video: VideoRecord): "youtube" | "url" | "report" {
@@ -158,12 +158,6 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
     setError(null);
     setBusy(true);
     try {
-      if (!isYoutubeInput(video)) {
-        window.dispatchEvent(
-          new CustomEvent("yfc-flush-tags", { detail: video.id })
-        );
-        await new Promise((r) => window.setTimeout(r, 280));
-      }
       const res = await fetch(`/api/videos/${video.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -173,12 +167,7 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
         }),
       });
       const data = (await res.json()) as { error?: string };
-      if (!res.ok) {
-        throw new Error(
-          data.error ||
-            (isYoutubeInput(video) ? "확정 실패" : "완료하지 못했습니다.")
-        );
-      }
+      if (!res.ok) throw new Error(data.error || "확정 실패");
       router.refresh();
       window.setTimeout(() => {
         document
@@ -186,13 +175,7 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
           ?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 250);
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : isYoutubeInput(video)
-            ? "확정 실패"
-            : "완료하지 못했습니다."
-      );
+      setError(e instanceof Error ? e.message : "확정 실패");
     } finally {
       setBusy(false);
     }
@@ -203,16 +186,24 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
       <p className="text-sm text-ink-800 leading-relaxed">
         {urlArticle ? (
           <>
-            <strong>원문 보고서</strong> — 가져온 글이 본문입니다. 완료하면
-            조회·PDF·공유를 씁니다.
+            <strong>원문 보고서</strong> — 가져온 글 전체가 본문입니다. 받은
+            사진은 본문 아래 S칸에 있습니다. 더 넣으려면 문장 끝에{" "}
+            <strong>S</strong>를 친 뒤 붙여넣기 또는 사진첩을 쓰세요. 요약·팩트체크는
+            선택입니다. 확정하면 조회·PDF·공유를 씁니다.
           </>
-        ) : isYoutubeInput(video) ? (
-          <>보고서 내용을 확인한 뒤 확정하면 조회·PDF·공유를 씁니다.</>
         ) : (
           <>
-            표지와 태그를 넣은 뒤{" "}
-            <strong>{archiveFlowLabel("confirm")}</strong>하면 조회·공유로
-            갑니다.
+            <strong>다음 순서</strong>
+            <ol className="mt-1 ml-4 list-none space-y-0.5 text-sm">
+              <li>{flowLabel("copySummary")} → 제미나이에서 보고서 받기</li>
+              <li>
+                {flowLabel("pasteReport")} → 「본문에 반영」
+              </li>
+              <li>
+                문장 끝 <strong>S</strong> 이미지(선택) →{" "}
+                {flowLabel("confirmReport")}
+              </li>
+            </ol>
           </>
         )}
       </p>
@@ -227,13 +218,7 @@ export function PassReportConfirmBar({ video }: { video: VideoRecord }) {
         ) : (
           <CheckCircle2 className="h-4 w-4" />
         )}
-        {busy
-          ? isYoutubeInput(video)
-            ? "확정 중…"
-            : "완료 중…"
-          : isYoutubeInput(video)
-            ? flowLabel("confirmReport")
-            : archiveFlowLabel("confirm")}
+        {busy ? "확정 중…" : flowLabel("confirmReport")}
       </button>
       {error && (
         <p className="text-sm text-verify-false" role="alert">

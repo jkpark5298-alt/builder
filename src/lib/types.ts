@@ -201,8 +201,6 @@ export interface VideoRecord {
    * youtubeUrl과 별개. 보고서 메타 링크에 사용.
    */
   sourceUrl?: string;
-  /** 정보 보관소 입력 화면의 서식 본문 (임시 저장). 파이프라인은 transcript 평문을 사용 */
-  inputBodyHtml?: string;
   /** URL에서 가져온 본문 이미지 (저장소 URL) */
   articleImages?: string[];
   videoId: string;

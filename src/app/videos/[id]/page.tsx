@@ -16,12 +16,9 @@ import { ReprocessButton } from "@/components/ReprocessButton";
 import { UserTagsEditor } from "@/components/UserTagsEditor";
 import { SavedTranscriptPanel } from "@/components/SavedTranscriptPanel";
 import { VideoProcessingPoller } from "@/components/VideoProcessingPoller";
-import { VideoStepNav } from "@/components/VideoStepNav";
 import { VideoNotFoundRecovery } from "@/components/VideoNotFoundRecovery";
 import { isYoutubeInput, isUrlArticleInput } from "@/lib/input-mode";
-import { archiveFlowLabel } from "@/lib/flow-steps";
 import { libraryCardLabel, libraryStage } from "@/lib/library";
-import { collectCoverCandidates } from "@/lib/report-inline-images";
 import { formatTagList } from "@/lib/tags";
 
 export const dynamic = "force-dynamic";
@@ -64,24 +61,22 @@ export default async function VideoDetailPage({
     return (
       <div className="space-y-6 pb-24 sm:pb-8">
         <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-700">
-          <strong>입력 중</strong> — 내용을 고친 뒤 임시 저장을 선택하세요.
-          저장하지 않고 나가면 확인 메시지가 나옵니다.
+          <strong>입력 중</strong> — 제목을 채운 뒤 임시 저장하거나, 스크립트
+          없이도 요약을 시작하세요.
         </div>
         <ReportCreateForm
           draftId={video.id}
-          savedAt={video.createdAt}
           initial={{
             title: video.title,
-            bodyHtml:
-              video.inputBodyHtml ||
-              (video.transcript
-                ? video.transcript
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/\n/g, "<br>")
-                : ""),
-            sourceUrl: video.sourceUrl ?? "",
+            channel:
+              video.channel === "직접 입력" || video.channel === "웹 기사"
+                ? ""
+                : video.channel,
+            creatorNotes: video.description ?? "",
+            pastedScript: video.transcript ?? "",
+            thumbnailUrl: video.thumbnailUrl?.startsWith("data:image/svg")
+              ? ""
+              : video.thumbnailUrl,
           }}
         />
       </div>
@@ -95,13 +90,29 @@ export default async function VideoDetailPage({
   const stageLabel = libraryCardLabel(video);
   const isYoutube = isYoutubeInput(video);
   const urlArticle = isUrlArticleInput(video);
-  const isArchive = !isYoutube;
-  const coverCandidates = collectCoverCandidates(video);
   const summaryStepLabel = isYoutube
-    ? "2. 수동 요약"
+    ? "자막·요약"
     : urlArticle
-      ? "2. 요약 (선택)"
-      : "2. 수동 요약";
+      ? "요약 (선택)"
+      : "내용 요약";
+
+  const stepItems = [
+    {
+      n: "1–4",
+      t: "자막",
+      on: true,
+    },
+    {
+      n: "5–8",
+      t: "요약",
+      on: video.overview.trim().length >= 40 || awaiting || ready,
+    },
+    {
+      n: "9–10",
+      t: "보고서",
+      on: ready || Boolean(video.report),
+    },
+  ];
 
   return (
     <div className="space-y-6 sm:space-y-8 pb-24 sm:pb-8">
@@ -110,34 +121,33 @@ export default async function VideoDetailPage({
         status={video.status}
         errorMessage={video.errorMessage}
       />
-      <VideoStepNav
-        videoId={video.id}
-        isArchive={isArchive}
-        current={ready ? "report" : "summary"}
-        reportReady={ready || Boolean(video.report)}
-        archivePhase={ready ? "done" : "report"}
-      />
+      <ol className="grid grid-cols-3 gap-2 text-center text-xs sm:text-sm">
+        {stepItems.map((s) => (
+          <li
+            key={s.n}
+            className={`rounded-xl border px-2 py-2.5 ${
+              s.on
+                ? "border-accent/40 bg-accent-muted/50 text-ink-900"
+                : "border-ink-200 bg-white/60 text-ink-400"
+            }`}
+          >
+            <span className="font-medium">
+              {s.n}. {s.t}
+            </span>
+          </li>
+        ))}
+      </ol>
 
-      {isYoutube && !ready && !video.report && video.overview.trim().length < 40 ? (
+      {!ready && video.overview.trim().length < 40 ? (
         <AiPasteInbox video={video} />
       ) : null}
 
-      <section
-        id="step-script"
-        className={
-          isArchive && !ready
-            ? "space-y-3 print:hidden scroll-mt-24"
-            : "grid gap-5 lg:grid-cols-[1.05fr_0.95fr] print:hidden scroll-mt-24"
-        }
-      >
-        {isYoutube || ready ? (
-          <ThumbnailEditor
-            videoId={video.id}
-            thumbnailUrl={video.thumbnailUrl}
-            emphasize={ready}
-            bodyImageUrls={coverCandidates}
-          />
-        ) : null}
+      <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] print:hidden">
+        <ThumbnailEditor
+          videoId={video.id}
+          thumbnailUrl={video.thumbnailUrl}
+          emphasize={ready}
+        />
         <div className="space-y-4">
           <div>
             <p className="text-sm text-accent font-medium">{video.channel}</p>
@@ -170,61 +180,55 @@ export default async function VideoDetailPage({
             <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
               {isYoutube
                 ? "유튜브"
-                : urlArticle
+                : video.sourceUrl
                   ? "정보 보관소 · URL"
                   : "정보 보관소"}
             </span>
-            {(isYoutube || ready) && !!video.userTags?.length && (
+            {!!video.userTags?.length && (
               <span className="rounded-md bg-accent-muted/60 border border-accent/30 px-2 py-1 text-accent">
                 {formatTagList(video.userTags)}
               </span>
             )}
-            {isYoutube ? (
-              <>
-                <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
-                  스크립트:{" "}
-                  {video.transcriptSource === "pasted"
-                    ? "붙여넣은 스크립트"
-                    : video.transcriptSource === "web"
-                      ? "웹 본문"
-                      : video.transcriptSource === "youtube"
-                        ? "자막"
-                        : video.transcriptSource === "youtube_auto"
-                          ? "자동자막→텍스트"
-                          : video.transcriptSource === "speech_text"
-                            ? "음성→텍스트"
-                            : video.transcriptSource === "creator_meta"
-                              ? "설명·챕터만"
-                              : "없음"}
-                </span>
-                <span
-                  className={`rounded-md border px-2 py-1 ${
-                    stage === "complete"
-                      ? "bg-verify-true/10 text-verify-true border-verify-true/20"
-                      : stage === "report_pending"
-                        ? "bg-ink-900 text-white border-ink-900"
-                        : stage === "factcheck_draft"
-                          ? "bg-accent-muted text-accent border-accent/30"
-                          : "bg-white border-ink-200"
-                  }`}
-                >
-                  {stage === "factcheck_draft"
-                    ? "임시 저장 · 요약 입력"
-                    : stage === "report_pending"
-                      ? "작성 대기"
-                      : stageLabel}
-                </span>
-              </>
-            ) : null}
+            <span className="rounded-md bg-white border border-ink-200 px-2 py-1">
+              스크립트:{" "}
+              {video.transcriptSource === "pasted"
+                ? "붙여넣은 스크립트"
+                : video.transcriptSource === "web"
+                  ? "웹 본문"
+                  : video.transcriptSource === "youtube"
+                    ? "자막"
+                    : video.transcriptSource === "youtube_auto"
+                      ? "자동자막→텍스트"
+                      : video.transcriptSource === "speech_text"
+                        ? "음성→텍스트"
+                        : video.transcriptSource === "creator_meta"
+                          ? "설명·챕터만"
+                          : "없음"}
+            </span>
+            <span
+              className={`rounded-md border px-2 py-1 ${
+                stage === "complete"
+                  ? "bg-verify-true/10 text-verify-true border-verify-true/20"
+                  : stage === "report_pending"
+                    ? "bg-ink-900 text-white border-ink-900"
+                    : stage === "factcheck_draft"
+                      ? "bg-accent-muted text-accent border-accent/30"
+                      : "bg-white border-ink-200"
+              }`}
+            >
+              {stage === "factcheck_draft"
+                ? "임시 저장 · 요약 입력"
+                : stage === "report_pending"
+                  ? "작성 대기"
+                  : stageLabel}
+            </span>
           </div>
-          {isYoutube || ready ? (
-            <UserTagsEditor videoId={video.id} initialTags={video.userTags} />
-          ) : null}
-          {isYoutube && video.scriptNotice ? (
+          <UserTagsEditor videoId={video.id} initialTags={video.userTags} />
+          {video.scriptNotice && (
             <div className="rounded-xl border border-accent/30 bg-accent-muted/50 px-3 py-2.5 text-sm text-ink-800">
               {video.scriptNotice}
             </div>
-          ) : null}
+          )}
           {(video.transcriptSource === "creator_meta" ||
             video.transcriptSource === "none") &&
             isYoutube && (
@@ -233,90 +237,74 @@ export default async function VideoDetailPage({
                 youtubeUrl={video.youtubeUrl}
               />
             )}
-          {isYoutube ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <ReprocessButton videoId={video.id} skipFactCheck />
-              </div>
-              <SavedTranscriptPanel video={video} />
-              <ActionBar video={video} />
-            </>
-          ) : ready ? (
-            <ActionBar video={video} />
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <ReprocessButton videoId={video.id} skipFactCheck />
+          </div>
+          <SavedTranscriptPanel video={video} />
+          <ActionBar video={video} />
+          {ready && (
+            <a
+              href="#report"
+              className="flex sm:hidden items-center justify-center min-h-12 rounded-xl bg-accent text-white font-medium print:hidden"
+            >
+              보고서 보기
+            </a>
+          )}
         </div>
       </section>
       {ready && <PrintOnLoad />}
 
-      {isYoutube ? (
-        <div id="step-summary" className="scroll-mt-24">
-          <CollapsibleSummaryStep
-            title={summaryStepLabel}
-            defaultCollapsed={Boolean(video.report)}
-          >
-            <OverviewSummaryPanel
-              key={`${video.id}-${video.updatedAt}`}
-              video={video}
+      <CollapsibleSummaryStep
+        title={summaryStepLabel}
+        defaultCollapsed={Boolean(video.report)}
+      >
+        <OverviewSummaryPanel
+          key={`${video.id}-${video.updatedAt}`}
+          video={video}
+        />
+        {(video.transcriptSource === "creator_meta" ||
+          video.transcriptSource === "none") &&
+          isYoutube && (
+            <PasteScriptPanel
+              videoId={video.id}
+              youtubeUrl={video.youtubeUrl}
             />
-            {(video.transcriptSource === "creator_meta" ||
-              video.transcriptSource === "none") && (
-              <PasteScriptPanel
-                videoId={video.id}
-                youtubeUrl={video.youtubeUrl}
-              />
-            )}
-          </CollapsibleSummaryStep>
-        </div>
-      ) : null}
+          )}
+      </CollapsibleSummaryStep>
 
       {showReportDraft && (
         <section
           id="report-draft"
           className="space-y-3 scroll-mt-20 print:hidden"
         >
-          <div className="space-y-3">
-            <EditableReportPanel video={video} draftPhase />
-            {isArchive ? (
-              <div
-                id="report-confirm"
-                className="scroll-mt-24 space-y-3 rounded-2xl border-2 border-amber-400 bg-amber-50/60 p-4 ring-2 ring-amber-300"
-              >
-                <p className="text-sm font-medium text-ink-900">
-                  {archiveFlowLabel("confirm")} — 표지와 태그를 넣고 완료하세요.
-                </p>
-                <ThumbnailEditor
-                  videoId={video.id}
-                  thumbnailUrl={video.thumbnailUrl}
-                  emphasize
-                  bodyImageUrls={coverCandidates}
-                />
-                <UserTagsEditor
-                  videoId={video.id}
-                  initialTags={video.userTags}
-                  themeHint="보관"
-                />
-                <PassReportConfirmBar video={video} />
-              </div>
-            ) : (
-              <div id="report-confirm" className="scroll-mt-24">
-                <PassReportConfirmBar video={video} />
-              </div>
-            )}
-          </div>
+          <PassReportConfirmBar video={video} />
+          {video.reportWriteNotice ? (
+            <div className="rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-700">
+              {video.reportWriteNotice}
+            </div>
+          ) : null}
+          <EditableReportPanel video={video} draftPhase />
         </section>
       )}
 
       {ready && video.report && (
         <div className="space-y-3">
+          {video.reportWriteNotice ? (
+            <div className="rounded-xl border border-accent/30 bg-accent-muted/40 px-4 py-3 text-sm text-ink-800 print:hidden">
+              <span className="font-medium">
+                {video.reportSource === "llm"
+                  ? "글쓰기 AI"
+                  : "내용 적응형 조립"}
+              </span>
+              {" — "}
+              {video.reportWriteNotice}
+            </div>
+          ) : null}
           <EditableReportPanel video={video} />
         </div>
       )}
 
-      {ready && (
-        <div id="step-done" className="scroll-mt-24">
-          <InfographicPanel video={video} />
-        </div>
-      )}
+      {ready && <InfographicPanel video={video} />}
 
       {!awaiting && !ready && (
         <div className="rounded-2xl border border-ink-200 bg-white/80 p-5 text-center text-ink-600 text-sm">

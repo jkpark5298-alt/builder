@@ -14,14 +14,13 @@ export function isReportInput(
   return video.inputMode === "report";
 }
 
-/** 팩트체크보고서 · 웹 URL에서 본문을 가져온 항목. 인스타 주소만 있는 보관소 항목은 제외. */
+/** 팩트체크보고서 · 웹 URL에서 본문을 가져온 항목 */
 export function isUrlArticleInput(
   video: Pick<VideoRecord, "sourceUrl" | "tags" | "transcriptSource">
 ): boolean {
-  const src = (video.sourceUrl ?? "").trim();
-  if (/instagram\.com/i.test(src)) return false;
-  if ((video.tags ?? []).includes("url-article")) return true;
-  return video.transcriptSource === "web";
+  if (video.sourceUrl?.trim()) return true;
+  if (video.transcriptSource === "web") return true;
+  return (video.tags ?? []).includes("url-article");
 }
 
 /** 파이프라인에서 tags를 다시 짜도 url-article 표시는 유지 */

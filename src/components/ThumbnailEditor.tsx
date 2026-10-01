@@ -16,13 +16,10 @@ export function ThumbnailEditor({
   thumbnailUrl,
   /** 완료 보고서 등에서 안내 문구 강조 */
   emphasize = false,
-  bodyImageUrls = [],
 }: {
   videoId: string;
   thumbnailUrl: string;
   emphasize?: boolean;
-  /** 본문에 넣은 이미지 — 대표 표지로 고를 수 있음 */
-  bodyImageUrls?: string[];
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -212,7 +209,7 @@ export function ThumbnailEditor({
               ) : (
                 <ImagePlus className="h-4 w-4" />
               )}
-              직접 넣기
+              표지 바꾸기
             </button>
             <button
               type="button"
@@ -246,7 +243,8 @@ export function ThumbnailEditor({
           )}
           {!error && (
             <p className="mt-2 text-[11px] text-white/80">
-              직접 넣거나, 아래 본문 이미지에서 대표 그림을 고르세요.
+              목록 카드·상세 상단 표지에 함께 반영됩니다. PC: Ctrl+V · 드래그앤드롭
+              가능.
             </p>
           )}
         </div>
@@ -259,38 +257,6 @@ export function ThumbnailEditor({
           onPaste={onPaste}
         />
       </div>
-      {bodyImageUrls.length > 0 ? (
-        <div className="space-y-1.5 print:hidden">
-          <p className="text-xs font-medium text-ink-800">본문에서 대표 이미지 고르기</p>
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-            {bodyImageUrls.map((src) => {
-              const selected = preview === src;
-              return (
-                <button
-                  key={src.slice(0, 120)}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void persist(src)}
-                  className={`overflow-hidden rounded-lg border bg-white disabled:opacity-50 ${
-                    selected
-                      ? "border-2 border-amber-400 ring-2 ring-amber-300"
-                      : "border-ink-200 hover:border-accent"
-                  }`}
-                  title="이 그림을 표지로"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={src} alt="" className="h-16 w-full object-cover bg-ink-100" />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : emphasize ? (
-        <p className="text-xs text-ink-500 print:hidden">
-          본문에 넣은 그림이 있으면 여기서 표지로 고를 수 있습니다. 지금은 직접
-          넣거나 붙여넣으세요.
-        </p>
-      ) : null}
     </div>
   );
 }

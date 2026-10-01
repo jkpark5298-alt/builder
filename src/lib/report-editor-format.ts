@@ -564,7 +564,7 @@ export function wrapPlainPasteText(text: string): string {
         .map((line) => escapeHtmlText(line.trimEnd()))
         .join("<br>");
       if (!html.trim()) return "<p><br></p>";
-      return `<p>${html}</p>`;
+      return `<p><span style="font-size:${PASTE_DEFAULT_FONT_PX}px">${html}</span></p>`;
     })
     .join("");
 }

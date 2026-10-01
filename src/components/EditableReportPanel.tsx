@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   useCallback,
@@ -20,7 +20,6 @@ import {
   Home,
   ImagePlus,
   Loader2,
-  Pencil,
   Plus,
   Save,
   Sparkles,
@@ -45,14 +44,7 @@ import { releaseMediaUrls, uploadDataUrls } from "@/lib/media-upload-client";
 import { reportImagePrefix } from "@/lib/media-paths";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { preferPlainPaste } from "@/lib/device";
-import {
-  isFactCheckPass,
-  isReportInput,
-  isUrlArticleInput,
-  isYoutubeInput,
-  reportDocumentTitle,
-} from "@/lib/input-mode";
-import { archiveFlowLabel } from "@/lib/flow-steps";
+import { isFactCheckPass, isUrlArticleInput, reportDocumentTitle } from "@/lib/input-mode";
 import { withArticleImages } from "@/lib/report-skeleton";
 import { normalizeImageUrls, splitPrimaryImage } from "@/lib/image-urls";
 import {
@@ -105,8 +97,6 @@ import { ImageCropModal } from "@/components/ImageCropModal";
 import { ArticleReaderView } from "@/components/ArticleReaderView";
 import { readerDocFromReport } from "@/lib/reader-view";
 import { ReopenAsDraftButton } from "@/components/ReopenAsDraftButton";
-import { downloadArchiveAppFile, isAppFileItem } from "@/lib/archive-app-file";
-import { AppFileMark } from "@/components/AppFileMark";
 import { resolveAnswerParts } from "@/lib/answer-parts";
 import {
   formatFactChecksText,
@@ -116,8 +106,6 @@ import {
   formatSectionText,
   importReportText,
   inspectImportedReportText,
-  headingLooksLikeBody,
-  isGenericSectionHeading,
   mergeReportSectionsToSingleBody,
   normalizeAiReportPaste,
   replaceAllReportBodies,
@@ -125,12 +113,11 @@ import {
   plainTextToHtml,
   sanitizeAiPasteText,
 } from "@/lib/report";
-import { plainSlotsToBodyHtml } from "@/lib/plain-report-doc";
 import {
   organizePaste,
   type OrganizePasteResult,
 } from "@/lib/paste-organize";
-import { tidyReportPasteSpacing, unwrapSoftLineBreaks } from "@/lib/paste";
+import { tidyReportPasteSpacing } from "@/lib/paste";
 import { parseBulkFactCheckPasteRobust } from "@/lib/bulk-factcheck-paste";
 import {
   bodyHtmlFromSSlotFigures,
@@ -140,27 +127,17 @@ import {
   countTrailingSMarkers,
   dedupeRepeatedReportBodyHtml,
   ensureTrailingSMarkers,
+  htmlWithSImages,
   parseBodySImageSlots,
   removeSSlotAtIndex,
 } from "@/lib/report-body-s-slots";
 import {
   appendInlineImagesToHtml,
+  bodyUsesInlineRichImages,
   collectInlineBodyImageSrcs,
+  migrateReportToInlineImages,
   prepareInlineBodyForView,
-  preparePlainDocForVisualEdit,
-  promoteHeadingBody,
-  visualBodyHtml,
 } from "@/lib/report-inline-images";
-import {
-  fillRichEditor,
-  serializeLiveRichEditor,
-} from "@/lib/rich-text";
-import {
-  applyFormatToRichEditor,
-  getFocusedRichEditor,
-  getRichEditorBySectionIdx,
-  rememberRichSelection,
-} from "@/lib/rich-editor-format";
 import { reportHasDuplicateSectionBodies } from "@/lib/report-duplicates";
 import {
   organizeUrlArticleReport,
@@ -205,11 +182,9 @@ function editorHtmlToHeading(html: string): string {
 function headingViewHtml(heading: string): string {
   const h = (heading || "").trim();
   if (!h) return "";
-  if (headingLooksLikeBody(h)) return prepareInlineBodyForView(h);
   if (/<[a-z][\s\S]*>/i.test(h)) {
     return h
-      .replace(/<\/p>/gi, "")
-      .replace(/<p\b[^>]*>/gi, "")
+      .replace(/<\/?p\b[^>]*>/gi, "")
       .replace(/<\/?div\b[^>]*>/gi, "")
       .trim();
   }
@@ -532,18 +507,12 @@ export function EditableReportPanel({
   const report = localVideo.report;
   const hideFactCheck = isFactCheckPass(localVideo);
   const [mode, setMode] = useState<ReportWorkMode>("view");
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
   const editing = mode === "body";
   const factcheckMode = mode === "factcheck";
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<TypedReport | null>(() => {
-    if (!report) return report;
-    return preparePlainDocForVisualEdit(
-      promoteHeadingBody(normalizeReportImageRefs(report)),
-      { mergeSections: isYoutubeInput(video) },
-    );
-  });
+  const [draft, setDraft] = useState<TypedReport | null>(
+    report ? normalizeReportImageRefs(report) : report
+  );
   const sourcePageUrl = [
     localVideo.sourceUrl,
     video.sourceUrl,
@@ -553,10 +522,8 @@ export function EditableReportPanel({
   ]
     .map((u) => (u || "").trim())
     .find((u) => /^https?:\/\//i.test(u) && !/youtu\.?be/i.test(u)) || "";
-  const isArchive = isReportInput(localVideo);
-  const isYoutube = isYoutubeInput(localVideo);
-  const isPlainDoc = isArchive || isYoutube;
-  const urlArticle = isUrlArticleInput(localVideo);
+  const urlArticle =
+    isUrlArticleInput(localVideo) || Boolean(sourcePageUrl);
   const urlTranscriptReady =
     stripArticleImageMarkers(localVideo.transcript ?? "").trim().length >= 40 ||
     (localVideo.articleImages ?? []).length > 0;
@@ -572,10 +539,6 @@ export function EditableReportPanel({
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [cropBusy, setCropBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [pasteNotice, setPasteNotice] = useState<string | null>(null);
-  const [archiveTool, setArchiveTool] = useState<
-    "paste" | "edit" | "image" | null
-  >(null);
   const [importText, setImportText] = useState("");
   const [organizeResult, setOrganizeResult] =
     useState<OrganizePasteResult | null>(null);
@@ -600,7 +563,6 @@ export function EditableReportPanel({
   const manualCopyRef = useRef<HTMLTextAreaElement | null>(null);
   /** 모바일: 서식 툴바 기본 접힘 (입력 공간 확보) */
   const [formatToolbarOpen, setFormatToolbarOpen] = useState(false);
-  const [reportToolsOpen, setReportToolsOpen] = useState(false);
   const [savingSectionIdx, setSavingSectionIdx] = useState<number | null>(null);
   const [savedSections, setSavedSections] = useState<string[]>([]);
   const [sectionSavedFlash, setSectionSavedFlash] = useState<
@@ -804,12 +766,8 @@ export function EditableReportPanel({
     if (editing && !wasEditingRef.current && report) {
       const stabilized = stabilizeReportFcAnchors(cloneReport(report));
       const withArts = withArticleImages(stabilized, localVideo);
-      const prepared = preparePlainDocForVisualEdit(
-        promoteHeadingBody(withArts),
-        { mergeSections: isYoutube },
-      );
-      setDraft(prepared);
-      setSavedSections(prepared.sections.map(sectionSnapshot));
+      setDraft(migrateReportToInlineImages(withArts));
+      setSavedSections(report.sections.map(sectionSnapshot));
       setSectionSavedFlash({});
       lastSavedSnapRef.current = JSON.stringify(report);
       setAutoSaveStatus("idle");
@@ -885,18 +843,19 @@ export function EditableReportPanel({
     };
   }, [draft, mode, video.id]);
 
-  function openArchiveTool(tool: "paste" | "edit" | "image") {
-    window.dispatchEvent(
-      new CustomEvent("yfc-archive-tool", { detail: tool })
-    );
-  }
-
   function goBodyMode() {
     setDraft((prev) => {
       if (!prev) return prev;
-      const next = preparePlainDocForVisualEdit(promoteHeadingBody(prev), {
-        mergeSections: isYoutube,
-      });
+      const merged = mergeReportSectionsToSingleBody(prev);
+      const next = {
+        ...merged,
+        sections: merged.sections.map((sec) => {
+          const cleaned = dedupeRepeatedReportBodyHtml(sec.body || "");
+          return cleaned === (sec.body || "")
+            ? sec
+            : { ...sec, body: cleaned, rich: true };
+        }),
+      };
       queueMicrotask(() => {
         setSavedSections(next.sections.map(sectionSnapshot));
         setActiveSectionIdx(0);
@@ -973,26 +932,10 @@ export function EditableReportPanel({
       if (window.location.hash === "#report-fc") enterFactcheck();
     }
 
-    function onArchiveTool(e: Event) {
-      const tool = (e as CustomEvent<"paste" | "edit" | "image">).detail;
-      if (tool !== "paste" && tool !== "edit" && tool !== "image") return;
-      setArchiveTool(tool);
-      if (modeRef.current === "body") {
-        document.getElementById("report")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-        return;
-      }
-      enterBody();
-    }
-
     window.addEventListener("factcheck:edit-report", onCustom);
-    window.addEventListener("yfc-archive-tool", onArchiveTool);
     window.addEventListener("hashchange", onHash);
     return () => {
       window.removeEventListener("factcheck:edit-report", onCustom);
-      window.removeEventListener("yfc-archive-tool", onArchiveTool);
       window.removeEventListener("hashchange", onHash);
     };
   }, [video.id, video.skipFactCheck]);
@@ -1098,18 +1041,6 @@ export function EditableReportPanel({
   );
 
   const saveEditorSelection = useCallback(() => {
-    rememberRichSelection();
-    const rich = getFocusedRichEditor();
-    if (rich) {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && !sel.getRangeAt(0).collapsed) {
-        setFormatTarget("selection");
-        return;
-      }
-      const text = (rich.textContent || "").replace(/\u00a0/g, " ").trim();
-      setFormatTarget(text ? "paragraph" : "none");
-      return;
-    }
     const editor = getActiveReportEditor();
     if (!editor) {
       return;
@@ -1125,31 +1056,6 @@ export function EditableReportPanel({
     setFormatTarget(text ? "paragraph" : "none");
   }, []);
 
-  const commitRichBodyHtml = useCallback(
-    (sectionIdx: number, html: string) => {
-      updateDraft((prev) => {
-        const cur = prev.sections[sectionIdx];
-        if (!cur || cur.body === html) return prev;
-        const srcs = collectInlineBodyImageSrcs(html);
-        const room = srcs.length
-          ? upsertRoomUrls(prev.imageRoom, srcs).room
-          : prev.imageRoom;
-        const sections = [...prev.sections];
-        sections[sectionIdx] = {
-          ...cur,
-          body: html,
-          rich: true,
-          imageRefs: undefined,
-          images: undefined,
-          imageUrl: undefined,
-        };
-        return { ...prev, sections, imageRoom: room };
-      }, { history: "immediate" });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-
   const showFormatHint = useCallback((hint: string) => {
     setFormatHint(hint);
     if (formatHintTimerRef.current) {
@@ -1161,33 +1067,6 @@ export function EditableReportPanel({
     }, 2800);
   }, []);
 
-  const runRichBodyFormat = useCallback(
-    (opts: {
-      style?: Parameters<typeof applyFormatToRichEditor>[0]["style"];
-      insertText?: string;
-      expandParagraph?: boolean;
-    }) => {
-      const result = applyFormatToRichEditor({
-        sectionIdx: activeSectionIdx,
-        ...opts,
-      });
-      if (!result) {
-        showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
-        return false;
-      }
-      if (result.mode === "none" && !opts.insertText) {
-        showFormatHint(
-          "서식을 적용할 글자를 선택하거나 문단 안에 커서를 두세요."
-        );
-        return false;
-      }
-      commitRichBodyHtml(result.sectionIdx, result.html);
-      setActiveSectionIdx(result.sectionIdx);
-      saveEditorSelection();
-      return true;
-    },
-    [activeSectionIdx, commitRichBodyHtml, showFormatHint, saveEditorSelection]
-  );
   async function copyToClipboard(text: string, label: string) {
     if (!text.trim()) {
       alert(`복사할 ${label} 텍스트가 없습니다.`);
@@ -1273,21 +1152,12 @@ export function EditableReportPanel({
     alert("본문을 교체했습니다. 팩트체크·이미지룸은 유지됩니다.");
   }
 
-  /** 이미 본문에 있는 글의 번호·문단 간격만 정리 (### · * ** · 라벨:) */
+  /** 이미 본문에 있는 글의 번호·문단 간격만 정리 (형광·이미지 슬롯 문구는 plain 변환) */
   function tidyActiveSectionSpacing(silent = false) {
     const idx = activeSectionIdx;
     const sec = draftRef.current?.sections[idx];
     if (!sec) return;
-    const live = getRichEditorBySectionIdx(idx);
-    let plain = "";
-    if (live instanceof HTMLTextAreaElement) {
-      plain = live.value;
-    } else if (live) {
-      plain = live.innerText || "";
-    } else {
-      plain = reportBodyPlain(sec.body || "", Boolean(sec.rich));
-    }
-    plain = plain.replace(/\u00a0/g, " ").trim();
+    const plain = reportBodyPlain(sec.body || "", Boolean(sec.rich)).trim();
     if (!plain) {
       if (!silent) alert("정리할 본문이 없습니다.");
       return;
@@ -1299,11 +1169,6 @@ export function EditableReportPanel({
     }
     const html = plainTextToHtml(tidied);
     patchSection(idx, { body: html, rich: true }, "immediate");
-    if (live instanceof HTMLTextAreaElement) {
-      live.value = tidied;
-    } else if (live) {
-      fillRichEditor(live, html);
-    }
     const ed = getReportEditor(sectionEditKey(sec, idx));
     if (ed && !ed.isDestroyed) {
       ed.commands.setContent(html, { emitUpdate: false });
@@ -1827,133 +1692,106 @@ export function EditableReportPanel({
 
   const applyFontSize = useCallback(
     (px: number) => {
-      const heading = resolveActiveTipTap();
-      if (heading?.part === "heading" && heading.editor.isFocused) {
-        const { editor, idx, part } = heading;
-        editor.chain().focus().run();
-        const mode = ensureFormatSelection(editor);
-        if (mode === "none") {
-          showFormatHint("크기를 조절할 글자를 선택하거나 문단 안에 커서를 두세요.");
-          return;
-        }
-        const { to } = editor.state.selection;
-        editor.chain().focus().setFontSize(`${px}px`).run();
-        if (mode === "paragraph") {
-          editor.chain().focus().setTextSelection(to).run();
-        }
-        if (part === "heading") {
-          patchSection(idx, { heading: editorHtmlToHeading(editor.getHTML()) }, "immediate");
-        }
-        showFormatHint(
-          mode === "paragraph"
-            ? `${px}px — 현재 문단 전체에 적용했습니다.`
-            : `${px}px — 선택한 글자에 적용했습니다.`
-        );
-        saveEditorSelection();
+      const resolved = resolveActiveTipTap();
+      if (!resolved) {
+        showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
         return;
       }
-
-      const ok = runRichBodyFormat({ style: { fontSize: `${px}px` } });
-      if (!ok) return;
-      showFormatHint(`${px}px — 본문에 적용했습니다.`);
+      const { editor, idx, part } = resolved;
+      editor.chain().focus().run();
+      const mode = ensureFormatSelection(editor);
+      if (mode === "none") {
+        showFormatHint("크기를 조절할 글자를 선택하거나 문단 안에 커서를 두세요.");
+        return;
+      }
+      const { to } = editor.state.selection;
+      editor.chain().focus().setFontSize(`${px}px`).run();
+      // 문단 전체 적용 후 커서를 끝으로 되돌려 선택 잔상 방지
+      if (mode === "paragraph") {
+        editor.chain().focus().setTextSelection(to).run();
+      }
+      if (part === "heading") {
+        patchSection(idx, { heading: editorHtmlToHeading(editor.getHTML()) }, "immediate");
+      } else {
+        patchSection(idx, { body: editor.getHTML(), rich: true }, "immediate");
+      }
+      showFormatHint(
+        mode === "paragraph"
+          ? `${px}px — 현재 문단 전체에 적용했습니다.`
+          : `${px}px — 선택한 글자에 적용했습니다.`
+      );
+      saveEditorSelection();
     },
     [
       resolveActiveTipTap,
       ensureFormatSelection,
       showFormatHint,
       saveEditorSelection,
-      runRichBodyFormat,
     ]
   );
 
   const stepActiveFontSize = useCallback(
     (delta: number) => {
-      const heading = resolveActiveTipTap();
-      if (heading?.part === "heading" && heading.editor.isFocused) {
-        const { editor } = heading;
-        editor.chain().focus().run();
-        const attrs = editor.getAttributes("textStyle");
-        const current =
-          parseFontSizeToPx(String(attrs.fontSize || "")) ??
-          DEFAULT_REPORT_FONT_PX;
-        applyFontSize(stepFontSize(current, delta));
+      const resolved = resolveActiveTipTap();
+      if (!resolved) {
+        showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
         return;
       }
-      applyFontSize(stepFontSize(DEFAULT_REPORT_FONT_PX, delta));
+      const { editor } = resolved;
+      editor.chain().focus().run();
+      const attrs = editor.getAttributes("textStyle");
+      const current =
+        parseFontSizeToPx(String(attrs.fontSize || "")) ??
+        DEFAULT_REPORT_FONT_PX;
+      applyFontSize(stepFontSize(current, delta));
     },
-    [resolveActiveTipTap, applyFontSize]
+    [resolveActiveTipTap, applyFontSize, showFormatHint]
   );
 
   const runFormatCommand = useCallback(
     (
       fn: (editor: NonNullable<ReturnType<typeof getActiveReportEditor>>) => void,
-      opts?: {
-        expandParagraph?: boolean;
-        richStyle?: Parameters<typeof applyFormatToRichEditor>[0]["style"];
-        insertText?: string;
-      }
+      opts?: { expandParagraph?: boolean }
     ) => {
-      const heading = resolveActiveTipTap();
-      if (heading?.part === "heading" && heading.editor.isFocused) {
-        const { editor, idx, part } = heading;
-        editor.chain().focus().run();
-        const expand = opts?.expandParagraph !== false;
-        let mode: "selection" | "paragraph" | "none" = "selection";
-        if (expand) {
-          mode = ensureFormatSelection(editor);
-          if (mode === "none") {
-            showFormatHint(
-              "서식을 적용할 글자를 선택하거나 문단 안에 커서를 두세요."
-            );
-            return;
-          }
-        }
-        const { to } = editor.state.selection;
-        fn(editor);
-        if (expand && mode === "paragraph") {
-          editor.chain().focus().setTextSelection(to).run();
-        }
-        if (part === "heading") {
-          patchSection(
-            idx,
-            { heading: editorHtmlToHeading(editor.getHTML()) },
-            "immediate"
-          );
-        }
-        saveEditorSelection();
-        return;
-      }
-
-      // 본문 RichTextEditor
-      if (opts?.insertText != null) {
-        runRichBodyFormat({
-          insertText: opts.insertText,
-          expandParagraph: false,
-        });
-        return;
-      }
-      if (opts?.richStyle) {
-        runRichBodyFormat({
-          style: opts.richStyle,
-          expandParagraph: opts.expandParagraph,
-        });
-        return;
-      }
-      // TipTap 전용 콜백만 온 경우 — 본문은 richStyle로 호출해야 함
-      if (
-        !getFocusedRichEditor() &&
-        !getRichEditorBySectionIdx(activeSectionIdx)
-      ) {
+      const resolved = resolveActiveTipTap();
+      if (!resolved) {
         showFormatHint("본문 편집 칸을 먼저 클릭해 주세요.");
+        return;
       }
+      const { editor, idx, part } = resolved;
+      editor.chain().focus().run();
+      const expand = opts?.expandParagraph !== false;
+      let mode: "selection" | "paragraph" | "none" = "selection";
+      if (expand) {
+        mode = ensureFormatSelection(editor);
+        if (mode === "none") {
+          showFormatHint(
+            "서식을 적용할 글자를 선택하거나 문단 안에 커서를 두세요."
+          );
+          return;
+        }
+      }
+      const { to } = editor.state.selection;
+      fn(editor);
+      if (expand && mode === "paragraph") {
+        editor.chain().focus().setTextSelection(to).run();
+      }
+      if (part === "heading") {
+        patchSection(
+          idx,
+          { heading: editorHtmlToHeading(editor.getHTML()) },
+          "immediate"
+        );
+      } else {
+        patchSection(idx, { body: editor.getHTML(), rich: true }, "immediate");
+      }
+      saveEditorSelection();
     },
     [
       resolveActiveTipTap,
       ensureFormatSelection,
       showFormatHint,
       saveEditorSelection,
-      runRichBodyFormat,
-      activeSectionIdx,
     ]
   );
 
@@ -1981,51 +1819,18 @@ export function EditableReportPanel({
     return sectionSnapshot(sec) !== savedSections[idx];
   }
 
-  /** TipTap 제목 + 본문 편집기 화면을 저장 직전에 draft 에 합침 */
+  /** TipTap 제목에만 반영되고 draft 에 빠진 내용을 저장 직전에 합침 (본문은 RichTextEditor onChange) */
   function flushLiveEditorsToDraft(): TypedReport | null {
     const current = draftRef.current;
     if (!current) return null;
     let changed = false;
     const sections = current.sections.map((sec, idx) => {
-      let next = sec;
-      const headingInput = document.querySelector(
-        `[data-plain-heading="${idx}"]`
-      );
-      if (headingInput instanceof HTMLInputElement) {
-        const nextHeading = headingInput.value.trim();
-        if ((next.heading || "") !== nextHeading) {
-          changed = true;
-          next = { ...next, heading: nextHeading };
-        }
-      } else {
-        const headingEd = getReportEditor(
-          `${sectionEditKey(sec, idx)}::heading`
-        );
-        if (headingEd) {
-          const nextHeading = editorHtmlToHeading(headingEd.getHTML());
-          if ((next.heading || "") !== nextHeading) {
-            changed = true;
-            next = { ...next, heading: nextHeading };
-          }
-        }
-      }
-      const bodyEl = document.querySelector(
-        `.rich-editor[data-section-idx="${idx}"]`
-      );
-      if (bodyEl instanceof HTMLTextAreaElement) {
-        const nextBody = plainSlotsToBodyHtml(bodyEl.value);
-        if ((next.body || "") !== nextBody) {
-          changed = true;
-          next = { ...next, body: nextBody, rich: true };
-        }
-      } else if (bodyEl instanceof HTMLElement) {
-        const nextBody = serializeLiveRichEditor(bodyEl);
-        if ((next.body || "") !== nextBody) {
-          changed = true;
-          next = { ...next, body: nextBody, rich: true };
-        }
-      }
-      return next;
+      const headingEd = getReportEditor(`${sectionEditKey(sec, idx)}::heading`);
+      if (!headingEd) return sec;
+      const nextHeading = editorHtmlToHeading(headingEd.getHTML());
+      if ((sec.heading || "") === nextHeading) return sec;
+      changed = true;
+      return { ...sec, heading: nextHeading };
     });
     if (!changed) return current;
     const next = { ...current, sections };
@@ -2166,7 +1971,6 @@ export function EditableReportPanel({
     setSavedSections([]);
     setSectionSavedFlash({});
     resetHistory();
-    setArchiveTool(null);
   }
 
   function patchSection(
@@ -2511,6 +2315,7 @@ export function EditableReportPanel({
     );
     setActiveSectionIdx(0);
     setMode("body");
+    if (!urlArticle) setImportOpen(true);
     window.setTimeout(() => {
       void persistReport({ exit: false });
     }, 50);
@@ -2800,57 +2605,8 @@ export function EditableReportPanel({
     }
   }
 
-  /**
-   * 제미나이 등에서 붙인 긴 글은 문단을 정리한 뒤 본문 전체를 바꿉니다.
-   * 짧은 글은 false — 커서 위치에 그대로 넣습니다.
-   */
-  function replaceEntireBodyFromPaste(raw: string): boolean {
-    const tidied = unwrapSoftLineBreaks(
-      tidyReportPasteSpacing(sanitizeAiPasteText(raw))
-    ).trim();
-    if (tidied.length < 40) return false;
-
-    updateDraft((current) => {
-      let next = replaceAllReportBodies(current, tidied);
-      if (next === current) {
-        const cleaned = normalizeAiReportPaste(tidied);
-        if (cleaned && cleaned !== tidied) {
-          next = replaceAllReportBodies(current, cleaned);
-        }
-      }
-      if (next === current) {
-        return {
-          ...current,
-          summaryExcerpt: tidied.replace(/\s+/g, " ").trim().slice(0, 280),
-          sections: [
-            {
-              sectionId: current.sections[0]?.sectionId,
-              heading: "본문",
-              body: plainTextToHtml(tidied),
-              rich: true,
-            },
-          ],
-        };
-      }
-      return mergeReportSectionsToSingleBody(next);
-    }, { history: "immediate" });
-    setActiveSectionIdx(0);
-    setMode("body");
-    setImportOpen(false);
-    setPasteNotice(
-      isArchive
-        ? "붙여넣은 글로 본문을 바꿨습니다."
-        : "붙여넣은 글로 본문을 바꿨습니다. 이미지 룸은 그대로입니다."
-    );
-    window.setTimeout(() => {
-      void persistReport({ exit: false });
-    }, 80);
-    return true;
-  }
-
   /** 아이폰: TipTap 본문에 직접 붙여넣기가 막힐 때 textarea로 삽입 */
   function pasteTextIntoActiveBody(raw: string, rawHtml?: string) {
-    if (replaceEntireBodyFromPaste(raw)) return true;
     const text = raw.trim();
     const html = (rawHtml || "").trim();
     if (!text && !html) return false;
@@ -3030,104 +2786,11 @@ export function EditableReportPanel({
             />
           </div>
         ) : null}
-        <div className="rounded-xl border border-ink-200 bg-white print:hidden">
-          <button
-            type="button"
-            onClick={() => setReportToolsOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
-            aria-expanded={reportToolsOpen}
-          >
-            <h2 className="font-display text-lg sm:text-xl">
-              {isArchive
-                ? archiveFlowLabel("report")
-                : draftPhase
-                  ? "2. 보고서 초안"
-                  : "2. 보고서"}
-            </h2>
-            {reportToolsOpen ? (
-              <ChevronUp className="h-4 w-4 text-ink-500" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-ink-500" />
-            )}
-          </button>
-          <div className="grid grid-cols-2 gap-2 border-t border-ink-100 px-3 py-2 text-xs">
-            <p>
-              <span className="text-ink-500">현재</span>{" "}
-              <strong className="font-semibold text-ink-900">
-                {isArchive
-                  ? archiveTool === "paste" && editing
-                    ? archiveFlowLabel("paste")
-                    : archiveTool === "edit" && editing
-                      ? archiveFlowLabel("edit")
-                      : archiveFlowLabel("report")
-                  : editing
-                    ? "수정"
-                    : "보기"}
-              </strong>
-            </p>
-            <p>
-              <span className="text-ink-500">다음</span>{" "}
-              <strong className="font-semibold text-ink-900">
-                {isArchive
-                  ? archiveTool === "paste" && editing
-                    ? archiveFlowLabel("edit")
-                    : archiveTool === "edit" && editing
-                      ? archiveFlowLabel("confirm")
-                      : "수정"
-                  : editing
-                    ? draftPhase
-                      ? "초안 저장"
-                      : "편집 끝내기"
-                    : "수정"}
-              </strong>
-            </p>
-          </div>
-          {!editing ? (
-            <div className="flex flex-wrap gap-2 border-t border-ink-100 px-3 py-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (isArchive) openArchiveTool("edit");
-                  else goBodyMode();
-                }}
-                title="보고서 글을 고칩니다"
-                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent px-3 text-sm font-medium text-white hover:opacity-95"
-              >
-                <Pencil className="h-4 w-4" />
-                수정
-              </button>
-            </div>
-          ) : null}
-          {editing && !reportToolsOpen ? (
-            <div className="flex flex-wrap gap-2 border-t border-ink-100 px-3 py-2">
-              <button
-                type="button"
-                onClick={cancelEdit}
-                disabled={saving}
-                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-ink-400"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onPointerDown={() => flushLiveEditorsToDraft()}
-                onClick={() => void saveReport()}
-                disabled={saving || rebuilding || savingSectionIdx !== null || autoSaveStatus === "saving"}
-                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
-              >
-                <Save className="h-4 w-4" />
-                {saving || autoSaveStatus === "saving"
-                  ? "저장 중…"
-                  : draftPhase
-                    ? "초안 저장"
-                    : "편집 끝내기"}
-              </button>
-            </div>
-          ) : null}
-          {reportToolsOpen ? (
-          <div className="flex flex-wrap gap-2 border-t border-ink-100 px-3 py-2">
-            {!isArchive ? (
-            <>
+        <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+          <h2 className="font-display text-lg sm:text-xl">
+            {draftPhase ? "2. 보고서 초안" : "2. 보고서"}
+          </h2>
+          <div className="flex flex-wrap gap-2">
             <a
               href="#cover"
               className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium hover:border-accent"
@@ -3144,8 +2807,6 @@ export function EditableReportPanel({
               <BookOpen className="h-4 w-4" />
               읽기 도구
             </button>
-            </>
-            ) : null}
             <button
               type="button"
               onClick={() => void copyDraftReport("report")}
@@ -3153,35 +2814,6 @@ export function EditableReportPanel({
             >
               <ClipboardCopy className="h-4 w-4" />
               {draftPhase ? "초안 전체 복사" : "보고서 복사"}
-            </button>
-            <button
-              type="button"
-              disabled={!draft}
-              onClick={() => {
-                const current = draftRef.current;
-                if (!current) return;
-                void downloadArchiveAppFile({ ...localVideo, report: current })
-                  .then(() => {
-                    setLocalVideo((prev) => ({
-                      ...prev,
-                      tags: Array.from(
-                        new Set([...(prev.tags ?? []), "app-file"])
-                      ),
-                    }));
-                  })
-                  .catch((e) => {
-                    alert(
-                      e instanceof Error
-                        ? e.message
-                        : "앱 파일을 저장하지 못했습니다."
-                    );
-                  });
-              }}
-              title="별표(★)가 붙은 앱 파일로 저장합니다"
-              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent-muted/50 px-3 text-sm font-medium text-ink-900 hover:border-accent disabled:opacity-50"
-            >
-              <AppFileMark size="sm" />
-              앱 파일 저장
             </button>
             <button
               type="button"
@@ -3193,7 +2825,7 @@ export function EditableReportPanel({
               <Trash2 className="h-4 w-4" />
               {draftPhase ? "초안 전체 삭제" : "본문 전체 삭제"}
             </button>
-            {hideFactCheck && !isArchive ? (
+            {hideFactCheck ? (
               <button
                 type="button"
                 onClick={() => void copyDraftReport("report")}
@@ -3202,7 +2834,7 @@ export function EditableReportPanel({
                 <ClipboardCopy className="h-4 w-4" />
                 전체 복사
               </button>
-            ) : hideFactCheck ? null : (
+            ) : (
               <button
                 type="button"
                 onClick={() => void copyDraftReport("all")}
@@ -3223,22 +2855,24 @@ export function EditableReportPanel({
                 요약+FC 전체 복사
               </button>
             )}
-            {isArchive ? (
+            {!editing && (
               <button
                 type="button"
-                title="제미나이 등에서 복사한 글로 본문 전체를 바꿉니다."
-                aria-pressed={editing && archiveTool === "paste"}
-                onClick={() => openArchiveTool("paste")}
-                className={
-                  editing && archiveTool === "paste"
-                    ? "inline-flex items-center gap-1.5 min-h-10 rounded-lg border-2 border-accent bg-accent px-3 text-sm font-medium text-white"
-                    : "inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-sm font-medium text-ink-900 hover:border-accent"
+                onClick={() => {
+                  goBodyMode();
+                  if (!urlArticle) setImportOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
+                title={
+                  urlArticle
+                    ? "본문 글을 고칩니다"
+                    : "본문 편집을 열고 붙여넣기 정리·분류 패널을 표시합니다"
                 }
               >
                 <ClipboardPaste className="h-4 w-4" />
-                {archiveFlowLabel("paste")}
+                보고서 편집
               </button>
-            ) : null}
+            )}
             {editing && (
               <>
                 <button
@@ -3251,7 +2885,6 @@ export function EditableReportPanel({
                 </button>
                 <button
                   type="button"
-                  onPointerDown={() => flushLiveEditorsToDraft()}
                   onClick={() => void saveReport()}
                   disabled={saving || rebuilding || savingSectionIdx !== null || autoSaveStatus === "saving"}
                   className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-accent/40 bg-accent text-white px-3 text-sm font-medium hover:opacity-95"
@@ -3266,13 +2899,10 @@ export function EditableReportPanel({
               </>
             )}
           </div>
-          ) : null}
         </div>
 
         <div
-          className={`flex flex-wrap gap-1 rounded-xl border border-ink-200 bg-ink-50 p-1 print:hidden ${
-            isPlainDoc ? "hidden" : ""
-          }`}
+          className="flex flex-wrap gap-1 rounded-xl border border-ink-200 bg-ink-50 p-1 print:hidden"
           role="tablist"
           aria-label="보고서 작업 모드"
         >
@@ -3347,11 +2977,6 @@ export function EditableReportPanel({
         {/* 인쇄·PDF용 보고서 표지 메타 */}
         <div className="print-only space-y-1 mb-6 pb-4 border-b border-ink-200">
           <h1 className="font-display text-xl text-ink-900">
-            {isAppFileItem(localVideo) ? (
-              <span className="mr-1.5 inline-flex align-middle">
-                <AppFileMark size="sm" />
-              </span>
-            ) : null}
             {reportDocumentTitle(localVideo)}
           </h1>
           <p className="text-sm">제목 · {draft.meta.title}</p>
@@ -3362,19 +2987,11 @@ export function EditableReportPanel({
 
         {editing && !urlArticle && (
           <p className="text-xs text-ink-500 print:hidden rounded-lg bg-ink-50 border border-ink-100 px-3 py-2 flex flex-wrap items-center gap-2">
-            {!isPlainDoc ? (
             <span>
               문장 끝에 <strong>S</strong> / <strong>s</strong> → 이미지 칸(S1…) →
               붙여넣기 또는 「이미지」.
-              그림은 눌러 선택한 뒤 삭제.
+              빈 칸·이미지는 ×로 삭제.
             </span>
-            ) : archiveTool === "paste" ? (
-              <span>긴 글을 붙여넣으면 문장을 정리하고 본문 전체가 바뀝니다.</span>
-            ) : archiveTool === "image" ? (
-              <span>본문에 이미지를 넣습니다.</span>
-            ) : (
-              <span>글을 고친 뒤 초안 저장을 누르세요.</span>
-            )}
             {autoSaveStatus === "pending" && (
               <span className="text-ink-400">저장 대기…</span>
             )}
@@ -3492,8 +3109,6 @@ export function EditableReportPanel({
               className="w-full rounded-lg border border-ink-200 bg-white px-2.5 py-1.5 text-sm text-ink-900 outline-none focus:border-accent"
             />
           </label>
-          {isArchive ? null : (
-            <>
           <p>
             <span className="text-ink-500">채널명</span> · {draft.meta.channel}
           </p>
@@ -3503,8 +3118,6 @@ export function EditableReportPanel({
           <p>
             <span className="text-ink-500">작성일자</span> · {draft.meta.writtenAt}
           </p>
-            </>
-          )}
         </div>
 
         {editing && (
@@ -3544,6 +3157,17 @@ export function EditableReportPanel({
                       <ChevronDown className="h-3.5 w-3.5" />
                     )}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportOpen((prev) => !prev);
+                      setMode("body");
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-muted/50 px-2.5 py-1 text-xs font-medium text-ink-900 hover:border-accent"
+                    title="제미나이 등에서 받은 보고서를 붙여 본문에 반영합니다"
+                  >
+                    9. 보고서 붙여넣기
+                  </button>
                 </div>
               </div>
               <div
@@ -3559,43 +3183,31 @@ export function EditableReportPanel({
                 onFontSize={applyFontSize}
                 onFontSizeStep={stepActiveFontSize}
                 onBold={() =>
-                  runFormatCommand(
-                    (ed) => {
-                      ed.chain().focus().toggleBold().run();
-                    },
-                    { richStyle: { bold: true } }
-                  )
+                  runFormatCommand((ed) => {
+                    ed.chain().focus().toggleBold().run();
+                  })
                 }
                 onUnderline={() =>
-                  runFormatCommand(
-                    (ed) => {
-                      ed.chain().focus().toggleUnderline().run();
-                    },
-                    { richStyle: { underline: true } }
-                  )
+                  runFormatCommand((ed) => {
+                    ed.chain().focus().toggleUnderline().run();
+                  })
                 }
                 onColor={(c) =>
-                  runFormatCommand(
-                    (ed) => {
-                      ed.chain().focus().setColor(c).run();
-                    },
-                    { richStyle: { color: c } }
-                  )
+                  runFormatCommand((ed) => {
+                    ed.chain().focus().setColor(c).run();
+                  })
                 }
                 onHighlight={(c) =>
-                  runFormatCommand(
-                    (ed) => {
-                      ed.chain().focus().setHighlight({ color: c }).run();
-                    },
-                    { richStyle: { backgroundColor: c } }
-                  )
+                  runFormatCommand((ed) => {
+                    ed.chain().focus().setHighlight({ color: c }).run();
+                  })
                 }
                 onInsertChar={(ch) =>
                   runFormatCommand(
                     (ed) => {
                       ed.chain().focus().insertContent(ch).run();
                     },
-                    { expandParagraph: false, insertText: ch }
+                    { expandParagraph: false }
                   )
                 }
                 onImage={() => {
@@ -3619,45 +3231,16 @@ export function EditableReportPanel({
                 }}
               />
               </div>
-              {isPlainDoc ? null : (
-              <p className="text-xs text-ink-600">
-                7. AI 붙여넣기 — 제미나이 등에서 복사한 글을 본문에 붙여넣으면 문장을 정리하고 본문 전체를 바꿉니다. 8. 이미지 룸은 남습니다.
-              </p>
-              )}
-              {pasteNotice ? (
-                <p className="text-xs text-ink-800" role="status">
-                  {pasteNotice}
-                </p>
-              ) : null}
               {imagePasteHint && (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                   {imagePasteHint}
                 </p>
               )}
-              <div
-                className={
-                  isArchive && archiveTool === "paste"
-                    ? "space-y-2 rounded-xl border-2 border-amber-400 bg-amber-50 p-3 ring-2 ring-amber-300"
-                    : isArchive || isPlainDoc
-                      ? "hidden"
-                      : "md:hidden space-y-1.5"
-                }
-              >
-                {isArchive ? (
-                  <>
-                    <p className="text-sm font-semibold text-ink-900">
-                      {archiveFlowLabel("paste")}
-                    </p>
-                    <p className="text-xs text-ink-700">
-                      제미나이 등에서 복사한 글을 아래 노란 칸에 붙여넣으세요.
-                    </p>
-                  </>
-                ) : (
-                <>
+              <div className="md:hidden space-y-1.5">
                 <p className="text-[11px] text-ink-500">
                   글자 색·굵기는 본문에서 글자 선택(또는 커서) 시{" "}
-                  <strong className="font-medium text-ink-700">화면 아래 서식 바</strong>
-                  로 적용. 글자 길게 누르면 복사·검색. 이미지·손글씨는 「도구」.
+                  <strong className="font-medium text-ink-700">근처 서식 바</strong>
+                  로 적용. 이미지·손글씨는 「도구」.
                 </p>
                 <p className="text-[11px] text-ink-500">
                   이미지: 문장 끝 <strong className="font-medium text-ink-700">S</strong>
@@ -3665,21 +3248,10 @@ export function EditableReportPanel({
                   <strong className="font-medium text-ink-700">붙여넣기</strong>
                   {" "}또는 본문 툴바 「이미지」
                 </p>
-                </>
-                )}
                 <textarea
-                  rows={isArchive ? 4 : 2}
-                  aria-label={isArchive ? archiveFlowLabel("paste") : "붙여넣기"}
-                  placeholder={
-                    isArchive
-                      ? "이 칸에 AI 글을 붙여넣으세요"
-                      : "여기를 길게 눌러 「붙여넣기」(글·사진)…"
-                  }
-                  className={
-                    isArchive
-                      ? "w-full rounded-lg border-2 border-amber-400 bg-white px-3 py-2.5 text-sm text-ink-800 outline-none focus:ring-2 focus:ring-amber-300"
-                      : "w-full rounded-lg border border-dashed border-accent/40 bg-accent-muted/20 px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent focus:bg-white"
-                  }
+                  rows={2}
+                  placeholder="여기를 길게 눌러 「붙여넣기」(글·사진)…"
+                  className="w-full rounded-lg border border-dashed border-accent/40 bg-accent-muted/20 px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent focus:bg-white"
                   onPaste={(e) => {
                     const files = extractImageFilesFromDataTransfer(
                       e.clipboardData
@@ -3718,18 +3290,140 @@ export function EditableReportPanel({
               </div>
             </div>
 
-            <div className="border-b border-ink-100 px-3 py-2">
-              <button
-                type="button"
-                onClick={() => tidyActiveSectionSpacing()}
-                className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700"
-                title="1. 제목 아래에 ● 라벨: 설명 으로 나눕니다"
-              >
-                문단 간격만 정리
-              </button>
-            </div>
+            {importOpen && (
+              <div className="border-b border-ink-100 bg-amber-50/40 px-3 py-3 space-y-2">
+                <p className="text-xs text-ink-700 leading-relaxed">
+                  <strong>9.</strong> 제미나이 보고서 붙여넣기 → 「본문에 반영」
+                  <br />
+                  그다음 <strong>10. 보고서 확정</strong>. 이미지 넣을 문장{" "}
+                  <strong>끝에 S</strong>.
+                </p>
+                <textarea
+                  value={importText}
+                  onChange={(e) => {
+                    setImportText(e.target.value);
+                    setOrganizeResult(null);
+                  }}
+                  rows={10}
+                  placeholder={
+                    "제미나이·ChatGPT 보고서 붙여넣기…\n\n예)\n## 결론\n…\n## 본문\n…"
+                  }
+                  className="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-800 outline-none focus:border-accent"
+                />
+                {organizeResult && (
+                  <div className="rounded-lg border border-amber-200 bg-white/80 px-3 py-2 space-y-2">
+                    <p className="text-xs text-ink-800">{organizeResult.summary}</p>
+                    <div className="flex flex-wrap gap-3 text-xs text-ink-700">
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.report}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              report: e.target.checked,
+                            }))
+                          }
+                        />
+                        본문
+                        {organizeResult.parts.reportSections ? "" : " (추정)"}
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.overview}
+                          disabled={!organizeResult.parts.overview}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              overview: e.target.checked,
+                            }))
+                          }
+                        />
+                        요약
+                        {!organizeResult.parts.overview ? " (없음)" : ""}
+                      </label>
+                      {!hideFactCheck && (
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={applyTargets.factcheck}
+                          disabled={!organizeResult.parts.factChecks}
+                          onChange={(e) =>
+                            setApplyTargets((p) => ({
+                              ...p,
+                              factcheck: e.target.checked,
+                            }))
+                          }
+                        />
+                        팩트체크
+                        {!organizeResult.parts.factChecks ? " (없음)" : ""}
+                      </label>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!importText.trim() || organizeBusy}
+                    onClick={() => void organizeAndApplyPaste()}
+                    className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {organizeBusy ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        반영 중…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5" />
+                        9. 본문에 반영
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!importText.trim() || organizeBusy}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          "기존 섹션 제목·본문을 지우고, 붙여넣은 ## 섹션으로 전체를 바꿀까요?\n(팩트체크·이미지룸은 유지)"
+                        )
+                      ) {
+                        return;
+                      }
+                      replaceReportBodiesFromImport();
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 disabled:opacity-50"
+                    title="## 섹션으로 본문만 통째로 교체"
+                  >
+                    전체 본문 교체
+                  </button>
+                  <button
+                    type="button"
+                    disabled={organizeBusy}
+                    onClick={() => tidyActiveSectionSpacing()}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700 disabled:opacity-50"
+                    title="이미 본문에 있는 글의 번호·문단 간격만 정리"
+                  >
+                    문단 간격만 정리
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportOpen(false);
+                      setImportText("");
+                      setOrganizeResult(null);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-ink-200 bg-white px-3 py-1.5 text-sm font-medium text-ink-700"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+            )}
 
-            {!isPlainDoc && (
             <div className="border-b border-ink-100 bg-ink-50/60 px-3 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <p className="text-xs font-medium text-ink-700">
@@ -3844,11 +3538,10 @@ export function EditableReportPanel({
                 </p>
               )}
             </div>
-            )}
             </>
             )}
 
-            <div className="report-edit-surface px-4 pt-4 pb-20 sm:px-5 sm:pt-5 md:pb-5 report-body report-body-plain text-sm text-ink-800 leading-relaxed">
+            <div className="p-4 sm:p-5 report-body report-body-plain text-sm text-ink-800 leading-relaxed">
               {draft.sections.map((sec, idx) => {
                 const sectionMarkers = markers.filter(
                   (m) => m.sectionIdx === idx
@@ -3860,29 +3553,6 @@ export function EditableReportPanel({
                     className="report-section-plain space-y-1"
                     onFocusCapture={() => setActiveSectionIdx(idx)}
                   >
-                    {isPlainDoc &&
-                    (isGenericSectionHeading(sec.heading || "") ||
-                      headingLooksLikeBody(sec.heading || "")) ? null : isPlainDoc ? (
-                      <input
-                        data-plain-heading={idx}
-                        value={sec.heading || ""}
-                        placeholder="소제목"
-                        onFocus={() => setActiveSectionIdx(idx)}
-                        onChange={(e) => {
-                          const nextHeading = e.target.value;
-                          updateDraft((prev) => {
-                            const cur = prev.sections[idx];
-                            if (!cur || (cur.heading || "") === nextHeading) {
-                              return prev;
-                            }
-                            const sections = [...prev.sections];
-                            sections[idx] = { ...cur, heading: nextHeading };
-                            return { ...prev, sections };
-                          }, { history: "debounced" });
-                        }}
-                        className="report-edit-heading mt-5 first:mt-0 w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-[1.05em] font-semibold text-ink-900 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                      />
-                    ) : (
                     <div
                       className="report-edit-heading mt-5 first:mt-0 [&_.ProseMirror]:min-h-[1.6em] [&_.ProseMirror]:font-semibold [&_.ProseMirror]:text-[1.05em] [&_.ProseMirror]:leading-snug"
                       onFocusCapture={() => setActiveSectionIdx(idx)}
@@ -3914,40 +3584,30 @@ export function EditableReportPanel({
                         }}
                       />
                     </div>
-                    )}
                     <RichTextEditor
                       key={`body-${sectionEditKey(sec, idx)}`}
                       value={sec.body || ""}
-                      sectionIdx={idx}
-                      toolbarMode="full"
-                      plainMode={false}
-                      hideHelp={false}
-                      plainSlotUrls={[]}
-                      placeholder={
-                        isArchive && archiveTool !== "image"
-                          ? "본문을 입력하거나 고치세요."
-                          : "본문을 입력하세요. 문장 끝에 S / s → 이미지 칸"
-                      }
-                      minHeightClass="min-h-[24rem]"
+                      placeholder="본문을 입력하세요. 문장 끝에 S / s → 이미지 칸"
+                      minHeightClass="min-h-[8rem]"
                       onUploadImages={uploadSectionImages}
                       onChange={(html) => {
                         updateDraft((prev) => {
                           const cur = prev.sections[idx];
                           if (!cur || cur.body === html) return prev;
                           const srcs = collectInlineBodyImageSrcs(html);
-                          const bound = bindSectionSlotUrls(
-                            cur,
-                            prev.imageRoom,
-                            srcs,
-                            { body: html, rich: true }
-                          );
+                          const room = srcs.length
+                            ? upsertRoomUrls(prev.imageRoom, srcs).room
+                            : prev.imageRoom;
                           const sections = [...prev.sections];
-                          sections[idx] = bound.section;
-                          return {
-                            ...prev,
-                            sections,
-                            imageRoom: bound.room,
+                          sections[idx] = {
+                            ...cur,
+                            body: html,
+                            rich: true,
+                            imageRefs: undefined,
+                            images: undefined,
+                            imageUrl: undefined,
                           };
+                          return { ...prev, sections, imageRoom: room };
                         }, { history: "debounced" });
                       }}
                     />
@@ -3997,12 +3657,12 @@ export function EditableReportPanel({
               })}
             </div>
 
-            {!urlArticle && !isPlainDoc && (
+            {!urlArticle && (
             <div className="border-t border-ink-100 p-3">
               <div className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-700">
                 문장 끝에 <strong>S</strong> / <strong>s</strong>를 입력하면 이미지
                 칸(S1…)이 생깁니다.
-                붙여넣기 또는 「이미지」로 넣고, 그림은 눌러 선택한 뒤 삭제하세요.
+                붙여넣기 또는 「이미지」로 넣고, 빈 칸·이미지는 ×로 삭제하세요.
               </div>
             </div>
             )}
@@ -4018,37 +3678,32 @@ export function EditableReportPanel({
             onClick={onBodyClick}
           >
             {draft.sections.map((sec, idx) => {
-              const heading = (sec.heading || "").trim();
-              const headingIsBody = headingLooksLikeBody(heading);
-              const hideHeading =
-                headingIsBody || isGenericSectionHeading(heading);
               const { html: markedHtml } = sectionBodyWithMarkers(
                 sec,
                 idx,
                 markers
               );
-              const source = headingIsBody
-                ? `${heading}${markedHtml}`
-                : markedHtml;
-              let prior = 0;
-              for (let i = 0; i < idx; i += 1) {
-                prior += countTrailingSMarkers(draft.sections[i]?.body || "");
-              }
-              const mergedView = prepareInlineBodyForView(
-                visualBodyHtml(
-                  { ...sec, heading, body: source },
-                  draft.imageRoom,
-                  prior,
-                ),
-              );
-              const bodyHtml = (mergedView || "").trim();
+              const viewHtml = bodyUsesInlineRichImages(sec.body || "")
+                ? prepareInlineBodyForView(markedHtml)
+                : htmlWithSImages(
+                    markedHtml,
+                    slotUrlsForSection(
+                      sec,
+                      sectionSlotCapacity(
+                        sec,
+                        countTrailingSMarkers(sec.body || "")
+                      )
+                    )
+                  );
+              const heading = (sec.heading || "").trim();
+              const bodyHtml = (viewHtml || "").trim();
               if (!heading && !bodyHtml) return null;
               return (
                 <div
                   key={`${sec.heading}-${idx}`}
                   className="report-section-plain"
                 >
-                  {heading && !hideHeading ? (
+                  {heading ? (
                     <h3
                       className="report-plain-heading font-semibold text-ink-900 mt-5 mb-2 first:mt-0"
                       dangerouslySetInnerHTML={{
@@ -4059,7 +3714,7 @@ export function EditableReportPanel({
                   {bodyHtml ? (
                     <div
                       className="rich-view"
-                      dangerouslySetInnerHTML={{ __html: mergedView }}
+                      dangerouslySetInnerHTML={{ __html: viewHtml }}
                     />
                   ) : null}
                 </div>
@@ -4220,20 +3875,14 @@ export function EditableReportPanel({
         <MobileFormatBubble
           active
           onBold={() =>
-            runFormatCommand(
-              (ed) => {
-                ed.chain().focus().toggleBold().run();
-              },
-              { richStyle: { bold: true } }
-            )
+            runFormatCommand((ed) => {
+              ed.chain().focus().toggleBold().run();
+            })
           }
           onUnderline={() =>
-            runFormatCommand(
-              (ed) => {
-                ed.chain().focus().toggleUnderline().run();
-              },
-              { richStyle: { underline: true } }
-            )
+            runFormatCommand((ed) => {
+              ed.chain().focus().toggleUnderline().run();
+            })
           }
           onFontSizeStep={stepActiveFontSize}
           onInsertChar={(ch) =>
@@ -4241,24 +3890,18 @@ export function EditableReportPanel({
               (ed) => {
                 ed.chain().focus().insertContent(ch).run();
               },
-              { expandParagraph: false, insertText: ch }
+              { expandParagraph: false }
             )
           }
           onColor={(c) =>
-            runFormatCommand(
-              (ed) => {
-                ed.chain().focus().setColor(c).run();
-              },
-              { richStyle: { color: c } }
-            )
+            runFormatCommand((ed) => {
+              ed.chain().focus().setColor(c).run();
+            })
           }
           onHighlight={(c) =>
-            runFormatCommand(
-              (ed) => {
-                ed.chain().focus().setHighlight({ color: c }).run();
-              },
-              { richStyle: { backgroundColor: c } }
-            )
+            runFormatCommand((ed) => {
+              ed.chain().focus().setHighlight({ color: c }).run();
+            })
           }
         />
       )}

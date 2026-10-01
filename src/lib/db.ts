@@ -69,14 +69,6 @@ export async function ensureSchema(): Promise<void> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `;
-      await db`
-        CREATE TABLE IF NOT EXISTS app_file_index (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          input_mode TEXT NOT NULL,
-          imported_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-      `;
     })().catch((e) => {
       schemaReady = null;
       throw e;

@@ -1,10 +1,12 @@
 import { collectFcMarkers, sectionBodyWithMarkers } from "@/lib/fc-markers";
-import { headingLooksLikeBody } from "@/lib/report";
 import {
   countTrailingSMarkers,
   htmlWithSImages,
 } from "@/lib/report-body-s-slots";
-import { prepareInlineBodyForView } from "@/lib/report-inline-images";
+import {
+  bodyUsesInlineRichImages,
+  prepareInlineBodyForView,
+} from "@/lib/report-inline-images";
 import {
   orderedSlotUrls,
   sectionSlotCapacity,
@@ -34,32 +36,21 @@ export function buildSectionViewHtml(
     markers
   );
 
-  const heading = sec.heading || "";
-  const headingIsBody = headingLooksLikeBody(heading);
-  const source = headingIsBody ? `${heading}${markedHtml}` : markedHtml;
-
-  const reflowed = prepareInlineBodyForView(source);
-  const slotCount = sectionSlotCapacity(
-    sec,
-    Math.max(
-      countTrailingSMarkers(sec.body || ""),
-      countTrailingSMarkers(source),
-      countTrailingSMarkers(reflowed)
-    )
-  );
-  let priorSlots = 0;
-  for (let i = 0; i < sectionIdx; i += 1) {
-    priorSlots += countTrailingSMarkers(report.sections[i]?.body || "");
+  if (bodyUsesInlineRichImages(sec.body || "")) {
+    return {
+      html: prepareInlineBodyForView(markedHtml),
+      unmatchedCount: unmatched.length,
+    };
   }
-  const slotUrls = /<img\b/i.test(reflowed)
-    ? []
-    : orderedSlotUrls(sec, undefined, slotCount);
-  const bodyHtml =
-    slotUrls.some(Boolean) || countTrailingSMarkers(reflowed) > 0
-      ? htmlWithSImages(reflowed, slotUrls, priorSlots)
-      : reflowed;
+
+  const sSlotCount = countTrailingSMarkers(sec.body || "");
+  const slotUrls = sectionViewSlotUrls(
+    sec,
+    report.imageRoom,
+    sectionSlotCapacity(sec, sSlotCount)
+  );
   return {
-    html: bodyHtml,
+    html: htmlWithSImages(markedHtml, slotUrls),
     unmatchedCount: unmatched.length,
   };
 }

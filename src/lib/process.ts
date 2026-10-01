@@ -14,7 +14,7 @@ import { isUrlArticleInput, reportThumbnailUrl, withUrlArticleTag } from "./inpu
 import { URL_ARTICLE_REPORT_NOTICE } from "./url-article-report";
 import { getVideo, upsertVideo } from "./store";
 import { fetchTranscript } from "./transcript";
-import { REPORT_TYPE_LABELS, type ReportType, type SummaryItem, type VideoRecord } from "./types";
+import type { ReportType, SummaryItem, VideoRecord } from "./types";
 import {
   extractVideoId,
   fetchYoutubeMeta,
@@ -24,9 +24,6 @@ import {
   type YoutubeMeta,
 } from "./youtube";
 import { hasUsablePastedScript, normalizePastedText } from "./paste";
-import { APP_FILE_TAG, parseArchiveAppFile } from "./archive-app-file";
-import { recordAppFileImport } from "./app-file-catalog";
-import { plainTextToHtml, reportBodyPlain } from "./report";
 
 function withoutFactCheckTargets(items: SummaryItem[]): SummaryItem[] {
   return items.map((item) => ({ ...item, needsFactCheck: false }));
@@ -57,7 +54,7 @@ export async function createManualOverviewJob(
     transcript: script,
     transcriptSource: "pasted",
     scriptNotice:
-      "자막을 준비했습니다. 「2. 수동 요약」에 요약을 붙여 넣고 저장한 뒤, 보고서로 가세요.",
+      "자막을 준비했습니다. 「1. 유튜브 내용 요약」에 외부 AI 요약을 붙여 넣고 저장한 뒤, 보고서는 외부 AI로 작성·반영하세요.",
     overview: "",
     summarySource: "none",
     summaryBullets: [],
@@ -212,8 +209,8 @@ async function openReportManualOverview(
         : "pasted"
       : "none",
     scriptNotice: script
-      ? `스크립트가 짧아(${script.length.toLocaleString()}자) 자동 요약 대신 수동 요약으로 시작합니다. 「2. 수동 요약」에 입력한 뒤 완료를 누르세요.`
-      : "스크립트 없이 시작합니다. 「2. 수동 요약」에 요약을 입력한 뒤 완료를 누르세요.",
+      ? `스크립트가 짧아(${script.length.toLocaleString()}자) 자동 요약 대신 수동 요약으로 시작합니다. 「1. 내용 요약」에 입력한 뒤 완료를 누르세요.`
+      : "스크립트 없이 시작합니다. 「1. 내용 요약」에 수동으로 요약을 입력한 뒤 완료를 누르세요.",
     overview: "",
     summarySource: "none",
     summaryBullets: [],
@@ -248,7 +245,6 @@ export async function saveReportInputDraft(opts: {
   thumbnailUrl?: string;
   sourceUrl?: string;
   articleImages?: string[];
-  inputBodyHtml?: string;
 }): Promise<VideoRecord> {
   const title = opts.title.trim();
   if (title.length < 2) {
@@ -258,12 +254,9 @@ export async function saveReportInputDraft(opts: {
   const script = normalizePastedText(opts.pastedScript ?? "");
   const sourceUrl = opts.sourceUrl?.trim() || undefined;
   const articleImages = (opts.articleImages ?? []).filter(Boolean);
-  const inputBodyHtml = opts.inputBodyHtml?.trim() || undefined;
-  const instagram = Boolean(sourceUrl && /instagram\.com/i.test(sourceUrl));
-  const fromWeb = Boolean(sourceUrl) && !instagram;
+  const fromWeb = Boolean(sourceUrl);
   const channel =
-    opts.channel?.trim() ||
-    (instagram ? "인스타" : fromWeb ? "웹 기사" : "직접 입력");
+    opts.channel?.trim() || (fromWeb ? "웹 기사" : "직접 입력");
   const description = opts.creatorNotes?.trim() ?? "";
   const chapters = description
     ? parseChaptersFromDescription(description)
@@ -306,7 +299,6 @@ export async function saveReportInputDraft(opts: {
           ? "web"
           : "pasted"
         : "none",
-      inputBodyHtml,
       scriptNotice,
       thumbnailUrl: opts.thumbnailUrl?.trim() || existing.thumbnailUrl,
       tags: Array.from(
@@ -339,7 +331,6 @@ export async function saveReportInputDraft(opts: {
     chapters,
     transcript: script,
     transcriptSource: script ? (fromWeb ? "web" : "pasted") : "none",
-    inputBodyHtml,
     scriptNotice,
     overview: "",
     summarySource: "none",
@@ -363,67 +354,6 @@ export async function saveReportInputDraft(opts: {
   return record;
 }
 
-const ARCHIVE_REPORT_NOTICE =
-  "4. 임시 저장한 글이 5. 보고서 본문입니다. 6. AI 글을 붙여넣으면 정리 후 전체가 바뀌고, 7. 본문을 다듬습니다. 8. 이미지는 선택입니다. 9. 완료 후 표지·태그를 넣고 10. 조회·PDF·공유·인포가 열립니다.";
-
-/** 정보 보관소: 주소 유무와 관계없이 저장한 글을 보고서 본문으로 연다. */
-async function openArchiveReport(
-  record: VideoRecord,
-  script: string
-): Promise<VideoRecord> {
-  const html = (record.inputBodyHtml || "").trim();
-  const body = html || (script ? plainTextToHtml(script) : "<p></p>");
-  const plain = reportBodyPlain(body, true).trim();
-  const reportType = record.reportType || "C";
-  const writtenAt = new Date().toLocaleString("ko-KR");
-  const next: VideoRecord = {
-    ...record,
-    transcript: script,
-    transcriptSource: script ? "pasted" : "none",
-    overview: plain.slice(0, 400),
-    summarySource: plain ? "manual" : "none",
-    skipFactCheck: true,
-    factCheckDecision: "pass",
-    status: "awaiting_factcheck",
-    errorMessage: undefined,
-    scriptNotice: plain
-      ? `입력한 글 ${plain.length.toLocaleString()}자를 보고서 본문으로 넣었습니다.`
-      : "입력한 글을 보고서 본문으로 열었습니다.",
-    reportWriteNotice: ARCHIVE_REPORT_NOTICE,
-    reportSource: "assembled",
-    reportSkeletonEdited: true,
-    pendingReportFinalize: "keep_body",
-    tags: record.tags.filter((t) => t !== "url-article"),
-    report: {
-      meta: {
-        title: record.title,
-        channel: record.channel,
-        url: record.sourceUrl?.trim() || "정보 보관소 (직접 입력)",
-        writtenAt,
-      },
-      reportType,
-      reportTypeLabel: REPORT_TYPE_LABELS[reportType] || "일반 보고서",
-      format: "general_v5",
-      sections: [
-        {
-          sectionId: record.report?.sections[0]?.sectionId || "sec-archive-body",
-          heading: "본문",
-          body,
-          rich: true,
-        },
-      ],
-      summaryExcerpt: plain.slice(0, 280),
-      imageRoom: record.report?.imageRoom ?? [],
-      factChecks: record.report?.factChecks ?? [],
-    },
-    updatedAt: new Date().toISOString(),
-  };
-  if (next.report) {
-    next.report = withArticleImages(next.report, record);
-  }
-  return upsertVideo(next);
-}
-
 /** 입력 임시 저장 → 요약·팩트체크 파이프라인 시작 */
 export async function startReportFromDraft(
   id: string,
@@ -439,9 +369,6 @@ export async function startReportFromDraft(
   }
 
   const script = normalizePastedText(existing.transcript ?? "");
-  if (existing.inputMode === "report") {
-    return openArchiveReport(existing, script);
-  }
   const fromWeb = Boolean(existing.sourceUrl?.trim());
   if (fromWeb) {
     const updated: VideoRecord = {
@@ -723,8 +650,8 @@ export async function runVideoPipeline(
         status: "awaiting_factcheck",
         errorMessage: undefined,
         scriptNotice: isReport
-          ? `AI 자동 요약에 실패했습니다 (${message}). 「2. 수동 요약」에서 입력한 뒤 완료를 눌러 주세요.`
-          : `AI 자동 요약에 실패했습니다 (${message}). 「2. 수동 요약」에서 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다.`,
+          ? `AI 자동 요약에 실패했습니다 (${message}). 「1. 내용 요약」에서 수동으로 입력한 뒤 완료를 눌러 주세요.`
+          : `AI 자동 요약에 실패했습니다 (${message}). 「1. 유튜브 내용 요약」에서 수동으로 입력한 뒤 완료를 누르면 바로 보고서를 만듭니다.`,
         tags: Array.from(new Set([...record.tags, "fc-pass"])),
         updatedAt: new Date().toISOString(),
       };
@@ -975,84 +902,6 @@ export async function prepareReprocess(
   };
   await upsertVideo(reset);
   return { video: reset, script, creatorNotes };
-}
-
-/** 앱 파일(★ .yfc)을 유튜브 또는 정보 보관소 새 항목으로 불러온다 */
-export async function importArchiveAppFile(raw: unknown): Promise<VideoRecord> {
-  const file = parseArchiveAppFile(raw);
-  const src = file.video;
-  const id = uuid();
-  const now = new Date().toISOString();
-  const youtubeUrl = (src.youtubeUrl || "").trim();
-  const ytId = youtubeUrl ? extractVideoId(youtubeUrl) : null;
-  const isYoutube = src.inputMode === "youtube" || Boolean(ytId);
-  const hasReport = Boolean(src.report);
-  const status: VideoRecord["status"] =
-    src.status === "ready" && hasReport
-      ? "ready"
-      : hasReport
-        ? "awaiting_factcheck"
-        : isYoutube
-          ? "awaiting_factcheck"
-          : "report_input_draft";
-  const record: VideoRecord = {
-    id,
-    inputMode: isYoutube ? "youtube" : "report",
-    youtubeUrl: isYoutube ? youtubeUrl || (ytId ? `https://www.youtube.com/watch?v=${ytId}` : "") : "",
-    sourceUrl: isYoutube ? undefined : src.sourceUrl,
-    inputBodyHtml: isYoutube ? undefined : src.inputBodyHtml,
-    articleImages: isYoutube ? undefined : src.articleImages,
-    videoId: isYoutube
-      ? ytId || `yt-${id.replace(/-/g, "").slice(0, 11)}`
-      : `report-${id.replace(/-/g, "").slice(0, 11)}`,
-    title: src.title,
-    channel: src.channel || (isYoutube ? "YouTube" : "직접 입력"),
-    thumbnailUrl:
-      src.thumbnailUrl?.trim() ||
-      (isYoutube && ytId ? thumbnailUrl(ytId) : reportThumbnailUrl()),
-    publishedAt: src.publishedAt,
-    description: src.description || "",
-    chapters: src.chapters || [],
-    transcript: src.transcript || "",
-    transcriptSource: src.transcriptSource || "none",
-    skipFactCheck: src.skipFactCheck !== false,
-    factCheckDecision: src.factCheckDecision || "pass",
-    scriptNotice: src.scriptNotice || "앱 파일에서 불러왔습니다.",
-    overview: src.overview || "",
-    summarySource: src.summarySource || (src.overview ? "manual" : "none"),
-    summaryBullets: src.summaryBullets || [],
-    items: src.items || [],
-    factChecks: src.factChecks || [],
-    reportType: src.reportType || "C",
-    report: src.report ?? null,
-    reportSource: src.reportSource,
-    reportWriteNotice: src.reportWriteNotice,
-    reportSkeletonEdited: hasReport,
-    pendingReportFinalize: hasReport ? "keep_body" : null,
-    infographic: null,
-    status,
-    tags: Array.from(
-      new Set([
-        ...(src.tags || []).filter((t) =>
-          isYoutube ? t !== "report" && t !== "url-article" : t !== "url-article"
-        ),
-        APP_FILE_TAG,
-        "fc-pass",
-        ...(isYoutube ? ["youtube"] : ["report"]),
-      ])
-    ),
-    userTags: src.userTags,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const saved = await upsertVideo(record);
-  await recordAppFileImport({
-    id: saved.id,
-    title: saved.title,
-    inputMode: saved.inputMode === "youtube" ? "youtube" : "report",
-    importedAt: saved.createdAt,
-  });
-  return saved;
 }
 
 function normalizeUrl(videoId: string, original: string) {

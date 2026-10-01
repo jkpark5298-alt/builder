@@ -1119,20 +1119,6 @@ export function replaceAllReportBodies(
 const GENERIC_SECTION_HEADING =
   /^(본문|새 소주제|핵심 설명|섹션\s*\d*|보고서)$/i;
 
-export function isGenericSectionHeading(heading: string): boolean {
-  return GENERIC_SECTION_HEADING.test(String(heading || "").trim());
-}
-
-/** 제목 칸에 본문 HTML·긴 글이 들어간 경우 */
-export function headingLooksLikeBody(heading: string): boolean {
-  const h = String(heading || "").trim();
-  if (!h) return false;
-  if ((h.match(/<p\b/gi) || []).length >= 2) return true;
-  if (h.length > 160 && /<[a-z][\s\S]*>|&lt;\/?[a-z]/i.test(h)) return true;
-  if (h.length > 80 && /<\/?(?:p|span|div|br)\b/i.test(h)) return true;
-  return false;
-}
-
 /**
  * 여러 섹션을 하나의 연속 본문으로 합칩니다.
  * 제목은 본문 안 굵은 문단으로 넣고, 이미지·FC 연결은 순서대로 이어 붙입니다.
@@ -1143,19 +1129,6 @@ export function mergeReportSectionsToSingleBody(
   if (report.sections.length <= 1) {
     const only = report.sections[0];
     if (!only) return report;
-    if (headingLooksLikeBody(only.heading || "")) {
-      return {
-        ...report,
-        sections: [
-          {
-            ...only,
-            heading: "본문",
-            body: `${only.heading || ""}${only.body || ""}`,
-            rich: true,
-          },
-        ],
-      };
-    }
     if (only.heading && !GENERIC_SECTION_HEADING.test(only.heading.trim())) {
       return report;
     }
@@ -1184,13 +1157,7 @@ export function mergeReportSectionsToSingleBody(
       !!heading &&
       !GENERIC_SECTION_HEADING.test(heading) &&
       bodyPlainStart.includes(heading.slice(0, Math.min(heading.length, 20)));
-    if (headingLooksLikeBody(heading)) {
-      htmlParts.push(heading);
-    } else if (
-      heading &&
-      !GENERIC_SECTION_HEADING.test(heading) &&
-      !headingAlreadyInBody
-    ) {
+    if (heading && !GENERIC_SECTION_HEADING.test(heading) && !headingAlreadyInBody) {
       htmlParts.push(`<p><strong>${escapeHtml(heading)}</strong></p>`);
     }
     if (body) htmlParts.push(body);

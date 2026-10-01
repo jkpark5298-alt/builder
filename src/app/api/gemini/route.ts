@@ -8,25 +8,15 @@ const UPSTREAM = "https://iphone-calendar-2026.vercel.app/api/gemini";
 
 type GeminiAction = "summarize" | "fact-check";
 
-function geminiToken() {
-  return (
-    process.env.APP_API_TOKEN?.trim() ||
-    process.env.GEMINI_API_TOKEN?.trim() ||
-    ""
-  );
-}
-
-/** 토큰 유무만 알립니다. 값은 보내지 않습니다. */
-export async function GET() {
-  return NextResponse.json({ available: Boolean(geminiToken()) });
-}
-
 /**
  * Browser → this app (same origin) → upstream Gemini helper.
  * Avoids CORS and keeps the bearer token server-side.
  */
 export async function POST(req: Request) {
-  const token = geminiToken();
+  const token =
+    process.env.APP_API_TOKEN?.trim() ||
+    process.env.GEMINI_API_TOKEN?.trim() ||
+    "";
 
   if (!token) {
     return NextResponse.json(

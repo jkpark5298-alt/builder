@@ -163,7 +163,7 @@ export function UrlPasteForm() {
       return;
     }
     setLoading(true);
-    setStatus("2. 수동 요약을 여는 중…");
+    setStatus("요약 화면으로 여는 중…");
     try {
       const res = await fetch("/api/videos", {
         method: "POST",
@@ -265,7 +265,7 @@ export function UrlPasteForm() {
       }
 
       cacheVideoSnapshot(data.video);
-      setStatus("완료. 2. 수동 요약으로 이동합니다…");
+      setStatus("완료. 요약 화면으로 이동합니다…");
       goToVideo(data.video.id);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -723,7 +723,7 @@ export function UrlPasteForm() {
               여는 중…
             </>
           ) : hasScript ? (
-            flowLabel("openSummary", "수동 요약으로 (직접 붙이기)")
+            flowLabel("openSummary", "요약 화면으로 (AI 요약 붙여넣기)")
           ) : step1Done ? (
             `먼저 ${flowLabel("fetchScript")}`
           ) : (

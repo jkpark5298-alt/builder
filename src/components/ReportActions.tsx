@@ -4,7 +4,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronDown,
-  ChevronUp,
   ClipboardCopy,
   Eye,
   FileDown,
@@ -37,7 +36,6 @@ import {
   formatReportWithFactChecksText,
 } from "@/lib/report";
 import { buildInfDocxFileName, buildInfPdfFileName } from "@/lib/pdf-filename";
-import { ArchiveAppFileSaveButton } from "@/components/ArchiveAppFileButtons";
 import { isIosLikeDevice } from "@/lib/device";
 
 type ActionGroup = "view" | "copy" | "export" | "share";
@@ -72,8 +70,9 @@ export function ReportActions({
   const router = useRouter();
   const ready = canExportArtifacts(video);
   const coverInputRef = useRef<HTMLInputElement>(null);
-  const [openGroup, setOpenGroup] = useState<ActionGroup | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [openGroup, setOpenGroup] = useState<ActionGroup | null>(
+    compact ? null : "view"
+  );
   const [sharing, setSharing] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -465,14 +464,22 @@ export function ReportActions({
     label: string;
     show: boolean;
   }> = [
-    { id: "view", label: "보기", show: true },
+    { id: "view", label: "보기·편집", show: true },
     { id: "copy", label: "텍스트 복사", show: true },
     { id: "export", label: iosLike ? "PDF·Word·Pages" : "PDF·Word·인쇄", show: true },
     { id: "share", label: "공유", show: true },
   ];
 
-  const tools = (
-    <>
+  return (
+    <div className={`space-y-2 ${compact ? "" : "w-full"}`}>
+      <input
+        ref={coverInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => void onCoverPick(e.target.files)}
+      />
+
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="보고서 작업">
         {groups
           .filter((g) => g.show)
@@ -531,16 +538,14 @@ export function ReportActions({
             <Eye className="h-3.5 w-3.5 shrink-0" />
             보기
           </a>
-          {!includeManage ? (
-            <button
-              type="button"
-              onClick={startEdit}
-              className={`${btn} ${enabled}`}
-            >
-              <Pencil className="h-3.5 w-3.5 shrink-0" />
-              수정
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={startEdit}
+            className={`${btn} ${enabled}`}
+          >
+            <Pencil className="h-3.5 w-3.5 shrink-0" />
+            본문
+          </button>
           {!hideFactCheck && (
             <button
               type="button"
@@ -610,10 +615,6 @@ export function ReportActions({
               )}
               {pdfBusy ? "PDF 만드는 중…" : "PDF 저장"}
             </button>
-            <ArchiveAppFileSaveButton
-              video={video}
-              className={`${btn} ${primary}`}
-            />
             <button
               type="button"
               disabled={docxBusy !== null}
@@ -711,57 +712,6 @@ export function ReportActions({
             </>
           )}
         </div>
-      )}
-    </>
-  );
-
-  return (
-    <div className={`${compact ? "" : "w-full"}`}>
-      <input
-        ref={coverInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => void onCoverPick(e.target.files)}
-      />
-      {includeManage && !compact ? (
-        <div className="rounded-xl border border-ink-200 bg-white">
-          <button
-            type="button"
-            onClick={() => setSheetOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
-            aria-expanded={sheetOpen}
-          >
-            <span className="text-sm font-semibold text-ink-900">보고서</span>
-            {sheetOpen ? (
-              <ChevronUp className="h-4 w-4 text-ink-500" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-ink-500" />
-            )}
-          </button>
-          <div className="grid grid-cols-2 gap-2 border-t border-ink-100 px-3 py-2 text-xs">
-            <p>
-              <span className="text-ink-500">현재</span>{" "}
-              <a
-                href={viewHref}
-                className="font-semibold text-ink-900 underline-offset-2 hover:underline"
-              >
-                보기
-              </a>
-            </p>
-            <p>
-              <span className="text-ink-500">다음</span>{" "}
-              <strong className="font-semibold text-ink-900">PDF 저장</strong>
-            </p>
-          </div>
-          {sheetOpen ? (
-            <div className="space-y-2 border-t border-ink-100 px-3 py-2">
-              {tools}
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="space-y-2">{tools}</div>
       )}
     </div>
   );

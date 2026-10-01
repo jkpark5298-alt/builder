@@ -4,7 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 /**
- * 수동 요약 단계 패널.
+ * 1. 요약 단계 패널.
  * 보고서가 있으면 기본으로 접어 두고, 필요할 때만 펼칩니다.
  */
 export function CollapsibleSummaryStep({
@@ -30,7 +30,7 @@ export function CollapsibleSummaryStep({
         className="flex w-full items-center justify-between gap-3 bg-accent px-4 sm:px-5 py-3.5 text-left"
       >
         <h2 className="font-display text-xl sm:text-2xl text-white">
-          {title}
+          1. {title}
         </h2>
         <span className="flex shrink-0 items-center gap-1.5 text-sm text-white/90">
           {open ? "접기" : "펼치기"}

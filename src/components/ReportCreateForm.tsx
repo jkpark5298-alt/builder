@@ -1,246 +1,166 @@
 "use client";
 
-import { ClipboardPaste, Loader2, Save } from "lucide-react";
+import {
+  Check,
+  ClipboardPaste,
+  FileText,
+  ImagePlus,
+  Loader2,
+  Save,
+  X,
+} from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { VideoRecord } from "@/lib/types";
-import { RichTextEditor } from "@/components/RichTextEditor";
+import { hasUsablePastedScript, normalizePastedText } from "@/lib/paste";
+import { reportThumbnailUrl } from "@/lib/input-mode";
+import { compressImageFiles } from "@/lib/image-client";
+import { uploadDataUrls } from "@/lib/media-upload-client";
 import { cacheVideoSnapshot } from "./VideoNotFoundRecovery";
-import {
-  archiveDateLabel,
-  plainForArchive,
-  tempTitleFromPlain,
-} from "@/lib/archive-input";
-import { ARCHIVE_FLOW, archiveFlowLabel } from "@/lib/flow-steps";
-import { copyTextToClipboard } from "@/lib/clipboard";
-import { tidyReportPasteSpacing, normalizePastedText } from "@/lib/paste";
-import {
-  createInlineImage,
-  htmlToPlainText,
-  plainToHtml,
-} from "@/lib/rich-text";
 
-const LEAVE_EVENT = "yfc-archive-leave";
-const LEAVE_CONTINUE = "yfc-archive-leave-continue";
-
-type LeaveMode = "leave" | "report";
+const STORAGE_KEY = "yfc-report-form-v1";
+const POST_TIMEOUT_MS = 150_000;
 
 export type ReportFormValues = {
   title: string;
-  bodyHtml: string;
-  sourceUrl?: string;
+  channel: string;
+  creatorNotes: string;
+  pastedScript: string;
+  thumbnailUrl?: string;
 };
 
-function imageSrcs(html: string): string[] {
-  return [...html.matchAll(/<img\b[^>]*src=["']([^"']+)["']/gi)].map((m) => m[1]);
+function loadSaved(): Partial<ReportFormValues> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as Partial<ReportFormValues>) : {};
+  } catch {
+    return {};
+  }
 }
 
-function withSpacing(html: string): string {
-  const plain = plainForArchive(htmlToPlainText(html));
-  const tidied = tidyReportPasteSpacing(plain);
-  let next = plainToHtml(tidied);
-  if (typeof document === "undefined") return next;
-  for (const src of imageSrcs(html)) {
-    next += createInlineImage(src, "이미지").outerHTML;
+function saveForm(data: ReportFormValues) {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    /* quota */
   }
-  return next;
-}
-
-async function uploadImages(files: File[]): Promise<string[]> {
-  const urls: string[] = [];
-  for (const file of files) {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("prefix", "videos/archive");
-    const res = await fetch("/api/media/upload", { method: "POST", body: form });
-    const data = (await res.json().catch(() => ({}))) as {
-      url?: string;
-      error?: string;
-    };
-    if (!res.ok || !data.url) {
-      throw new Error(data.error || "이미지 업로드 실패");
-    }
-    urls.push(data.url);
-  }
-  return urls;
 }
 
 export function ReportCreateForm({
   draftId,
-  savedAt,
   initial,
 }: {
+  /** 서버 임시 저장 항목 ID — 있으면 PATCH로 이어쓰기 */
   draftId?: string;
-  savedAt?: string;
   initial?: Partial<ReportFormValues>;
 }) {
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const thumbInputRef = useRef<HTMLInputElement>(null);
   const [activeDraftId, setActiveDraftId] = useState(draftId);
   const [title, setTitle] = useState(initial?.title ?? "");
-  const [bodyHtml, setBodyHtml] = useState(initial?.bodyHtml ?? "");
-  const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
-  const [titleTouched, setTitleTouched] = useState(Boolean(initial?.title));
-  const [savedKey, setSavedKey] = useState("");
-  const [hydrated, setHydrated] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [metaBusy, setMetaBusy] = useState(false);
-  const [reportBusy, setReportBusy] = useState(false);
+  const [channel, setChannel] = useState(initial?.channel ?? "");
+  const [creatorNotes, setCreatorNotes] = useState(initial?.creatorNotes ?? "");
+  const [pastedScript, setPastedScript] = useState(initial?.pastedScript ?? "");
+  const [thumbnailUrl, setThumbnailUrl] = useState(
+    initial?.thumbnailUrl?.trim() || ""
+  );
+  const [thumbBusy, setThumbBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [urlWhenMeta, setUrlWhenMeta] = useState(
-    (initial?.sourceUrl ?? "").trim()
-  );
-  const [leaveOpen, setLeaveOpen] = useState(false);
-  const [leaveMode, setLeaveMode] = useState<LeaveMode>("leave");
-  const titleTouchedRef = useRef(titleTouched);
-  const dirtyRef = useRef(false);
-  const pendingHref = useRef<string | null>(null);
-  const router = useRouter();
-  titleTouchedRef.current = titleTouched;
-
-  function keyOf(next: { title: string; bodyHtml: string; sourceUrl: string }) {
-    return JSON.stringify({
-      title: next.title.trim(),
-      bodyHtml: next.bodyHtml,
-      sourceUrl: next.sourceUrl.trim(),
-    });
-  }
-
-  const currentKey = keyOf({ title, bodyHtml, sourceUrl });
-  const dirty = hydrated && currentKey !== savedKey;
-  dirtyRef.current = dirty;
-  const plain = plainForArchive(htmlToPlainText(bodyHtml));
-  const dateLabel = archiveDateLabel(savedAt);
-  const hasUrl = sourceUrl.trim().length > 0;
-  const hasContent = plain.trim().length > 0 || title.trim().length >= 2;
-  const needMeta = hasUrl && urlWhenMeta !== sourceUrl.trim();
-  const nextStep: "input" | "meta" | "save" | "report" = !hasContent
-    ? "input"
-    : needMeta
-      ? "meta"
-      : dirty || !activeDraftId
-        ? "save"
-        : "report";
-  const visibleSteps = ARCHIVE_FLOW.filter((s) => {
-    if (s.id === "instagram" || s.id === "meta") return hasUrl;
-    if (s.n >= 6) return false;
-    return true;
-  });
-  const nextBox =
-    "rounded-2xl border-2 border-amber-400 bg-amber-50/40 p-2 sm:p-3";
-  const nextChip =
-    "border-2 border-amber-400 bg-amber-50 text-ink-900";
-  const nextBtn =
-    "border-2 border-amber-400 bg-amber-50 text-ink-900 shadow-[0_0_0_3px_rgba(251,191,36,0.35)]";
+  const [hydrated, setHydrated] = useState(Boolean(draftId || initial));
 
   useEffect(() => {
-    const base = {
-      title: initial?.title ?? "",
-      bodyHtml: initial?.bodyHtml ?? "",
-      sourceUrl: initial?.sourceUrl ?? "",
-    };
-    setSavedKey(keyOf(base));
+    if (draftId || initial) return;
+    const saved = loadSaved();
+    if (saved.title) setTitle(saved.title);
+    if (saved.channel) setChannel(saved.channel);
+    if (saved.creatorNotes) setCreatorNotes(saved.creatorNotes);
+    if (saved.pastedScript) setPastedScript(saved.pastedScript);
+    if (saved.thumbnailUrl) setThumbnailUrl(saved.thumbnailUrl);
     setHydrated(true);
-    // 최초 서버 값만 기준점으로 잡는다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftId]);
+  }, [draftId, initial]);
 
   useEffect(() => {
-    function onLeave(e: Event) {
-      if (!dirtyRef.current) return;
-      e.preventDefault();
-      setLeaveMode("leave");
-      setLeaveOpen(true);
-    }
-    window.addEventListener(LEAVE_EVENT, onLeave);
-    return () => window.removeEventListener(LEAVE_EVENT, onLeave);
-  }, []);
+    if (!hydrated || draftId || initial) return;
+    saveForm({ title, channel, creatorNotes, pastedScript, thumbnailUrl });
+  }, [
+    title,
+    channel,
+    creatorNotes,
+    pastedScript,
+    thumbnailUrl,
+    hydrated,
+    draftId,
+    initial,
+  ]);
 
-  useEffect(() => {
-    if (!dirty) return;
-    const onBefore = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    const onClick = (e: MouseEvent) => {
-      const a = (e.target as Element | null)?.closest?.("a");
-      if (!a) return;
-      const href = a.getAttribute("href") || "";
-      if (!href || href.startsWith("#")) return;
-      e.preventDefault();
-      e.stopPropagation();
-      pendingHref.current = href;
-      setLeaveMode("leave");
-      setLeaveOpen(true);
-    };
-    window.addEventListener("beforeunload", onBefore);
-    document.addEventListener("click", onClick, true);
-    return () => {
-      window.removeEventListener("beforeunload", onBefore);
-      document.removeEventListener("click", onClick, true);
-    };
-  }, [dirty]);
+  const scriptLen = normalizePastedText(pastedScript).length;
+  const hasScript = hasUsablePastedScript(pastedScript);
+  const step1Done = title.trim().length >= 2;
+  const isContinuing = Boolean(activeDraftId);
+  const previewThumb = thumbnailUrl.trim() || reportThumbnailUrl();
 
-  function onBodyChange(html: string) {
-    setBodyHtml(html);
-    if (!titleTouchedRef.current) {
-      const nextTitle = tempTitleFromPlain(plainForArchive(htmlToPlainText(html)));
-      if (plainForArchive(htmlToPlainText(html))) setTitle(nextTitle);
-    }
-  }
-
-  function payload() {
-    const text = normalizePastedText(plainForArchive(htmlToPlainText(bodyHtml)));
-    const resolvedTitle =
-      title.trim().length >= 2
-        ? title.trim()
-        : tempTitleFromPlain(text);
+  function formPayload() {
     return {
-      title: resolvedTitle,
-      channel: sourceUrl.trim() ? "인스타" : undefined,
-      pastedScript: text,
-      inputBodyHtml: bodyHtml,
-      sourceUrl: sourceUrl.trim() || undefined,
-      articleImages: imageSrcs(bodyHtml),
-      thumbnailUrl: imageSrcs(bodyHtml)[0],
+      title: title.trim(),
+      channel: channel.trim() || undefined,
+      creatorNotes: creatorNotes.trim() || undefined,
+      pastedScript: normalizePastedText(pastedScript),
+      thumbnailUrl: thumbnailUrl.trim() || undefined,
     };
   }
 
-  async function saveDraft(): Promise<string | null> {
+  async function onPickThumbnail(files: FileList | null) {
+    const file = files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    setThumbBusy(true);
     setError(null);
-    const body = payload();
-    if (body.title.trim().length < 2 && !body.pastedScript) {
-      setError("내용을 붙여넣은 뒤 임시 저장을 선택하세요.");
-      return null;
+    try {
+      const compressed = await compressImageFiles([file]);
+      if (!compressed.length) throw new Error("이미지를 읽지 못했습니다.");
+      const uploaded = await uploadDataUrls(
+        compressed,
+        activeDraftId
+          ? `videos/${activeDraftId}/thumb`
+          : "videos/report-thumbs"
+      );
+      if (!uploaded[0]) throw new Error("이미지 업로드에 실패했습니다.");
+      setThumbnailUrl(uploaded[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "표지 이미지 업로드 실패");
+    } finally {
+      setThumbBusy(false);
+      if (thumbInputRef.current) thumbInputRef.current.value = "";
     }
-    setSaving(true);
+  }
+
+  async function saveDraft() {
+    setError(null);
+    if (!step1Done) {
+      setError("제목을 2자 이상 입력해 주세요.");
+      return;
+    }
+
+    setDraftSaving(true);
     setStatus(null);
     try {
       if (activeDraftId) {
         const res = await fetch(`/api/videos/${activeDraftId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ updateReportInput: body }),
+          body: JSON.stringify({ updateReportInput: formPayload() }),
         });
         const data = (await res.json()) as { error?: string; video?: { id: string } };
-        if (!res.ok) throw new Error(data.error || "임시 저장 실패");
-        const saved = (data as { video?: VideoRecord }).video;
-        if (saved?.id) {
-          window.dispatchEvent(
-            new CustomEvent("yfc-archive-saved", { detail: saved })
-          );
+        if (!res.ok) {
+          throw new Error(data.error || "임시 저장 실패");
         }
-        setTitle(body.title);
-        setSavedKey(keyOf({ title: body.title, bodyHtml, sourceUrl }));
-      setStatus("임시 저장됨. 아래 이어하기와 처음 화면 목록에 나옵니다.");
-      setLeaveOpen(false);
-      router.refresh();
-      return activeDraftId;
+        setStatus("임시 저장됨. 나중에 이어서 작성할 수 있습니다.");
       } else {
         const res = await fetch("/api/videos", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "report_draft", ...body }),
+          body: JSON.stringify({ mode: "report_draft", ...formPayload() }),
         });
         const data = (await res.json()) as {
           error?: string;
@@ -251,372 +171,363 @@ export function ReportCreateForm({
         }
         setActiveDraftId(data.video.id);
         cacheVideoSnapshot(data.video);
-        window.dispatchEvent(
-          new CustomEvent("yfc-archive-saved", { detail: data.video })
-        );
-        setTitle(body.title);
-        setSavedKey(keyOf({ title: body.title, bodyHtml, sourceUrl }));
-        setStatus("임시 저장됨. 아래 이어하기와 처음 화면 목록에 나옵니다.");
-        setLeaveOpen(false);
-        router.refresh();
-        return data.video.id;
+        setStatus("임시 저장됨. 홈 「정보 보관소」 탭에서 이어서 작성할 수 있습니다.");
+        if (!draftId) {
+          window.history.replaceState(null, "", `/videos/${data.video.id}`);
+        }
       }
+      feedbackRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "임시 저장 실패");
-      return null;
     } finally {
-      setSaving(false);
+      setDraftSaving(false);
     }
   }
 
-  async function copyAll() {
-    const text = plainForArchive(htmlToPlainText(bodyHtml));
-    if (!text) {
-      setError("복사할 내용이 없습니다.");
-      return;
-    }
-    const ok = await copyTextToClipboard(text);
-    if (!ok) {
-      setError("복사에 실패했습니다. 본문을 길게 눌러 복사해 주세요.");
-      return;
-    }
-    setCopied(true);
-    setError(null);
-    window.setTimeout(() => setCopied(false), 1600);
-  }
-
-  async function loadMeta() {
-    const url = sourceUrl.trim();
-    if (!url) {
-      setError("인스타 URL을 입력하세요.");
-      return;
-    }
-    setMetaBusy(true);
-    setError(null);
-    setStatus("메타 보는 중…");
+  async function parseJsonResponse(res: Response): Promise<{
+    error?: string;
+    video?: { id: string; status?: string };
+  }> {
+    const text = await res.text();
     try {
-      const res = await fetch("/api/instagram/meta", {
+      return JSON.parse(text) as {
+        error?: string;
+        video?: { id: string; status?: string };
+      };
+    } catch {
+      throw new Error(
+        text.trim().slice(0, 180) || `서버 오류 (${res.status})`
+      );
+    }
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (!step1Done) {
+      setError("제목을 2자 이상 입력해 주세요.");
+      return;
+    }
+
+    setLoading(true);
+    setStatus(
+      hasScript
+        ? "요약·검증 중… (1~3분 걸릴 수 있어요)"
+        : "수동 요약 화면으로 이동 중…"
+    );
+    feedbackRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), POST_TIMEOUT_MS);
+
+    try {
+      if (activeDraftId) {
+        const res = await fetch(`/api/videos/${activeDraftId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            startReportPipeline: true,
+            updateReportInput: formPayload(),
+          }),
+        });
+        const data = await parseJsonResponse(res);
+        if (!res.ok || !data.video?.id) {
+          throw new Error(data.error || "정보 보관소 항목 생성 실패");
+        }
+        if (data.video.status === "report_input_draft") {
+          throw new Error(
+            "요약·검증이 시작되지 않았습니다. 새로고침 후 다시 시도해 주세요."
+          );
+        }
+        cacheVideoSnapshot(data.video);
+        setStatus("완료. 다음 화면으로 이동합니다…");
+        window.location.assign(`/videos/${data.video.id}`);
+        return;
+      }
+
+      const res = await fetch("/api/videos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const data = (await res.json()) as {
-        error?: string;
-        title?: string;
-        description?: string;
-        imageUrl?: string | null;
-        warning?: string | null;
-      };
-      if (!res.ok) throw new Error(data.error || "메타 보기에 실패했습니다.");
-      const caption = (data.description || "").trim();
-      let html = caption ? plainToHtml(caption) : bodyHtml;
-      if (data.imageUrl && typeof document !== "undefined") {
-        html += createInlineImage(data.imageUrl, "인스타").outerHTML;
-      }
-      if (caption || data.imageUrl) setBodyHtml(html);
-      if (!titleTouchedRef.current) {
-        const fromCaption = tempTitleFromPlain(caption || data.title || "");
-        setTitle(fromCaption);
-      }
-      setUrlWhenMeta(url);
-      setStatus(
-        data.warning ||
-          (caption
-            ? "메타 보기를 불러왔습니다. 임시 저장을 선택하면 보관됩니다."
-            : "메타를 일부만 가져왔습니다. 캡션은 붙여넣기로 보완하세요.")
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "메타 보기에 실패했습니다.");
-      setStatus(null);
-    } finally {
-      setMetaBusy(false);
-    }
-  }
-
-  async function openReportFrom(id: string) {
-    setReportBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/videos/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
-          startReportPipeline: true,
-          manualOverview: !sourceUrl.trim(),
-          updateReportInput: payload(),
+          mode: "report",
+          ...formPayload(),
         }),
       });
-      const data = (await res.json()) as {
-        error?: string;
-        video?: { id: string };
-      };
+
+      const data = await parseJsonResponse(res);
       if (!res.ok || !data.video?.id) {
-        throw new Error(data.error || "보고서 화면을 열지 못했습니다.");
+        throw new Error(data.error || "정보 보관소 항목 생성 실패");
       }
-      dirtyRef.current = false;
+
       cacheVideoSnapshot(data.video);
-      window.location.assign(`/videos/${data.video.id}#report`);
+      setStatus("완료. 다음 화면으로 이동합니다…");
+      window.location.assign(`/videos/${data.video.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "보고서 화면을 열지 못했습니다.");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError(
+          "요약에 시간이 오래 걸렸습니다. Wi‑Fi를 확인하고 다시 시도해 주세요."
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "처리 실패");
+      }
+      setStatus(null);
     } finally {
-      setReportBusy(false);
+      clearTimeout(timer);
+      setLoading(false);
     }
-  }
-
-  async function openReport() {
-    if (dirty || !activeDraftId) {
-      setLeaveMode("report");
-      setLeaveOpen(true);
-      return;
-    }
-    await openReportFrom(activeDraftId);
-  }
-
-  function discardAndLeave() {
-    dirtyRef.current = false;
-    setLeaveOpen(false);
-    const href = pendingHref.current;
-    pendingHref.current = null;
-    if (href) {
-      window.location.assign(href);
-      return;
-    }
-    window.dispatchEvent(new Event(LEAVE_CONTINUE));
-  }
-
-  async function saveThenContinue() {
-    const mode = leaveMode;
-    const id = await saveDraft();
-    if (!id) return;
-    if (mode === "report") {
-      await openReportFrom(id);
-      return;
-    }
-    discardAndLeave();
-  }
-
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    void saveDraft();
   }
 
   return (
     <form
       id="report-create"
       onSubmit={onSubmit}
-      className="relative rounded-2xl border border-ink-200 bg-white/80 p-5 sm:p-6 shadow-sm pb-28 sm:pb-6"
+      className="relative rounded-2xl border border-ink-200 bg-white/80 p-5 sm:p-6 shadow-sm pb-36 sm:pb-6"
     >
-      <div className="space-y-4">
+      <div className="relative space-y-4">
+        <div className="flex items-center gap-2 text-accent">
+          <FileText className="h-5 w-5" />
+          <span className="text-sm font-medium tracking-wide uppercase">
+            정보 보관소
+          </span>
+        </div>
         <div>
-          <h2 className="font-display text-2xl text-ink-900">{archiveFlowLabel("input")}</h2>
-          <ol className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-ink-600 sm:grid-cols-5">
-            {visibleSteps.map((s) => {
-              const isNext =
-                (s.id === "input" && nextStep === "input") ||
-                (s.id === "meta" && nextStep === "meta") ||
-                (s.id === "save" && nextStep === "save") ||
-                (s.id === "report" && nextStep === "report");
-              return (
-                <li
-                  key={s.id}
-                  className={`rounded-md border px-1.5 py-1 ${
-                    isNext
-                      ? nextChip
-                      : s.id === "input"
-                        ? "border-ink-200 bg-white text-ink-900"
-                        : "border-ink-200 bg-white"
-                  }`}
-                >
-                  {s.n}. {s.short}
-                </li>
-              );
-            })}
-          </ol>
-          <p className="text-sm text-ink-500 mt-2">
-            붙여넣기. 첫 줄이 임시 제목입니다. 일자 {dateLabel}.
-          </p>
-        </div>
-
-        <div className={nextStep === "input" ? nextBox : ""}>
-          <label className="block text-sm text-ink-600">
-            임시 제목
-            <input
-              value={title}
-              onChange={(e) => {
-                setTitleTouched(true);
-                setTitle(e.target.value);
-              }}
-              placeholder="본문 첫 줄이 들어옵니다"
-              className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-base outline-none focus:border-accent"
-            />
-          </label>
-
-          <div className="space-y-2 mt-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm text-ink-600">본문</p>
-              <button
-                type="button"
-                onClick={() => void copyAll()}
-                className="inline-flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-2.5 py-1 text-xs font-medium"
-              >
-                <ClipboardPaste className="h-3.5 w-3.5" />
-                {copied ? "복사됨" : "전체 복사"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBodyHtml((html) => withSpacing(html))}
-                title="1. 제목 아래에 ● 라벨: 설명 으로 나눕니다"
-                className="rounded-lg border border-ink-200 bg-white px-2.5 py-1 text-xs font-medium"
-              >
-                문단 간격만 정리
-              </button>
-            </div>
-            <RichTextEditor
-              value={bodyHtml}
-              onChange={onBodyChange}
-              onUploadImages={uploadImages}
-              toolbarMode="full"
-              placeholder="제미나이 등에서 복사한 내용을 붙여넣으세요"
-              minHeightClass="min-h-[16rem]"
-            />
-          </div>
-        </div>
-
-        <div className={hasUrl && nextStep === "meta" ? nextBox : ""}>
-          <label className="block text-sm text-ink-600">
-            {hasUrl ? archiveFlowLabel("instagram") : "인스타 주소 (있으면)"}
-            <input
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://www.instagram.com/p/…"
-              className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-base outline-none focus:border-accent"
-            />
-          </label>
-          {hasUrl ? (
-            <div className="flex flex-wrap gap-2 mt-2">
-              <button
-                type="button"
-                disabled={metaBusy}
-                onClick={() => void loadMeta()}
-                className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 ${
-                  nextStep === "meta"
-                    ? nextBtn
-                    : "border border-ink-300 bg-white"
-                }`}
-              >
-                {metaBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {archiveFlowLabel("meta")}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const raw = sourceUrl.trim();
-                  if (!raw) {
-                    setError("원문을 열 URL을 입력하세요.");
-                    return;
-                  }
-                  const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-                  try {
-                    const parsed = new URL(href);
-                    window.open(parsed.href, "_blank", "noopener,noreferrer");
-                    setError(null);
-                  } catch {
-                    setError("원문 주소가 올바르지 않습니다.");
-                  }
-                }}
-                className="inline-flex items-center rounded-xl border border-ink-300 bg-white px-4 py-2 text-sm font-medium text-accent"
-              >
-                원문 열기
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        {status && (
-          <p className="rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-700" role="status">
-            {status}
-          </p>
-        )}
-        {error && (
-          <p className="rounded-xl border border-red-600 bg-red-50 px-4 py-3 text-sm font-medium text-red-700" role="alert">
-            {error}
-          </p>
-        )}
-
-        {leaveOpen && (
-          <div
-            role="alertdialog"
-            aria-labelledby="unsaved-title"
-            className="rounded-xl border-2 border-red-600 bg-red-50 px-4 py-4 text-red-700"
-          >
-            <p id="unsaved-title" className="font-semibold">
-              임시 저장을 선택하지 않았습니다.
-            </p>
-            <p className="mt-1 text-sm">
-              {leaveMode === "report"
-                ? "저장하지 않으면 입력한 내용이 보고서 화면에 넘어가지 않습니다. 임시 저장을 선택하세요."
-                : "저장하지 않으면 입력한 내용이 보관되지 않습니다. 임시 저장을 선택하세요."}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => void saveThenContinue()}
-                className="rounded-lg bg-red-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                임시 저장
-              </button>
-              {leaveMode === "leave" && (
-                <button
-                  type="button"
-                  onClick={discardAndLeave}
-                  className="rounded-lg border border-red-600 bg-white px-3 py-2 text-sm font-medium text-red-700"
-                >
-                  저장하지 않고 나가기
-                </button>
+          <h2 className="font-display text-2xl sm:text-3xl text-ink-900 mb-2">
+            {isContinuing ? "입력 이어서 작성" : "제목으로 보고서 만들기"}
+          </h2>
+          <details>
+            <summary className="cursor-pointer select-none text-xs text-ink-500 hover:text-ink-800">
+              사용 방법 보기
+            </summary>
+            <p className="text-sm text-ink-600 leading-relaxed mt-1.5">
+              {isContinuing ? (
+                <>
+                  제목·스크립트를 채운 뒤 <strong>임시 저장</strong>하거나,{" "}
+                  <strong>요약 · 검증 시작</strong>으로 다음 단계로 넘어갑니다.
+                  스크립트는 선택입니다.
+                </>
+              ) : (
+                <>
+                  유튜브 URL 없이 <strong>제목만</strong> 있어도 됩니다. 원문·요약은
+                  다음 화면 위쪽 칸에 그대로 붙이면 됩니다. 형식을 맞출 필요는
+                  없습니다.
+                </>
               )}
+            </p>
+          </details>
+        </div>
+
+        <label className="block text-sm text-ink-600">
+          ① 제목 <span className="text-verify-false">*</span>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="보고서·강연·기사 제목"
+            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-4 py-3.5 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
+        </label>
+
+        <div className="space-y-2">
+          <p className="text-sm text-ink-600">표지 이미지</p>
+          <div className="overflow-hidden rounded-xl border border-ink-200 bg-ink-50">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewThumb}
+              alt="표지 미리보기"
+              className="w-full aspect-video object-contain bg-ink-900"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={thumbInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => void onPickThumbnail(e.target.files)}
+            />
+            <button
+              type="button"
+              disabled={thumbBusy}
+              onClick={() => thumbInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-sm font-medium disabled:opacity-50"
+            >
+              {thumbBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ImagePlus className="h-4 w-4" />
+              )}
+              {thumbnailUrl ? "이미지 바꾸기" : "이미지 선택"}
+            </button>
+            {thumbnailUrl ? (
               <button
                 type="button"
-                onClick={() => setLeaveOpen(false)}
-                className="rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700"
+                disabled={thumbBusy}
+                onClick={() => setThumbnailUrl("")}
+                className="inline-flex items-center gap-1.5 min-h-10 rounded-xl border border-ink-200 bg-white px-3 text-sm font-medium text-ink-600"
               >
-                취소
+                <X className="h-4 w-4" />
+                기본 이미지로
               </button>
-            </div>
+            ) : null}
           </div>
+          <p className="text-xs text-ink-400">
+            목록·상세 상단에 보이는 표지입니다. 없으면 기본 정보 보관소
+            이미지가
+            사용됩니다.
+          </p>
+        </div>
+
+        <label className="block text-sm text-ink-600">
+          채널·작성자 (선택)
+          <input
+            value={channel}
+            onChange={(e) => setChannel(e.target.value)}
+            placeholder="예: 직접 입력, 홍길동, ○○신문"
+            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-4 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
+        </label>
+
+        <label className="block text-sm text-ink-600">
+          메모·목차 (선택)
+          <textarea
+            value={creatorNotes}
+            onChange={(e) => setCreatorNotes(e.target.value)}
+            rows={2}
+            placeholder="0:00 서론, 5:30 본론… 또는 배경 설명"
+            className="mt-1.5 w-full rounded-xl border border-ink-200 bg-white px-3 py-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+          />
+        </label>
+
+        <label className="block text-sm text-ink-600">
+          ② 스크립트(본문)
+          <span className="text-ink-400"> (선택)</span>
+          <textarea
+            value={pastedScript}
+            onChange={(e) => setPastedScript(e.target.value)}
+            rows={8}
+            placeholder="있으면 붙여넣기 — 없어도 요약·검증 시작 가능"
+            className={`mt-1.5 w-full rounded-xl border bg-white px-3 py-3 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 ${
+              hasScript
+                ? "border-emerald-300 ring-1 ring-emerald-200"
+                : "border-ink-200"
+            }`}
+          />
+        </label>
+        {scriptLen > 0 && (
+          <p
+            className={`text-xs font-medium ${
+              hasScript ? "text-emerald-700" : "text-ink-500"
+            }`}
+          >
+            {hasScript
+              ? `✓ 스크립트 준비됨 · ${scriptLen.toLocaleString()}자 (자동 요약)`
+              : `${scriptLen}자 · 짧으면 수동 요약으로 시작합니다`}
+          </p>
         )}
+        {scriptLen === 0 && (
+          <p className="text-xs text-ink-500">
+            스크립트 없이 시작하면 「내용 요약」을 직접 입력한 뒤 팩트체크
+            실시 또는 pass를 고릅니다.
+          </p>
+        )}
+
+        <div ref={feedbackRef} className="space-y-2">
+          {(loading || draftSaving || status) && (
+            <div
+              className="rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-700"
+              role="status"
+            >
+              {status || (draftSaving ? "임시 저장 중…" : "처리 중…")}
+            </div>
+          )}
+          {error && (
+            <p
+              className="rounded-xl border border-verify-false/30 bg-verify-false/5 px-4 py-3 text-sm text-verify-false font-medium"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="mt-4 flex flex-col sm:flex-row gap-2">
-        <div className={`flex-1 ${nextStep === "save" ? nextBox : ""}`}>
-          <button
-            type="submit"
-            disabled={saving || reportBusy}
-            className={`inline-flex w-full items-center justify-center gap-2 rounded-xl min-h-12 px-5 py-3 font-medium disabled:opacity-50 ${
-              nextStep === "save"
-                ? nextBtn
-                : "border border-ink-300 bg-white"
-            }`}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {archiveFlowLabel("save")}
-          </button>
-        </div>
-        <div className={`flex-1 ${nextStep === "report" ? nextBox : ""}`}>
+      <div className="fixed bottom-0 inset-x-0 z-50 sm:static sm:z-auto border-t border-ink-200 sm:border-0 bg-white/95 sm:bg-transparent backdrop-blur px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-0 sm:mt-4 space-y-2">
+        {(loading || draftSaving || status || error) && (
+          <div className="sm:hidden space-y-2">
+            {(loading || draftSaving || status) && (
+              <div
+                className="rounded-xl border border-ink-200 bg-ink-50 px-3 py-2 text-sm text-ink-700"
+                role="status"
+                aria-live="polite"
+              >
+                {status || (draftSaving ? "임시 저장 중…" : "처리 중…")}
+              </div>
+            )}
+            {error && (
+              <p
+                className="rounded-xl border border-verify-false/30 bg-verify-false/5 px-3 py-2 text-sm text-verify-false font-medium"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+          </div>
+        )}
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
             type="button"
-            disabled={saving || reportBusy}
-            onClick={() => void openReport()}
-            className={`inline-flex w-full items-center justify-center gap-2 rounded-xl min-h-12 px-5 py-3 font-medium disabled:opacity-50 ${
-              nextStep === "report"
-                ? nextBtn
-                : "bg-accent text-white"
-            }`}
+            onClick={saveDraft}
+            disabled={loading || draftSaving || !step1Done}
+            className="w-full sm:flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-ink-300 bg-white min-h-12 px-5 py-3.5 text-ink-800 font-medium hover:border-accent hover:bg-accent-muted/30 disabled:opacity-50 transition-colors"
           >
-            {reportBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {archiveFlowLabel("report")}
+            {draftSaving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                저장 중…
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                임시 저장
+              </>
+            )}
+          </button>
+          <button
+            type="submit"
+            disabled={loading || draftSaving || !step1Done}
+            className="w-full sm:flex-[1.4] inline-flex items-center justify-center gap-2 rounded-xl bg-accent min-h-12 px-5 py-3.5 text-white font-medium hover:bg-ink-900 disabled:opacity-60 transition-colors shadow-lg sm:shadow-none"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                요약·검증 중…
+              </>
+            ) : !step1Done ? (
+              "먼저 ① 제목 입력"
+            ) : (
+              <>
+                <ClipboardPaste className="h-4 w-4" />
+                3. 요약 · 검증 시작
+              </>
+            )}
           </button>
         </div>
+        {step1Done && !loading && !error && (
+          <p className="text-center text-xs text-ink-500 flex items-center justify-center gap-1">
+            <Check className="h-3.5 w-3.5 text-emerald-600" />
+            {hasScript
+              ? "스크립트로 자동 요약 후 팩트체크 실시 또는 pass"
+              : "제목만으로 시작 · 요약 후 팩트체크 실시 또는 pass"}
+          </p>
+        )}
       </div>
     </form>
   );

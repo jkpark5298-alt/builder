@@ -14,9 +14,8 @@ import { UrlPasteForm } from "@/components/UrlPasteForm";
 import { ReportListPanel } from "@/components/ReportListPanel";
 import { VideoListCard } from "@/components/VideoListCard";
 import { HubPreviewItemList } from "@/components/HubPreviewItemList";
-import { ArchiveAppFileList, ArchiveAppFileRow } from "@/components/ArchiveAppFileList";
 
-type HubView = "home" | "input" | "status" | "appfiles";
+type HubView = "home" | "input" | "status";
 
 function listKindFor(
   video: VideoRecord
@@ -41,9 +40,7 @@ export function YoutubeReportHub({
     function sync() {
       if (typeof window === "undefined") return;
       const hash = window.location.hash.replace(/^#/, "");
-      if (hash === "yt-app-files") {
-        setView("appfiles");
-      } else if (hash === "yt-status" || hash === "youtube-reports") {
+      if (hash === "yt-status" || hash === "youtube-reports") {
         setView("status");
         setShowAllReports(hash === "youtube-reports");
       } else if (hash === "yt-input") {
@@ -62,9 +59,7 @@ export function YoutubeReportHub({
       const a = (e.target as Element | null)?.closest?.("a");
       if (!a) return;
       const href = a.getAttribute("href") || "";
-      if (href.includes("#yt-app-files")) {
-        setView("appfiles");
-      } else if (href.includes("#yt-status") || href.includes("#youtube-reports")) {
+      if (href.includes("#yt-status") || href.includes("#youtube-reports")) {
         setView("status");
         if (href.includes("#youtube-reports")) setShowAllReports(true);
       } else if (href.includes("#yt-input")) {
@@ -215,38 +210,10 @@ export function YoutubeReportHub({
     );
   }
 
-  if (view === "appfiles") {
-    return (
-      <section id="yt-app-files" className="space-y-5 scroll-mt-24">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => go("home", "youtube")}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-700 hover:border-accent"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            뒤로
-          </button>
-          <div>
-            <h2 className="font-display text-xl text-ink-900">앱 파일 목록</h2>
-            <p className="text-sm text-ink-500 mt-0.5">
-              앱 파일로 만든 제목 · 선택하면 상세로 갑니다. 보고서가 없으면 삭제로 표시합니다.
-            </p>
-          </div>
-        </div>
-        <ArchiveAppFileList scope="youtube" />
-      </section>
-    );
-  }
-
   return (
-    <section id="yt-home" className="space-y-4 scroll-mt-24 min-w-0">
-      <ArchiveAppFileRow
-        scope="youtube"
-        onOpenList={() => go("appfiles", "yt-app-files")}
-      />
-      <div className="grid gap-3 sm:grid-cols-2 min-w-0">
-        <article className="group min-w-0 max-w-full overflow-hidden rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+    <section id="yt-home" className="space-y-4 scroll-mt-24">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
           <button
             type="button"
             onClick={() => go("input", "yt-input")}
@@ -259,7 +226,7 @@ export function YoutubeReportHub({
               정보/요약 입력
             </span>
             <span className="mt-1.5 block text-sm text-ink-500 leading-relaxed">
-              URL · 자막 · 요약 · 보고서
+              URL 붙여넣기 · 자막 자동 가져오기 · 요약 · 보고서
             </span>
           </button>
           <HubPreviewItemList
@@ -275,7 +242,7 @@ export function YoutubeReportHub({
           />
         </article>
 
-        <article className="group min-w-0 max-w-full overflow-hidden rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
+        <article className="group rounded-2xl border border-ink-200 bg-white p-5 sm:p-6 text-left shadow-sm hover:border-accent hover:shadow-md transition-all">
           <button
             type="button"
             onClick={() => go("status", "yt-status")}

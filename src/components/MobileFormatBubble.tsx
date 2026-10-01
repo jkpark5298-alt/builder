@@ -55,9 +55,7 @@ function rectFromDomSelection(): DOMRect | null {
     range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? (range.commonAncestorContainer as Element)
       : range.commonAncestorContainer.parentElement;
-  if (!node?.closest?.(".ProseMirror") && !node?.closest?.(".rich-editor")) {
-    return null;
-  }
+  if (!node?.closest?.(".ProseMirror")) return null;
 
   const rects = range.getClientRects();
   if (rects.length) return rects[rects.length - 1]!;
@@ -115,15 +113,23 @@ export function MobileFormatBubble({
     let raf = 0;
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const place = (_rect: DOMRect) => {
-      // 선택 바로 위에 두면 아이폰 복사·찾아보기 메뉴와 선택 핸들을 가립니다.
-      // 키보드(visual viewport) 바로 위에 고정합니다.
-      const barH = 48;
+    const place = (rect: DOMRect) => {
+      const barW = Math.min(360, window.innerWidth - 16);
+      const barH = 44;
+      const gap = 8;
+      let top = rect.top - barH - gap;
       const vv = window.visualViewport;
       const viewTop = vv?.offsetTop ?? 0;
       const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
-      const top = Math.max(viewTop + 8, viewBottom - barH - 8);
-      setPos({ top, left: 8 });
+      if (top < viewTop + 8) {
+        top = rect.bottom + gap;
+      }
+      if (top + barH > viewBottom - 8) {
+        top = Math.max(viewTop + 8, viewBottom - barH - 8);
+      }
+      let left = rect.left + rect.width / 2 - barW / 2;
+      left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
+      setPos({ top, left });
       setVisible(true);
     };
 
@@ -200,16 +206,17 @@ export function MobileFormatBubble({
 
   if (!active || !visible || !pos) return null;
 
-  const keep = (e: React.SyntheticEvent) => {
+  const keep = (e: React.MouseEvent) => {
     e.preventDefault();
   };
 
+  const barW = Math.min(360, window.innerWidth - 16);
+
   return (
     <div
-      className="md:hidden fixed z-[70] print:hidden"
-      style={{ top: pos.top, left: 8, right: 8 }}
-      onPointerDown={keep}
-      onTouchStart={keep}
+      className="md:hidden fixed z-[80] print:hidden"
+      style={{ top: pos.top, left: pos.left, width: barW }}
+      onMouseDown={keep}
     >
       <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-1.5 py-1 shadow-lg backdrop-blur-md">
         <BubbleBtn onClick={onBold} title="굵게" onMouseDown={keep}>
@@ -240,8 +247,6 @@ export function MobileFormatBubble({
               type="button"
               title={`${ch} 삽입`}
               onMouseDown={keep}
-              onPointerDown={keep}
-              onTouchStart={keep}
               onClick={() => onInsertChar(ch)}
               className="min-h-8 min-w-7 rounded-md px-0.5 text-[13px] font-medium text-ink-800 hover:bg-accent-muted"
             >
@@ -256,8 +261,6 @@ export function MobileFormatBubble({
             type="button"
             title={c.label}
             onMouseDown={keep}
-            onPointerDown={keep}
-            onTouchStart={keep}
             onClick={() => onColor(c.color)}
             className="h-7 w-7 shrink-0 rounded-full border border-ink-200"
             style={{ background: c.color }}
@@ -270,8 +273,6 @@ export function MobileFormatBubble({
             type="button"
             title={`${c.label} 형광`}
             onMouseDown={keep}
-            onPointerDown={keep}
-            onTouchStart={keep}
             onClick={() => onHighlight(c.bg)}
             className="h-7 w-7 shrink-0 rounded-md border border-ink-200"
             style={{ background: c.bg }}
@@ -291,15 +292,13 @@ function BubbleBtn({
   children: React.ReactNode;
   onClick: () => void;
   title: string;
-  onMouseDown?: (e: React.SyntheticEvent) => void;
+  onMouseDown?: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       type="button"
       title={title}
       onMouseDown={onMouseDown}
-      onPointerDown={onMouseDown}
-      onTouchStart={onMouseDown}
       onClick={onClick}
       className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-700 hover:bg-accent-muted"
     >

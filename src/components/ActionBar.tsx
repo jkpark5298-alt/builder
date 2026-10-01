@@ -18,7 +18,12 @@ export function ActionBar({ video }: { video: VideoRecord }) {
         </p>
       )}
 
-      {ready && <ReportActions video={video} includeManage />}
+      {ready && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-ink-500">보고서</p>
+          <ReportActions video={video} includeManage />
+        </div>
+      )}
     </div>
   );
 }

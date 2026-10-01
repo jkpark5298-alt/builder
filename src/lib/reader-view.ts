@@ -1,8 +1,4 @@
-import {
-  exportableReportSections,
-  headingLooksLikeBody,
-  reportBodyPlain,
-} from "./report";
+import { reportBodyPlain, exportableReportSections } from "./report";
 import {
   orderedSlotUrls,
   sectionSlotCapacity,
@@ -10,7 +6,6 @@ import {
 import { parseBodySImageSlots } from "./report-body-s-slots";
 import {
   bodyUsesInlineRichImages,
-  prepareInlineBodyForView,
   splitPreparedBodyParts,
 } from "./report-inline-images";
 import { organizeUrlArticleText } from "./url-article-report";
@@ -313,12 +308,10 @@ export function readerDocFromReport(
   const used = new Set<string>();
   const sections = exportableReportSections(report.sections);
   const many = sections.length > 1;
-  let priorSlots = 0;
   for (const sec of sections) {
     const headingRaw = (sec.heading || "").trim();
     const headingPlain = reportBodyPlain(headingRaw, true).trim();
-    const headingIsBody = headingLooksLikeBody(headingRaw);
-    if (many && !headingIsBody && headingPlain && headingPlain !== "본문") {
+    if (many && headingPlain && headingPlain !== "본문") {
       const headingHtml = sanitizeReaderHtml(
         /<[a-z]/i.test(headingRaw)
           ? headingRaw.replace(/^<p[^>]*>/i, "").replace(/<\/p>\s*$/i, "")
@@ -330,18 +323,15 @@ export function readerDocFromReport(
         html: headingHtml || undefined,
       });
     }
-    const bodySource = headingIsBody
-      ? `${headingRaw}${sec.body || ""}`
-      : sec.body || "";
-    const prepared = prepareInlineBodyForView(bodySource);
-    const parsed = parseBodySImageSlots(prepared);
-    const urls = /<img\b/i.test(prepared)
-      ? []
-      : orderedSlotUrls(sec, undefined, sectionSlotCapacity(sec, parsed.slotCount));
-    priorSlots += parsed.slotCount;
+    const parsed = parseBodySImageSlots(sec.body || "");
+    const urls = orderedSlotUrls(
+      sec,
+      report.imageRoom,
+      sectionSlotCapacity(sec, parsed.slotCount)
+    );
     let imgI = 0;
-    if (bodyUsesInlineRichImages(bodySource) || bodyUsesInlineRichImages(prepared)) {
-      const parts = splitPreparedBodyParts(prepared);
+    if (bodyUsesInlineRichImages(sec.body || "")) {
+      const parts = splitPreparedBodyParts(sec.body || "");
       for (const part of parts) {
         if (part.type === "html") {
           if (/<[a-z]/i.test(part.html)) {
@@ -359,7 +349,12 @@ export function readerDocFromReport(
         }
       }
     } else if (!parsed.segments.length) {
-      if (prepared.trim()) pushRichBlocks(blocks, prepared);
+      const body = sec.body || "";
+      if (sec.rich || /<[a-z]/i.test(body)) {
+        pushRichBlocks(blocks, body);
+      } else {
+        pushParas(blocks, body);
+      }
     } else {
       for (const seg of parsed.segments) {
         const segHtml = seg.html || "";

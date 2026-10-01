@@ -374,7 +374,23 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               ) : (
                 <ClipboardCopy className="h-3.5 w-3.5" />
               )}
-              {copied ? "복사됨" : "요약 복사"}
+              {copied ? "복사됨" : flowLabel("copySummary", "전체 복사")}
+            </button>
+            <button
+              type="button"
+              disabled={!(video.overview?.trim())}
+              onClick={() => copyOverviewAndOpenApp("gemini")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              제미나이
+            </button>
+            <button
+              type="button"
+              disabled={!(video.overview?.trim())}
+              onClick={() => copyOverviewAndOpenApp("daglo")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              다글로
             </button>
             {(needsManual || source === "ai" || source === "manual") && (
               <button
@@ -408,29 +424,6 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
             )}
             {pdfButton}
           </div>
-          <details className="rounded-xl border border-ink-200 bg-ink-50/70 px-3 py-2">
-            <summary className="cursor-pointer text-xs font-medium text-ink-800">
-              고급 · 요약을 제미나이·다글로에 복사
-            </summary>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                disabled={!(video.overview?.trim())}
-                onClick={() => copyOverviewAndOpenApp("gemini")}
-                className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-              >
-                제미나이
-              </button>
-              <button
-                type="button"
-                disabled={!(video.overview?.trim())}
-                onClick={() => copyOverviewAndOpenApp("daglo")}
-                className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-              >
-                다글로
-              </button>
-            </div>
-          </details>
           {fcPass && video.status === "awaiting_factcheck" && video.overview.trim().length >= 40 && (
             <button
               type="button"
@@ -452,7 +445,9 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
       ) : (
         <div className="space-y-2">
           <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            요약 단계입니다. 확인 후 「요약 저장」하면 보고서로 갑니다.
+            <strong>순서</strong> {flowLabel("pasteSummary")} →{" "}
+            {flowLabel("tidySummary")} → {flowLabel("saveSummary")} →{" "}
+            {flowLabel("copySummary")}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             {pdfButton}
@@ -478,33 +473,26 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
               )}
               {copied ? "복사됨" : flowLabel("copySummary", "전체 복사")}
             </button>
-            <details className="w-full rounded-xl border border-ink-200 bg-ink-50/70 px-3 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-ink-800">
-                고급 · 요약을 제미나이·다글로에 복사
-              </summary>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={saving || pdfBusy || !draft.trim()}
-                  onClick={() => copyOverviewAndOpenApp("gemini")}
-                  className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-                >
-                  제미나이
-                </button>
-                <button
-                  type="button"
-                  disabled={saving || pdfBusy || !draft.trim()}
-                  onClick={() => copyOverviewAndOpenApp("daglo")}
-                  className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-                >
-                  다글로
-                </button>
-                <p className="text-xs text-ink-500">
-                  {FLOW.copySummary.n}번 복사 후 외부 앱에서 보고서 · PDF{" "}
-                  {(PDF_MAX_BYTES / (1024 * 1024)).toFixed(0)}MB 이하
-                </p>
-              </div>
-            </details>
+            <button
+              type="button"
+              disabled={saving || pdfBusy || !draft.trim()}
+              onClick={() => copyOverviewAndOpenApp("gemini")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              제미나이
+            </button>
+            <button
+              type="button"
+              disabled={saving || pdfBusy || !draft.trim()}
+              onClick={() => copyOverviewAndOpenApp("daglo")}
+              className="inline-flex items-center gap-1.5 min-h-10 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+            >
+              다글로
+            </button>
+            <p className="text-xs text-ink-500">
+              {FLOW.copySummary.n}번 복사 후 제미나이에서 보고서 · PDF{" "}
+              {(PDF_MAX_BYTES / (1024 * 1024)).toFixed(0)}MB 이하
+            </p>
           </div>
           <textarea
             value={draft}
@@ -515,7 +503,10 @@ export function OverviewSummaryPanel({ video }: { video: VideoRecord }) {
           />
           <p className="text-xs text-ink-500">{charCount.toLocaleString()}자</p>
           <p className="text-xs text-ink-600 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-            지금: 요약 저장. 다음: 보고서. 고급은 아래 제미나이·다글로 복사.
+            <strong>절차</strong> {flowLabel("pasteSummary")} →{" "}
+            <strong>{flowLabel("tidySummary")}</strong> →{" "}
+            <strong>{flowLabel("saveSummary")}</strong> →{" "}
+            {flowLabel("copySummary")} → {flowLabel("pasteReport")}
           </p>
           {error && (
             <p className="text-sm text-verify-false" role="alert">
