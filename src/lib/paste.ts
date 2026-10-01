@@ -45,6 +45,14 @@ export function splitTopicColonLabels(raw: string): string {
         const prev = src[offset - 1];
         if (prev && /[-*•▪◦–—\u2022\uF0B7]/.test(prev)) return full;
       }
+      // `* **라벨:` · `● 라벨:` 은 불릿 한 줄 — 콜론에서 다시 쪼개지 않음
+      const lineStart = src.lastIndexOf("\n", Math.max(0, offset - 1));
+      const lineEnd = src.indexOf("\n", offset);
+      const line = src.slice(
+        lineStart + 1,
+        lineEnd === -1 ? src.length : lineEnd
+      );
+      if (/[●•]/.test(line) || /\*[ \t]+\*\*/.test(line)) return full;
       if (lead === "" || lead === "\n") return `${lead}${L}: `;
       if (/[.。!！?？…]/.test(lead)) return `${lead}\n\n${L}: `;
       // 앞이 공백·기타 → 단락 시작
@@ -55,12 +63,116 @@ export function splitTopicColonLabels(raw: string): string {
   return t;
 }
 
+const BULLET_LINE = /^(?:#{1,6}\s|\*[ \t]+\*\*|[●•]|\d+\.\s)/;
+
+/** 문단 안에서 제목·불릿이 아닌 줄바꿈은 한 칸으로 이어 붙입니다. */
+function joinSoftWraps(block: string): string {
+  const lines = block
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return "";
+  let out = lines[0];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (BULLET_LINE.test(line)) {
+      out += `\n\n${line}`;
+      continue;
+    }
+    if (/-$/.test(out) && /^[A-Za-z]/.test(line)) {
+      out += line;
+      continue;
+    }
+    out += out.endsWith(" ") ? line : ` ${line}`;
+  }
+  return out.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+function normalizeNumberedTitle(title: string): string {
+  return title
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^(\d+)\.(?=\S)/, "$1. ")
+    .replace(/^(\d+)\s+(?=\S)/, "$1. ")
+    .trim();
+}
+
+/** `* **라벨: ** 본문` → `   ● 라벨: 본문` (한 줄) */
+function formatMarkerBlock(block: string): string {
+  let text = block.replace(/\*\*/g, "").replace(/[ \t]{2,}/g, " ").trim();
+  text = text.replace(/([A-Za-z]{2,})-[ \t]+([a-z]{2,})/g, "$1$2");
+  const hashed = text.match(/^#{3,}\s*(.+)$/);
+  if (hashed) return normalizeNumberedTitle(hashed[1]);
+  if (/^\d+\.\s+\S/.test(text) && !/[●•]/.test(text)) {
+    return normalizeNumberedTitle(text);
+  }
+  if (/^[●•]/.test(text) || /^\*/.test(text)) {
+    let body = text.replace(/^(?:[*•●▪]\s*)+/, "").trim();
+    body = body.replace(/\s*:\s*/, ": ");
+    return `\u00a0\u00a0\u00a0● ${body}`;
+  }
+  return text;
+}
+
+/**
+ * 제미나이 붙여넣기.
+ * `###1. 제목` → `1. 제목`
+ * `* **라벨: ** 설명` → `● 라벨: 설명` (제목과 설명을 한 줄)
+ * 제목 아래에서 끊긴 줄(`한쪽` / `탑의 부재`)은 이어 붙입니다.
+ */
+function tidyMarkerParagraphs(raw: string): string {
+  let t = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!/###|\*[ \t]+\*\*|[●•]/.test(t)) return t;
+
+  t = t.replace(/([.。!！?？])[ \t]*-{3,}[ \t]*/g, "$1\n\n");
+  t = t.replace(/^[ \t]*-{3,}[ \t]*$/gm, "");
+  t = t.replace(/([^\n])[ \t]*(#{3,})/g, "$1\n\n$2");
+  t = t.replace(/\n[ \t]*(#{3,})/g, "\n\n$1");
+  t = t.replace(/(#{3,})[ \t]*(?=\S)/g, "$1 ");
+  t = t.replace(/([^\n])[ \t]*(\*[ \t]+\*\*)/g, "$1\n\n$2");
+  t = t.replace(/\n[ \t]*(\*[ \t]+\*\*)/g, "\n\n$1");
+
+  const pieces: string[] = [];
+  for (const block of t.split(/\n{2,}/)) {
+    const joined = joinSoftWraps(block);
+    if (!joined) continue;
+    for (const part of joined.split(/\n{2,}/)) {
+      const formatted = formatMarkerBlock(part);
+      if (formatted) pieces.push(formatted);
+    }
+  }
+
+  const sections: string[] = [];
+  let group: string[] = [];
+  const flush = () => {
+    if (!group.length) return;
+    sections.push(group.join("\n"));
+    group = [];
+  };
+  for (const piece of pieces) {
+    const isHeading = /^\d+\.\s+\S/.test(piece) && !piece.includes("●");
+    const isBullet = piece.includes("●");
+    if (isHeading) {
+      flush();
+      group = [piece];
+      continue;
+    }
+    if (isBullet) {
+      group.push(piece);
+      continue;
+    }
+    flush();
+    sections.push(piece);
+  }
+  flush();
+  return sections.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /**
  * 번호·콜론 라벨·문단 경계를 읽기 좋게 맞춤.
  * (정리·분류 / AI 보고서 붙여넣기 공통)
  */
 export function tidyReportPasteSpacing(raw: string): string {
-  let t = (raw || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  let t = tidyMarkerParagraphs(raw || "");
   if (!t.trim()) return "";
 
   // 2.바빌로니아 → 2. 바빌로니아
@@ -70,8 +182,8 @@ export function tidyReportPasteSpacing(raw: string): string {
   // "삼음. 2. 바빌로니아…"
   t = t.replace(/(?<!\d)([.。!！?？…])\s*(\d+\.\s+)/g, "$1\n\n$2");
 
-  // 한글/닫는괄호 뒤 콜론 붙여쓰기: "기준:28" → "기준: 28" (URL 제외)
-  t = t.replace(/([가-힣)）」』])\s*:(?!\/\/)\s*(?=\S)/g, "$1: ");
+  // 한글/닫는괄호 뒤 콜론 붙여쓰기: "기준:28" → "기준: 28" (URL·줄바꿈 제외)
+  t = t.replace(/([가-힣)）」』])[ \t]*:(?!\/\/)[ \t]*(?=\S)/g, "$1: ");
 
   // `라벨:` 이 있으면 단락으로 인식 (문장 끝 여부와 무관)
   t = splitTopicColonLabels(t);
@@ -184,4 +296,93 @@ export function unwrapSoftLineBreaks(text: string): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+/** 번호·불릿이 있는데 줄이 거의 없거나, 한 줄이 비정상적으로 길면 재정리 */
+export function shouldReflowReportText(text: string): boolean {
+  const t = String(text || "").replace(/\u00a0/g, " ").trim();
+  if (t.length < 40) return false;
+  const hasList =
+    /\d+[.)]/.test(t) ||
+    /언제\s*:/.test(t) ||
+    /설명\s*:/.test(t) ||
+    /[-–—]\s*(언제|무엇|설명)/.test(t);
+  if (!hasList) return false;
+  const lines = t
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 8 && !/^<\/?[a-z]/i.test(l));
+  const longest = Math.max(0, ...lines.map((l) => l.length));
+  const marks = (t.match(/\d+[.)]/g) || []).length;
+  const labels = (t.match(/[-–—]\s*(언제|무엇\s*다음에?|설명)\s*:/g) || [])
+    .length;
+  if (longest >= 80 && (marks >= 1 || labels >= 1)) return true;
+  if ((marks >= 2 || labels >= 2) && lines.length < marks + labels + 3) {
+    return true;
+  }
+  if (lines.length <= 2 && (marks >= 1 || labels >= 1)) return true;
+  if (marks >= 2 && longest >= 60) return true;
+  return false;
+}
+
+/**
+ * 한 덩어리로 붙은 보고서 본문을 번호·불릿·라벨 기준으로 다시 나눕니다.
+ * (아이폰 편집 끝내기 후 줄바꿈이 사라진 경우)
+ */
+export function reflowFlattenedReportText(raw: string): string {
+  let t = String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ");
+  if (!t.trim()) return "";
+
+  t = t.replace(/[ \t]+/g, " ");
+
+  // 1.사용순서 → 문단 (연도 2026.9 는 앞이 숫자라 제외)
+  t = t.replace(/^(\d{1,2}\.)\s*(?=[가-힣A-Za-z(「『“"'])/gm, "$1 ");
+  t = t.replace(
+    /([^\d\n])(\d{1,2}\.)\s*(?=[가-힣A-Za-z(「『“"'])/g,
+    "$1\n\n$2 "
+  );
+
+  // 1)에스트라 / 요약1)에스트라 → 문단
+  t = t.replace(/([^\n])(\d{1,2}\))\s*/g, "$1\n\n$2 ");
+
+  // -언제: / -무엇다음에: / -설명:  (전각·마이너스 포함)
+  t = t.replace(
+    /\s*[-–—−－]\s*(언제|무엇\s*다음에?|설명)\s*:/g,
+    "\n\n- $1: "
+  );
+
+  // -비타민C / 비타민C-진정 처럼 붙은 일반 불릿
+  t = t.replace(
+    /([가-힣A-Za-z0-9.。!?！？])\s*[-–—−－]\s*(?=[가-힣A-Za-z(])/g,
+    "$1\n\n- "
+  );
+
+  // ·톤/탄력 불릿
+  t = t.replace(/\s*·\s*/g, "\n· ");
+
+  // 문장 끝 바로 이어진 번호·단계
+  t = t.replace(/([.。!?！？])\s*(?=\d{1,2}[.)])/g, "$1\n\n");
+  t = t.replace(/([.。!?！？])\s*(?=\d+\s*단계)/g, "$1\n\n");
+  t = t.replace(/([.。!?！？가-힣])\s*(?=(?:아침|저녁)\s*루틴)/g, "$1\n\n");
+
+  // `2. 짧은제목 아침 루틴 … (차단제) 저녁 루틴`
+  t = t.replace(/^(\d+[.)]\s+[^\n]{4,40}?)\s+(아침\s)/gm, "$1\n\n$2");
+  t = t.replace(/(\))\s+(저녁\s)/g, "$1\n\n$2");
+
+  t = tidyReportPasteSpacing(t);
+
+  const lines = t
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+  for (const line of lines) {
+    const isItem = /^(?:\d+[.)]|[-–—−－•·])/.test(line);
+    if (isItem && blocks.length) blocks.push("");
+    blocks.push(line);
+  }
+  return blocks.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

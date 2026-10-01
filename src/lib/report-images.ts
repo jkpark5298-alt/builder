@@ -137,6 +137,31 @@ export function orderedSlotUrls(
   return out;
 }
 
+/** TEXT 본문 [S1] 칸에 refs 가 없으면 이미지 룸을 순서대로 넣습니다. */
+export function orderedSlotUrlsWithRoomFallback(
+  sec: ReportSectionBlock,
+  room: TypedReport["imageRoom"] | undefined,
+  slotCount: number,
+  roomStartIndex = 0
+): string[] {
+  const out = orderedSlotUrls(sec, room, slotCount);
+  if (slotCount <= 0) return out;
+  const items = normalizeRoomItems(room);
+  const used = new Set(out.filter(Boolean));
+  const unused = items
+    .map((it) => it.url)
+    .filter((u) => u && !used.has(u));
+  let ui = 0;
+  let ri = roomStartIndex;
+  return Array.from({ length: slotCount }, (_, i) => {
+    if (out[i]) return out[i];
+    if (unused[ui]) return unused[ui++] || "";
+    const next = items[ri]?.url || "";
+    ri += 1;
+    return used.has(next) ? "" : next;
+  });
+}
+
 /**
  * 슬롯 URL → 룸 upsert + 섹션은 imageRefs만 저장 (refs-only).
  */

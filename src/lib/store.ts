@@ -91,6 +91,7 @@ function normalizeVideo(raw: VideoRecord): VideoRecord {
           ? "pass"
           : undefined,
     sourceUrl: raw.sourceUrl?.trim() || undefined,
+    inputBodyHtml: raw.inputBodyHtml?.trim() || undefined,
     articleImages: Array.isArray(raw.articleImages)
       ? raw.articleImages.filter((u) => typeof u === "string" && u.trim())
       : undefined,

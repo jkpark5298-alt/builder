@@ -4,6 +4,7 @@ import {
   createManualOverviewJob,
   createVideoJob,
   runVideoPipeline,
+  importArchiveAppFile,
   saveReportInputDraft,
   startReportFromDraft,
 } from "@/lib/process";
@@ -39,8 +40,9 @@ export async function POST(req: Request) {
   }
   try {
     const body = (await req.json()) as {
-      /** youtube (기본) | report | report_draft */
-      mode?: "youtube" | "report" | "report_draft";
+      /** youtube (기본) | report | report_draft | archive_file */
+      mode?: "youtube" | "report" | "report_draft" | "archive_file";
+      archiveFile?: unknown;
       youtubeUrl?: string;
       title?: string;
       channel?: string;
@@ -49,11 +51,21 @@ export async function POST(req: Request) {
       thumbnailUrl?: string;
       sourceUrl?: string;
       articleImages?: string[];
+      inputBodyHtml?: string;
       /** AI 요약 건너뛰고 수동 요약 화면으로 */
       manualOverview?: boolean;
       /** 유튜브 팩트체크 pass — 검증 없이 바로 보고서 */
       skipFactCheck?: boolean;
     };
+
+    if (body.mode === "archive_file") {
+      const video = await importArchiveAppFile(body.archiveFile);
+      return NextResponse.json({
+        video,
+        imported: true,
+        storage: storageMode(),
+      });
+    }
 
     if (body.mode === "report_draft") {
       const title = body.title?.trim();
@@ -71,6 +83,8 @@ export async function POST(req: Request) {
         thumbnailUrl: body.thumbnailUrl?.trim(),
         sourceUrl: body.sourceUrl?.trim(),
         articleImages: body.articleImages,
+        inputBodyHtml:
+          typeof body.inputBodyHtml === "string" ? body.inputBodyHtml : undefined,
       });
       return NextResponse.json({
         video,

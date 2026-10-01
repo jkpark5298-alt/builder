@@ -1,12 +1,12 @@
-import { buildTypedReport } from "./report";
+import { buildTypedReport, plainTextToHtml } from "./report";
 import { stabilizeReportFcAnchors } from "./fc-markers";
-import { isUrlArticleInput } from "./input-mode";
+import { isUrlArticleInput, isYoutubeInput, reportSourceLink } from "./input-mode";
 import { normalizeRoomItems, upsertRoomUrls } from "./report-images";
 import {
   buildUrlArticleReport,
   URL_ARTICLE_REPORT_NOTICE,
 } from "./url-article-report";
-import type { TypedReport, VideoRecord } from "./types";
+import { REPORT_TYPE_LABELS, type TypedReport, type VideoRecord } from "./types";
 
 /** URL에서 가져온 사진을 보고서 이미지 룸에 합친다 (본문 S칸에 붙일 수 있게) */
 export function withArticleImages(
@@ -30,6 +30,34 @@ export const SKELETON_REPORT_NOTICE =
 export function buildSkeletonReport(
   video: Parameters<typeof buildTypedReport>[0]
 ): TypedReport {
+  if (isYoutubeInput(video)) {
+    const overview = (video.overview || "").trim();
+    const body = plainTextToHtml(overview);
+    return {
+      meta: {
+        title: video.title,
+        channel: video.channel,
+        url: video.youtubeUrl || reportSourceLink(video),
+        writtenAt: new Date(
+          video.updatedAt || video.createdAt
+        ).toLocaleString("ko-KR"),
+      },
+      reportType: video.reportType || "C",
+      reportTypeLabel: REPORT_TYPE_LABELS[video.reportType || "C"] || "일반 보고서",
+      format: "general_v5",
+      sections: [
+        {
+          sectionId: "sec-youtube-body",
+          heading: "본문",
+          body,
+          rich: true,
+        },
+      ],
+      summaryExcerpt: overview.slice(0, 280),
+      imageRoom: [],
+      factChecks: [],
+    };
+  }
   const report = stabilizeReportFcAnchors(buildTypedReport(video));
   return {
     ...report,
@@ -77,11 +105,16 @@ export async function ensureSkeletonReport(
     return video;
   }
   const report = withArticleImages(buildSkeletonReport(video), video);
+  const youtube = isYoutubeInput(video);
   return {
     ...video,
     report,
     reportSource: "assembled",
-    reportWriteNotice: SKELETON_REPORT_NOTICE,
+    reportWriteNotice: youtube
+      ? "요약을 본문 글로 넣었습니다. 정보 보관소와 같은 텍스트 보고서입니다."
+      : SKELETON_REPORT_NOTICE,
+    reportSkeletonEdited: youtube ? true : video.reportSkeletonEdited,
+    pendingReportFinalize: youtube ? "keep_body" : video.pendingReportFinalize,
     updatedAt: new Date().toISOString(),
   };
 }

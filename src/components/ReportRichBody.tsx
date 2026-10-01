@@ -72,8 +72,8 @@ export function RichBody({
   onSaveSelectionRef.current = onSaveSelection;
 
   const chromeClass = plainChrome
-    ? "report-body min-h-[1.5rem] w-full max-w-full overflow-x-hidden bg-transparent px-0 py-1 text-sm outline-none leading-relaxed prose prose-sm max-w-none"
-    : "report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none";
+    ? "report-body min-h-[1.5rem] w-full max-w-full bg-transparent px-0 py-1 text-sm outline-none leading-relaxed prose prose-sm max-w-none"
+    : "report-body min-h-[120px] w-full max-w-full rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none";
 
   const editor = useEditor({
     immediatelyRender: false,

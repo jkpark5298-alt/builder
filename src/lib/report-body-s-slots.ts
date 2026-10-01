@@ -1,3 +1,5 @@
+import { sanitizeRichHtml } from "./rich-text";
+
 /**
  * 본문 문장/문단 끝의 S 표시 → 이미지 슬롯 (섹션 분할 없음).
  * S 는 화면에 보이지 않고, 그 자리에 이미지만 붙입니다.
@@ -15,9 +17,9 @@ export type BodySSegment = {
   preview: string;
 };
 
-/** 문단/문장 끝의 이미지 표시 S/s 또는 S1·S2… (앞에 공백·문장부호 있거나 단독) */
-const S_ONLY_RE = /^[Ss]\d{0,2}\.?$/u;
-const S_MARK_TAIL = "[Ss]\\d{0,2}\\.?";
+/** 문단/문장 끝의 이미지 표시 S/s 또는 S1·S2… · TEXT [S1] */
+const S_ONLY_RE = /^(?:\[)?[Ss]\d{0,2}\.?(?:\])?$/u;
+const S_MARK_TAIL = "(?:\\[)?[Ss]\\d{0,2}\\.?(?:\\])?";
 
 function stripTags(html: string): string {
   return html
@@ -40,6 +42,8 @@ function stripTrailingSFromPlain(text: string): { text: string; hadS: boolean } 
     .replace(/[\u200B\uFEFF]/g, "")
     .trimEnd();
   if (S_ONLY_RE.test(t.trim())) return { text: "", hadS: true };
+  const withBracket = t.replace(/\s*\[S\d{0,2}\]\s*$/i, "").trimEnd();
+  if (withBracket !== t) return { text: withBracket, hadS: true };
   // `…이다. S` / `…이다 S2` / `…이다．S1`
   const withSpace = t
     .replace(new RegExp(`(?:^|[\\s\\u00a0]+)${S_MARK_TAIL}\\s*$`, "u"), "")
@@ -106,8 +110,9 @@ function stripTrailingSFromHtmlBlock(block: string): {
       "$1"
     );
   if (html === before && hadS) {
-    // 평문에선 S 인데 HTML 패턴이 안 맞으면 텍스트 노드만 제거 시도
-    html = html.replace(/([Ss]\d{0,2})\.?(?=\s*(?:<\/[^>]+>\s*)*$)/u, "");
+    html = html
+      .replace(/\s*\[S\d{0,2}\]\s*/gi, "")
+      .replace(/([Ss]\d{0,2})\.?(?=\s*(?:<\/[^>]+>\s*)*$)/u, "");
   }
   if (!stripTags(html).trim()) return { html: "", hadS: true };
   return { html, hadS: true };
@@ -121,10 +126,7 @@ function splitBlockIntoLinePieces(block: string): string[] {
   const wrapped = block.match(/^<(p|div|li|h[1-6]|blockquote)(\s[^>]*)?>([\s\S]*)<\/\1>$/i);
   if (!wrapped) {
     if (!/<br\s*\/?>/i.test(block)) return [block];
-    return block
-      .split(/<br\s*\/?>/gi)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    return block.split(/<br\s*\/?>/gi);
   }
   const [, tag, attrs = "", inner] = wrapped;
   if (!/<br\s*\/?>/i.test(inner)) return [block];
@@ -175,6 +177,35 @@ export function parseBodySImageSlots(html: string): {
 
   const pieces = blocks.flatMap((b) => splitBlockIntoLinePieces(b));
 
+  /** 한 덩어리 안의 [S1][S2]… 도 슬롯으로 나눕니다. */
+  function explodeSMarks(piece: string): Array<{ html: string; hadS: boolean }> {
+    if (!/\[S\d{1,2}\]/i.test(piece)) {
+      return [stripTrailingSFromHtmlBlock(piece)];
+    }
+    const wrapped = piece.match(
+      /^<(p|div|li|h[1-6]|blockquote)(\s[^>]*)?>([\s\S]*)<\/\1>$/i
+    );
+    const tag = wrapped?.[1];
+    const attrs = wrapped?.[2] || "";
+    const inner = wrapped ? wrapped[3] : piece;
+    const wrap = (s: string) => {
+      const t = s.trim();
+      if (!t) return "";
+      return tag ? `<${tag}${attrs}>${t}</${tag}>` : t;
+    };
+    const out: Array<{ html: string; hadS: boolean }> = [];
+    let last = 0;
+    const markRe = /\[S\d{1,2}\]/gi;
+    let mm: RegExpExecArray | null;
+    while ((mm = markRe.exec(inner))) {
+      out.push({ html: wrap(inner.slice(last, mm.index)), hadS: true });
+      last = mm.index + mm[0].length;
+    }
+    const rest = inner.slice(last);
+    if (rest.trim()) out.push(stripTrailingSFromHtmlBlock(wrap(rest) || rest));
+    return out.length ? out : [stripTrailingSFromHtmlBlock(piece)];
+  }
+
   const segments: BodySSegment[] = [];
   let buf = "";
   let slotCount = 0;
@@ -191,12 +222,22 @@ export function parseBodySImageSlots(html: string): {
     });
   };
 
+  const isBlockHtml = (s: string) =>
+    /^<(p|div|h[1-6]|li|blockquote)\b/i.test(s.trim()) ||
+    /<\/(p|div|h[1-6]|li|blockquote)>\s*$/i.test(s);
+
   for (const piece of pieces) {
-    const { html: cleaned, hadS } = stripTrailingSFromHtmlBlock(piece);
-    if (cleaned) buf += cleaned;
-    if (hadS) {
-      slotCount += 1;
-      flushText(true);
+    for (const { html: cleaned, hadS } of explodeSMarks(piece)) {
+      if (cleaned) {
+        if (buf && !isBlockHtml(buf) && !isBlockHtml(cleaned)) buf += "<br>";
+        buf += cleaned;
+      } else if (buf && !hadS) {
+        buf += "<br>";
+      }
+      if (hadS) {
+        slotCount += 1;
+        flushText(true);
+      }
     }
   }
   if (buf.trim()) flushText(false);
@@ -231,21 +272,25 @@ export function parseBodySImageSlots(html: string): {
 /** 보기/인쇄: S 자리에 이미지를 끼워 넣은 HTML */
 export function htmlWithSImages(
   html: string,
-  imageUrls: string[]
+  imageUrls: string[],
+  startN = 0
 ): string {
   const filled = (imageUrls || []).map((u) => (u || "").trim()).filter(Boolean);
   const { segments, slotCount } = parseBodySImageSlots(html);
+  const label = (n: number) => `S${startN + n}`;
   if (!slotCount) {
-    // S 표시가 없어도 저장된 이미지가 있으면 본문 끝에 붙임
-    const { textOnlyHtml } = parseBodySImageSlots(html);
-    const base = textOnlyHtml || html || "";
+    // S 칸이 없으면 본문 HTML을 다시 조립하지 않음 (줄바꿈이 사라짐)
+    const base =
+      typeof document !== "undefined"
+        ? sanitizeRichHtml(html || "")
+        : html || "";
     if (!filled.length) return base;
     return (
       base +
       filled
         .map(
           (src, i) =>
-            `<figure class="report-s-image"><span class="s-slot-badge">S${i + 1}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+            `<figure class="report-s-image"><span class="s-slot-badge">${label(i + 1)}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
         )
         .join("")
     );
@@ -259,7 +304,7 @@ export function htmlWithSImages(
       if (src) {
         const n = imgIdx;
         parts.push(
-          `<figure class="report-s-image"><span class="s-slot-badge">S${n}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+          `<figure class="report-s-image"><span class="s-slot-badge">${label(n)}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
         );
       }
     }
@@ -270,7 +315,7 @@ export function htmlWithSImages(
     if (!src) continue;
     const n = imgIdx;
     parts.push(
-      `<figure class="report-s-image"><span class="s-slot-badge">S${n}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
+      `<figure class="report-s-image"><span class="s-slot-badge">${label(n)}</span><img src="${src.replace(/"/g, "&quot;")}" alt="" /></figure>`
     );
   }
   return parts.join("");
@@ -284,8 +329,8 @@ export function bodyHtmlWithSSlotFigures(
   html: string,
   imageUrls: string[]
 ): string {
-  const { segments, slotCount, textOnlyHtml } = parseBodySImageSlots(html);
-  if (!slotCount) return textOnlyHtml || html || "<p></p>";
+  const { segments, slotCount } = parseBodySImageSlots(html);
+  if (!slotCount) return html || "<p></p>";
   let imgIdx = 0;
   const parts: string[] = [];
   for (const seg of segments) {

@@ -7,7 +7,7 @@ import type { VideoRecord } from "@/lib/types";
 import { isYoutubeInput } from "@/lib/input-mode";
 import { detectPasteKind } from "@/lib/paste-organize";
 import { normalizeAiOverviewPaste } from "@/lib/text-format";
-import { FLOW, flowLabel, PENDING_OVERVIEW_KEY } from "@/lib/flow-steps";
+import { flowLabel, PENDING_OVERVIEW_KEY } from "@/lib/flow-steps";
 import {
   EXTERNAL_APP_LABEL,
   launchExternalApp,
@@ -41,19 +41,47 @@ export function AiPasteInbox({ video }: { video: VideoRecord }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  const [autoApplying, setAutoApplying] = useState(false);
 
   useEffect(() => {
+    let pending = "";
     try {
-      const pending = sessionStorage.getItem(PENDING_OVERVIEW_KEY);
-      if (!pending?.trim()) return;
-      sessionStorage.removeItem(PENDING_OVERVIEW_KEY);
-      setPaste(pending.trim());
-      setRole("overview");
-      setHint("제미나이 API 요약이 자동으로 채워졌습니다. 확인 후 저장하세요.");
+      pending = sessionStorage.getItem(PENDING_OVERVIEW_KEY)?.trim() ?? "";
+      if (pending) sessionStorage.removeItem(PENDING_OVERVIEW_KEY);
     } catch {
-      /* ignore */
+      return;
     }
-  }, []);
+    if (pending.length < 40) return;
+    setAutoApplying(true);
+    const overview = normalizeAiOverviewPaste(pending) || pending;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/videos/${video.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            updateOverview: { overview, complete: true },
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) throw new Error(data.error || "요약을 넣지 못했습니다.");
+        router.refresh();
+        window.setTimeout(() => {
+          (
+            document.getElementById("report-draft") ||
+            document.getElementById("report") ||
+            document.getElementById("general-summary")
+          )?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 300);
+      } catch (e) {
+        setPaste(pending);
+        setRole("overview");
+        setError(e instanceof Error ? e.message : "요약을 넣지 못했습니다.");
+      } finally {
+        setAutoApplying(false);
+      }
+    })();
+  }, [router, video.id]);
 
   const guessed = useMemo(
     () => (paste.trim().length >= 20 ? guessRole(video, paste) : null),
@@ -129,7 +157,7 @@ export function AiPasteInbox({ video }: { video: VideoRecord }) {
           updateOverview: { overview, complete: true },
         });
         setHint(
-          `${flowLabel("pasteSummary")}·저장 완료. 「1. 자막·요약」에 반영됨. 다음: ${flowLabel("copySummary")} → ${flowLabel("pasteReport")}.`
+          `${flowLabel("pasteSummary")}·저장 완료. 다음: 3. 보고서.`
         );
       }
       setPaste("");
@@ -147,47 +175,55 @@ export function AiPasteInbox({ video }: { video: VideoRecord }) {
     }
   }
 
+  if (autoApplying) {
+    return (
+      <section className="rounded-2xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-700 print:hidden">
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          제미나이 요약을 넣고 보고서로 가는 중…
+        </span>
+      </section>
+    );
+  }
+
   return (
     <section className="rounded-2xl border border-ink-900 bg-white p-4 sm:p-5 space-y-3 print:hidden">
       <div className="flex items-start gap-2">
         <ClipboardPaste className="h-5 w-5 mt-0.5 shrink-0" />
         <div>
-          <h2 className="font-medium text-ink-900">외부 AI 답변 붙여넣기</h2>
+          <h2 className="font-medium text-ink-900">2. 수동 요약</h2>
           <p className="text-xs text-ink-500 mt-0.5">
-            제미나이·다글로에서 <strong>받은 요약</strong>을 아래 칸에 붙입니다.
+            자동 요약이 안 될 때만 이 칸에 요약을 붙입니다.
           </p>
         </div>
       </div>
-      <ol className="text-xs text-ink-700 leading-relaxed list-none ml-0 space-y-0.5 rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
-        <li>{flowLabel("pasteSummary")} — 탭을 <strong>요약</strong>으로</li>
-        <li>
-          {FLOW.pasteSummary.n}. 제미나이 요약을 아래 칸에 붙여넣기
-        </li>
-        <li>
-          {flowLabel("saveSummary", "요약으로 넣기")} (정리·저장 포함)
-        </li>
-      </ol>
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          disabled={(video.transcript || "").trim().length < 40}
-          onClick={() => openExternalAfterCopyTranscript("gemini")}
-          className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-        >
-          제미나이
-        </button>
-        <button
-          type="button"
-          disabled={(video.transcript || "").trim().length < 40}
-          onClick={() => openExternalAfterCopyTranscript("daglo")}
-          className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
-        >
-          다글로
-        </button>
-        <span className="text-[11px] text-ink-500 self-center">
-          자막 복사 후 앱 열기
-        </span>
-      </div>
+      <p className="text-xs text-ink-700 leading-relaxed rounded-lg bg-ink-50 border border-ink-100 px-3 py-2">
+        요약을 붙인 뒤 「{flowLabel("saveSummary", "요약으로 넣기")}」를 누르면
+        3. 보고서로 갑니다.
+      </p>
+      <details className="rounded-xl border border-ink-200 bg-ink-50/50 px-3 py-2">
+        <summary className="cursor-pointer text-xs font-medium text-ink-800">
+          고급 · 제미나이·다글로에 자막 복사
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            disabled={(video.transcript || "").trim().length < 40}
+            onClick={() => openExternalAfterCopyTranscript("gemini")}
+            className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+          >
+            제미나이
+          </button>
+          <button
+            type="button"
+            disabled={(video.transcript || "").trim().length < 40}
+            onClick={() => openExternalAfterCopyTranscript("daglo")}
+            className="inline-flex items-center min-h-9 rounded-lg border border-ink-200 bg-white px-3 text-xs font-medium hover:border-accent disabled:opacity-50"
+          >
+            다글로
+          </button>
+        </div>
+      </details>
       {isYoutubeInput(video) ? (
         <details className="rounded-xl border border-ink-200 bg-ink-50/50 px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium text-ink-800">

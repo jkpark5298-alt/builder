@@ -229,6 +229,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
       thumbnailUrl?: string;
       sourceUrl?: string;
       articleImages?: string[];
+      inputBodyHtml?: string;
     };
     /** Report 입력 임시 저장 → 요약·검증 시작 */
     startReportPipeline?: boolean;
@@ -236,6 +237,8 @@ async function patchVideo(req: Request, ctx: Ctx) {
     manualOverview?: boolean;
     /** 완료(ready) → 임시 저장(awaiting_factcheck)으로 되돌림 */
     reopenAsDraft?: boolean;
+    /** 정보 보관소 요약 화면 → 입력(서식) 화면으로 되돌림 */
+    returnToReportInput?: boolean;
     /**
      * reopenAsDraft 시 완료 후 본문 처리.
      * true(기본): 본문 유지·FC만 반영 / false: 보고서 재작성
@@ -327,6 +330,24 @@ async function patchVideo(req: Request, ctx: Ctx) {
   }
 
   let next = { ...video };
+
+  if (body.returnToReportInput) {
+    if (video.inputMode !== "report") {
+      return NextResponse.json(
+        { error: "정보 보관소 항목만 입력 화면으로 돌아갈 수 있습니다." },
+        { status: 400 }
+      );
+    }
+    if (video.status === "report_input_draft") {
+      return jsonVideo(video, { mode: "report_input_draft" });
+    }
+    const saved = await upsertVideo({
+      ...video,
+      status: "report_input_draft",
+      updatedAt: new Date().toISOString(),
+    });
+    return jsonVideo(saved, { mode: "report_input_draft" });
+  }
 
   if (body.importArticleImages) {
     const rawUrl =
@@ -516,16 +537,14 @@ async function patchVideo(req: Request, ctx: Ctx) {
       sourceUrl: body.updateReportInput.sourceUrl ?? video.sourceUrl,
       articleImages:
         body.updateReportInput.articleImages ?? video.articleImages,
+      inputBodyHtml: body.updateReportInput.inputBodyHtml,
     });
     return jsonVideo(saved, { mode: "report_input_draft" });
   }
 
   if (body.startReportPipeline) {
     if (video.status !== "report_input_draft") {
-      return NextResponse.json(
-        { error: "이미 요약·검증이 시작된 항목입니다." },
-        { status: 400 }
-      );
+      return jsonVideo(video, { alreadyStarted: true });
     }
     const script = normalizePastedText(
       body.updateReportInput?.pastedScript ?? video.transcript ?? ""
@@ -541,6 +560,7 @@ async function patchVideo(req: Request, ctx: Ctx) {
         sourceUrl: body.updateReportInput.sourceUrl ?? video.sourceUrl,
         articleImages:
           body.updateReportInput.articleImages ?? video.articleImages,
+        inputBodyHtml: body.updateReportInput.inputBodyHtml,
       });
     }
     const processed = await startReportFromDraft(
