@@ -91,7 +91,6 @@ import { ReportFactCheckResults } from "@/components/ReportFactCheckResults";
 import { FormatToolbar } from "@/components/ReportFormatToolbar";
 import { MobileFormatBubble } from "@/components/MobileFormatBubble";
 import { RichBody } from "@/components/ReportRichBody";
-import { RichTextEditor } from "@/components/RichTextEditor";
 import { HandwritingModal } from "@/components/HandwritingModal";
 import { ImageCropModal } from "@/components/ImageCropModal";
 import { ArticleReaderView } from "@/components/ArticleReaderView";
@@ -132,9 +131,7 @@ import {
   removeSSlotAtIndex,
 } from "@/lib/report-body-s-slots";
 import {
-  appendInlineImagesToHtml,
   bodyUsesInlineRichImages,
-  collectInlineBodyImageSrcs,
   migrateReportToInlineImages,
   prepareInlineBodyForView,
 } from "@/lib/report-inline-images";
@@ -491,6 +488,31 @@ function UrlArticleImageGallery({
       )}
     </div>
   );
+}
+
+/** 인라인 이미지 HTML을 TipTap S 칸으로 바꿔 편집기에 올립니다. 저장본은 바꾸지 않습니다. */
+function inlineImagesToSMarkers(html: string): { body: string; urls: string[] } {
+  const raw = html || "";
+  if (!/rich-inline-img|rich-img-slot|data-img-slot=/i.test(raw)) {
+    return { body: raw, urls: [] };
+  }
+  const urls: string[] = [];
+  const take = (src: string) => {
+    urls.push(src.replace(/&quot;/g, '"').replace(/&amp;/g, "&").trim());
+    return `<p>S${urls.length}</p>`;
+  };
+  let body = raw.replace(
+    /<span\b[^>]*class=["'][^"']*rich-inline-img-wrap[^"']*["'][^>]*>[\s\S]*?<\/span>\s*<\/span>/gi,
+    (wrap) => {
+      const m = /<img\b[^>]*\bsrc=["']([^"']*)["']/i.exec(wrap);
+      return take(m?.[1] || "");
+    }
+  );
+  body = body.replace(
+    /<span\b[^>]*class=["'][^"']*rich-img-slot[^"']*["'][^>]*>[\s\S]*?<\/span>/gi,
+    () => take("")
+  );
+  return { body, urls };
 }
 
 export function EditableReportPanel({
@@ -1611,6 +1633,75 @@ export function EditableReportPanel({
     });
   }
 
+  function editorHtmlForSection(
+    sec: ReportSectionBlock,
+    room: TypedReport["imageRoom"] | undefined
+  ): string {
+    const raw = (sec.body || "").trim() || "<p></p>";
+    if (bodyUsesInlineRichImages(raw)) {
+      const converted = inlineImagesToSMarkers(raw);
+      return bodyHtmlWithSSlotFigures(
+        converted.body || "<p></p>",
+        converted.urls
+      );
+    }
+    const n = countTrailingSMarkers(raw);
+    return bodyHtmlWithSSlotFigures(raw, slotUrlsForSectionFrom(sec, room, n));
+  }
+
+  function slotUrlsBeforeEditorWrite(
+    sec: ReportSectionBlock,
+    room: TypedReport["imageRoom"] | undefined,
+    slotCount: number
+  ): string[] {
+    if (bodyUsesInlineRichImages(sec.body || "")) {
+      const converted = inlineImagesToSMarkers(sec.body || "");
+      const urls = converted.urls.slice();
+      const n = Math.max(urls.length, slotCount);
+      while (urls.length < n) urls.push("");
+      return urls;
+    }
+    const n = Math.max(countTrailingSMarkers(sec.body || ""), slotCount);
+    return slotUrlsForSectionFrom(sec, room, n);
+  }
+
+  /** TipTap 본문(figure)을 저장용 S 표시 + 이미지 슬롯으로 되돌립니다. */
+  function persistBodyEditorHtml(
+    idx: number,
+    editorHtml: string,
+    history: "immediate" | "debounced" | "none" = "debounced"
+  ) {
+    updateDraft((prev) => {
+      const cur = prev.sections[idx];
+      if (!cur) return prev;
+      const parsed = bodyAndUrlsFromEditorHtml(editorHtml);
+      const slotCount = countTrailingSMarkers(parsed.body);
+      const prevOrdered = slotUrlsBeforeEditorWrite(
+        cur,
+        prev.imageRoom,
+        slotCount
+      );
+      const ordered = orderedUrlsForGrowingSlots(prevOrdered, slotCount, {
+        figureUrls: parsed.urls,
+        hadFigures: countSSlotFigures(editorHtml) > 0,
+      });
+      const { room, section } = bindSectionSlotUrls(cur, prev.imageRoom, ordered, {
+        body: parsed.body || "<p></p>",
+        rich: true,
+      });
+      if (
+        section.body === cur.body &&
+        JSON.stringify(section.imageRefs ?? null) ===
+          JSON.stringify(cur.imageRefs ?? null)
+      ) {
+        return prev;
+      }
+      const sections = [...prev.sections];
+      sections[idx] = section;
+      return { ...prev, sections, imageRoom: room };
+    }, { history });
+  }
+
   const resolveActiveTipTap = useCallback(() => {
     const sec = draftRef.current?.sections[activeSectionIdx];
     if (sec) {
@@ -1713,7 +1804,7 @@ export function EditableReportPanel({
       if (part === "heading") {
         patchSection(idx, { heading: editorHtmlToHeading(editor.getHTML()) }, "immediate");
       } else {
-        patchSection(idx, { body: editor.getHTML(), rich: true }, "immediate");
+        persistBodyEditorHtml(idx, editor.getHTML(), "immediate");
       }
       showFormatHint(
         mode === "paragraph"
@@ -1783,7 +1874,7 @@ export function EditableReportPanel({
           "immediate"
         );
       } else {
-        patchSection(idx, { body: editor.getHTML(), rich: true }, "immediate");
+        persistBodyEditorHtml(idx, editor.getHTML(), "immediate");
       }
       saveEditorSelection();
     },
@@ -1819,21 +1910,50 @@ export function EditableReportPanel({
     return sectionSnapshot(sec) !== savedSections[idx];
   }
 
-  /** TipTap 제목에만 반영되고 draft 에 빠진 내용을 저장 직전에 합침 (본문은 RichTextEditor onChange) */
+  /** 저장 직전, 아직 draft 에 안 올라간 TipTap 제목·본문을 합칩니다. */
   function flushLiveEditorsToDraft(): TypedReport | null {
     const current = draftRef.current;
     if (!current) return null;
     let changed = false;
+    let room = current.imageRoom;
     const sections = current.sections.map((sec, idx) => {
-      const headingEd = getReportEditor(`${sectionEditKey(sec, idx)}::heading`);
-      if (!headingEd) return sec;
-      const nextHeading = editorHtmlToHeading(headingEd.getHTML());
-      if ((sec.heading || "") === nextHeading) return sec;
-      changed = true;
-      return { ...sec, heading: nextHeading };
+      let out = sec;
+      const key = sectionEditKey(sec, idx);
+      const headingEd = getReportEditor(`${key}::heading`);
+      if (headingEd) {
+        const nextHeading = editorHtmlToHeading(headingEd.getHTML());
+        if ((out.heading || "") !== nextHeading) {
+          changed = true;
+          out = { ...out, heading: nextHeading };
+        }
+      }
+      const bodyEd = getReportEditor(key);
+      if (bodyEd) {
+        const parsed = bodyAndUrlsFromEditorHtml(bodyEd.getHTML());
+        const slotCount = countTrailingSMarkers(parsed.body);
+        const prevOrdered = slotUrlsBeforeEditorWrite(out, room, slotCount);
+        const ordered = orderedUrlsForGrowingSlots(prevOrdered, slotCount, {
+          figureUrls: parsed.urls,
+          hadFigures: countSSlotFigures(bodyEd.getHTML()) > 0,
+        });
+        const applied = bindSectionSlotUrls(out, room, ordered, {
+          body: parsed.body || "<p></p>",
+          rich: true,
+        });
+        const bodyChanged = applied.section.body !== out.body;
+        const refsChanged =
+          JSON.stringify(applied.section.imageRefs ?? null) !==
+          JSON.stringify(out.imageRefs ?? null);
+        if (bodyChanged || refsChanged) {
+          changed = true;
+          out = applied.section;
+          room = applied.room;
+        }
+      }
+      return out;
     });
     if (!changed) return current;
-    const next = { ...current, sections };
+    const next = { ...current, sections, imageRoom: room };
     draftRef.current = next;
     setDraft(next);
     return next;
@@ -2391,7 +2511,7 @@ export function EditableReportPanel({
     if (editor) {
       try {
         editor.chain().focus().insertContent(html).run();
-        patchSection(idx, { body: editor.getHTML(), rich: true });
+        persistBodyEditorHtml(idx, editor.getHTML(), "immediate");
         return;
       } catch {
         /* append below */
@@ -2411,19 +2531,34 @@ export function EditableReportPanel({
     updateDraft((prev) => {
       const sec = prev.sections[secIdx];
       if (!sec) return prev;
-      const body = appendInlineImagesToHtml(sec.body || "", urls);
-      const room = upsertRoomUrls(prev.imageRoom, urls).room;
+      let body = sec.body || "<p></p>";
+      let baseUrls: string[] = [];
+      if (bodyUsesInlineRichImages(body)) {
+        const converted = inlineImagesToSMarkers(body);
+        body = converted.body || "<p></p>";
+        baseUrls = converted.urls.slice();
+      } else {
+        const n = countTrailingSMarkers(body);
+        baseUrls = slotUrlsForSectionFrom(sec, prev.imageRoom, n);
+      }
+      const start = countTrailingSMarkers(body);
+      const nextBody = ensureTrailingSMarkers(body, start + urls.length);
+      const slotCount = countTrailingSMarkers(nextBody);
+      const ordered = baseUrls.slice();
+      while (ordered.length < start) ordered.push("");
+      for (const url of urls) ordered.push(url);
+      while (ordered.length < slotCount) ordered.push("");
+      const { room, section } = bindSectionSlotUrls(
+        sec,
+        prev.imageRoom,
+        ordered.slice(0, slotCount),
+        { body: nextBody, rich: true }
+      );
       const sections = [...prev.sections];
-      sections[secIdx] = {
-        ...sec,
-        body,
-        rich: true,
-        imageRefs: undefined,
-        images: undefined,
-        imageUrl: undefined,
-      };
+      sections[secIdx] = section;
       return { ...prev, imageRoom: room, sections };
     }, { history: "immediate" });
+    syncSectionEditorFigures(secIdx);
   }
 
   function insertArticleImagesToBody(srcs: string[]) {
@@ -2572,7 +2707,7 @@ export function EditableReportPanel({
     }
     setActiveSectionIdx(idx);
     setImagePasteHint(
-      "문장 끝에 S / s 입력 후 붙여넣기, 또는 본문 툴바 「이미지」로 파일을 고르세요."
+      "문장 끝에 S / s 입력 후 붙여넣기, 또는 위 서식 바의 이미지 버튼으로 파일을 고르세요."
     );
     try {
       const files = await readImagesFromClipboard();
@@ -3212,7 +3347,7 @@ export function EditableReportPanel({
                 }
                 onImage={() => {
                   setImagePasteHint(
-                    "본문 툴바의 「이미지」를 누르거나, 문장 끝에 S 입력 후 Ctrl+V로 붙여넣으세요."
+                    "위 서식 바의 이미지 버튼을 누르거나, 문장 끝에 S 입력 후 Ctrl+V로 붙여넣으세요."
                   );
                   void pasteImagesToSection(activeSectionIdx);
                 }}
@@ -3246,7 +3381,7 @@ export function EditableReportPanel({
                   이미지: 문장 끝 <strong className="font-medium text-ink-700">S</strong>
                   {" "}/ s 후{" "}
                   <strong className="font-medium text-ink-700">붙여넣기</strong>
-                  {" "}또는 본문 툴바 「이미지」
+                  {" "}또는 「도구」의 이미지
                 </p>
                 <textarea
                   rows={2}
@@ -3584,31 +3719,26 @@ export function EditableReportPanel({
                         }}
                       />
                     </div>
-                    <RichTextEditor
-                      key={`body-${sectionEditKey(sec, idx)}`}
-                      value={sec.body || ""}
-                      placeholder="본문을 입력하세요. 문장 끝에 S / s → 이미지 칸"
-                      minHeightClass="min-h-[8rem]"
-                      onUploadImages={uploadSectionImages}
+                    <RichBody
+                      plainChrome
+                      minHeightClass="min-h-[6rem]"
+                      editorKey={sectionEditKey(sec, idx)}
+                      html={editorHtmlForSection(sec, draft.imageRoom)}
+                      onSaveSelection={saveEditorSelection}
+                      onFocus={() => setActiveSectionIdx(idx)}
+                      resolveSlotHtml={(editorHtml) => {
+                        const textSlots = parseBodySImageSlots(editorHtml).slotCount;
+                        if (textSlots <= countSSlotFigures(editorHtml)) return null;
+                        const parsed = bodyAndUrlsFromEditorHtml(editorHtml);
+                        return bodyHtmlWithSSlotFigures(parsed.body, parsed.urls);
+                      }}
+                      onPasteImages={(files) => {
+                        void uploadSectionImages(files).then((urls) => {
+                          if (urls.length) applyUrlsToSSlots(idx, urls);
+                        });
+                      }}
                       onChange={(html) => {
-                        updateDraft((prev) => {
-                          const cur = prev.sections[idx];
-                          if (!cur || cur.body === html) return prev;
-                          const srcs = collectInlineBodyImageSrcs(html);
-                          const room = srcs.length
-                            ? upsertRoomUrls(prev.imageRoom, srcs).room
-                            : prev.imageRoom;
-                          const sections = [...prev.sections];
-                          sections[idx] = {
-                            ...cur,
-                            body: html,
-                            rich: true,
-                            imageRefs: undefined,
-                            images: undefined,
-                            imageUrl: undefined,
-                          };
-                          return { ...prev, sections, imageRoom: room };
-                        }, { history: "debounced" });
+                        persistBodyEditorHtml(idx, html, "debounced");
                       }}
                     />
 

@@ -43,6 +43,7 @@ export function RichBody({
   resolveSlotHtml,
   /** S 슬롯으로 쪼갠 연속 본문 — 테두리 없이 한 글처럼 보이게 */
   plainChrome = false,
+  minHeightClass,
 }: {
   id?: string;
   /** 섹션별 TipTap 인스턴스 키 */
@@ -55,6 +56,8 @@ export function RichBody({
   onPasteImages?: (files: File[]) => void;
   resolveSlotHtml?: (editorHtml: string) => string | null;
   plainChrome?: boolean;
+  /** plainChrome 일 때 클릭 영역. 제목은 작게, 본문은 더 크게 */
+  minHeightClass?: string;
 }) {
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onChange);
@@ -72,7 +75,7 @@ export function RichBody({
   onSaveSelectionRef.current = onSaveSelection;
 
   const chromeClass = plainChrome
-    ? "report-body min-h-[1.5rem] w-full max-w-full overflow-x-hidden bg-transparent px-0 py-1 text-sm outline-none leading-relaxed prose prose-sm max-w-none"
+    ? `report-body ${minHeightClass || "min-h-[1.5rem]"} w-full max-w-full overflow-x-hidden bg-transparent px-0 py-1 text-sm outline-none leading-relaxed prose prose-sm max-w-none`
     : "report-body min-h-[120px] w-full max-w-full overflow-x-hidden rounded-xl border border-ink-200 bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 leading-relaxed prose prose-sm max-w-none";
 
   const editor = useEditor({
