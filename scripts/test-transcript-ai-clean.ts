@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import {
   cleanYoutubeTranscriptAi,
   dedupeTranscriptRepeats,
+  isKoreanTrackCode,
+  transcriptTrackMeta,
 } from "../src/lib/youtube-transcript-ai";
 
 const sample = `# Transcript: 테스트 영상
@@ -30,8 +32,27 @@ console.log("OK cleanYoutubeTranscriptAi", cleaned.length, "chars");
 console.log(cleaned.slice(0, 160));
 
 const dup =
-  "안녕하세요 동국대학교 명에게 시는 안녕하세요 동국대학교 명에게 시는 안녕하세요 동국대학교 명에게 시는 윤명철 입니다";
+  "안녕하세요 동국대학교 명에게 시는 안녕하세요 동국대학교 명에게 시는 안녕하세요 동국대학교 명에게 시는 윤명철 입니다 윤명철 입니다 윤명철 입니다 만나고 있습니다 만나고 있습니다 만나고 있습니다 네 네 좋아요";
 const deduped = dedupeTranscriptRepeats(dup);
-assert.ok(deduped.length < dup.length);
-assert.ok(!deduped.includes("안녕하세요 동국대학교 명에게 시는 안녕하세요"));
+assert.equal(
+  deduped,
+  "안녕하세요 동국대학교 명에게 시는 윤명철 입니다 만나고 있습니다 네 네 좋아요"
+);
 console.log("OK dedupeTranscriptRepeats", dup.length, "->", deduped.length);
+
+const tagged = cleanYoutubeTranscriptAi(`## Transcript
+[0:01] [음악] [음악] 안녕하세요 여러분 안녕하세요 여러분 안녕하세요 여러분
+`);
+assert.ok(!tagged.includes("[음악]"));
+assert.ok(!tagged.includes("안녕하세요 여러분 안녕하세요"));
+assert.ok(tagged.includes("안녕하세요 여러분"));
+console.log("OK sound tags", tagged);
+
+const meta = transcriptTrackMeta(`Language: en (auto-generated)
+Other available languages: a-id (id) [auto], a-ko (ko) [auto]
+`);
+assert.equal(meta.lang, "en");
+assert.deepEqual(meta.available, ["id", "ko"]);
+assert.equal(isKoreanTrackCode("ko"), true);
+assert.equal(meta.available.some(isKoreanTrackCode), true);
+console.log("OK transcriptTrackMeta");

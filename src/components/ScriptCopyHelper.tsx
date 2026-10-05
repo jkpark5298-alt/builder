@@ -11,7 +11,11 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { extractVideoId } from "@/lib/youtube";
-import { cleanYoutubeTranscriptAi } from "@/lib/youtube-transcript-ai";
+import {
+  cleanYoutubeTranscriptAi,
+  isKoreanTrackCode,
+  transcriptTrackMeta,
+} from "@/lib/youtube-transcript-ai";
 
 /**
  * 유튜브 페이지에서 실행 → 자막을 클립보드에 복사.
@@ -93,23 +97,40 @@ export function ScriptCopyHelper({
   }
 
   async function fetchDirectFromApp(id: string): Promise<string | null> {
-    const urls = [
-      `https://youtube-transcript.ai/transcript/${id}.txt`,
-      `https://youtube-transcript.ai/transcript/${id}.txt?lang=ko`,
-      `https://youtube-transcript.ai/transcript/${id}.txt?lang=en`,
-    ];
-    for (const u of urls) {
+    const base = `https://youtube-transcript.ai/transcript/${id}.txt`;
+    const load = async (url: string) => {
       try {
-        const res = await fetch(u, {
+        const res = await fetch(url, {
           signal: AbortSignal.timeout(40_000),
         });
-        if (!res.ok) continue;
+        if (!res.ok) return null;
         const raw = await res.text();
         const text = cleanYoutubeTranscriptAi(raw);
-        if (text.length >= 80) return text;
+        if (text.length < 80) return null;
+        return { raw, text };
       } catch {
-        /* next url */
+        return null;
       }
+    };
+
+    const first = await load(base);
+    if (first) {
+      const meta = transcriptTrackMeta(first.raw);
+      if (
+        !isKoreanTrackCode(meta.lang) &&
+        meta.available.some(isKoreanTrackCode)
+      ) {
+        const ko = await load(`${base}?lang=ko`);
+        if (ko && isKoreanTrackCode(transcriptTrackMeta(ko.raw).lang)) {
+          return ko.text;
+        }
+      }
+      return first.text;
+    }
+
+    for (const lang of ["ko", "en"]) {
+      const next = await load(`${base}?lang=${lang}`);
+      if (next) return next.text;
     }
     return null;
   }
@@ -171,8 +192,11 @@ export function ScriptCopyHelper({
   useEffect(() => {
     if (!autoFetchOnUrl || !videoId) return;
     if (autoTriedRef.current === videoId) return;
-    autoTriedRef.current = videoId;
     const t = window.setTimeout(() => {
+      // Strict Mode가 effect를 두 번 돌려도, 타임아웃 안에서만 표시해야
+      // 정리(cleanup)된 첫 시도가 재시도를 막지 않는다.
+      if (autoTriedRef.current === videoId) return;
+      autoTriedRef.current = videoId;
       void fetchTranscriptAuto();
     }, 400);
     return () => window.clearTimeout(t);

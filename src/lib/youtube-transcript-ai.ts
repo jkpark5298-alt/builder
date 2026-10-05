@@ -24,6 +24,7 @@ export function cleanYoutubeTranscriptAi(raw: string): string {
     .replace(/^Interactive version.*$/gim, "")
     .replace(/\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g, " ")
     .replace(/^\d{1,2}:\d{2}(?::\d{2})?\s+/gm, "")
+    .replace(/\[[^\]\d]{1,16}\]/g, " ")
     .replace(/[♪♫]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ");
@@ -32,26 +33,33 @@ export function cleanYoutubeTranscriptAi(raw: string): string {
   return normalizePastedText(t);
 }
 
-/** youtube-transcript.ai: 세그먼트 겹침으로 같은 구절이 2~3회 연속 반복되는 경우 제거 */
+/**
+ * youtube-transcript.ai 자동자막은 같은 큐를 2~3번 이어 붙인다.
+ * 3단어 이상은 2회 연속이면 한 번만 남기고,
+ * 1~2단어는 3회 이상일 때만 접는다. (「네 네」 같은 말더듬은 유지)
+ */
 export function dedupeTranscriptRepeats(text: string): string {
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 6) return text.trim();
+  if (words.length < 4) return text.trim();
 
   const out: string[] = [];
   let i = 0;
   while (i < words.length) {
     let matched = false;
-    const maxLen = Math.min(18, Math.floor((words.length - i) / 2));
-    for (let size = maxLen; size >= 3; size--) {
+    const maxLen = Math.min(24, Math.floor((words.length - i) / 2));
+    for (let size = maxLen; size >= 1; size--) {
+      const minCopies = size >= 3 ? 2 : 3;
       const chunk = words.slice(i, i + size);
       const chunkKey = chunk.join(" ");
+      let copies = 1;
       let end = i + size;
       while (end + size <= words.length) {
         const nextKey = words.slice(end, end + size).join(" ");
         if (nextKey !== chunkKey) break;
+        copies += 1;
         end += size;
       }
-      if (end > i + size) {
+      if (copies >= minCopies) {
         out.push(...chunk);
         i = end;
         matched = true;
@@ -66,14 +74,41 @@ export function dedupeTranscriptRepeats(text: string): string {
   return out.join(" ").replace(/\s+/g, " ").trim();
 }
 
+/** 응답 헤더의 현재 언어와 다른 자막 코드 */
+export function transcriptTrackMeta(raw: string): {
+  lang: string;
+  available: string[];
+} {
+  const lang =
+    raw
+      .match(/^Language:\s*([A-Za-z]{2,8}(?:-[A-Za-z0-9]+)?)/m)?.[1]
+      ?.toLowerCase() ?? "";
+  const others = raw.match(/^Other available languages:\s*(.+)$/im)?.[1] ?? "";
+  const available = [
+    ...others.matchAll(/\(([A-Za-z]{2,8}(?:-[A-Za-z0-9]+)?)\)/g),
+  ].map((m) => m[1].toLowerCase());
+  return { lang, available };
+}
+
+export function isKoreanTrackCode(code: string): boolean {
+  const c = code.toLowerCase();
+  return c === "ko" || c.startsWith("ko-");
+}
+
 function looksLikeFailure(text: string, status: number): boolean {
   if (status >= 400) return true;
-  const lower = text.toLowerCase();
   if (text.length < 40) return true;
-  if (/no transcript|not found|error|unavailable|captions? (were )?not/i.test(lower)) {
+  if (/<!doctype html>|<html[\s>]/i.test(text)) return true;
+  // 본문에 error·not found가 있어도 자막이면 실패로 보지 않는다.
+  if (/##\s*Transcript/i.test(text)) return false;
+  const head = text.slice(0, 400).toLowerCase();
+  if (
+    /no transcript|transcript (is )?not available|captions? (were )?not|video (is )?unavailable|^not found\b/i.test(
+      head
+    )
+  ) {
     return true;
   }
-  if (/<!doctype html>|<html[\s>]/i.test(text)) return true;
   return false;
 }
 
@@ -89,21 +124,12 @@ export async function fetchYoutubeTranscriptAi(
 
   const timeoutMs = opts?.timeoutMs ?? 45_000;
   const preferred = opts?.lang?.trim();
-  // 기본(원어) 먼저 → 한국어 → 영어 (한국어 영상이 ?lang=ko 404인 경우 대비)
-  const attempts = [
-    "",
-    ...(preferred ? [preferred] : []),
-    "ko",
-    "en",
-  ].filter((v, i, arr) => arr.indexOf(v) === i);
-
   let lastError = "자막을 가져오지 못했습니다.";
 
-  for (const lang of attempts) {
+  const pull = async (lang: string) => {
     const sourceUrl = lang
       ? `${BASE}/${id}.txt?lang=${encodeURIComponent(lang)}`
       : `${BASE}/${id}.txt`;
-
     try {
       const res = await fetch(sourceUrl, {
         method: "GET",
@@ -115,27 +141,63 @@ export async function fetchYoutubeTranscriptAi(
         signal: AbortSignal.timeout(timeoutMs),
         cache: "no-store",
       });
-
       const raw = await res.text();
       if (looksLikeFailure(raw, res.status)) {
         lastError = `자막 응답이 비어 있거나 오류입니다. (${lang || "default"}, HTTP ${res.status})`;
-        continue;
+        return null;
       }
-
       const text = cleanYoutubeTranscriptAi(raw);
       if (text.length < 80) {
         lastError = "가져온 자막이 너무 짧습니다.";
-        continue;
+        return null;
       }
-
-      return {
-        text,
-        langTried: lang || "default",
-        sourceUrl,
-      };
+      return { text, raw, sourceUrl, lang: lang || transcriptTrackMeta(raw).lang || "default" };
     } catch (e) {
       lastError =
         e instanceof Error ? e.message : "자막 API 요청에 실패했습니다.";
+      return null;
+    }
+  };
+
+  if (preferred) {
+    const picked = await pull(preferred);
+    if (picked) {
+      return {
+        text: picked.text,
+        langTried: preferred,
+        sourceUrl: picked.sourceUrl,
+      };
+    }
+  }
+
+  const first = await pull("");
+  if (first) {
+    const meta = transcriptTrackMeta(first.raw);
+    if (
+      !isKoreanTrackCode(meta.lang) &&
+      meta.available.some(isKoreanTrackCode)
+    ) {
+      const ko = await pull("ko");
+      if (ko && isKoreanTrackCode(transcriptTrackMeta(ko.raw).lang)) {
+        return { text: ko.text, langTried: "ko", sourceUrl: ko.sourceUrl };
+      }
+    }
+    return {
+      text: first.text,
+      langTried: first.lang,
+      sourceUrl: first.sourceUrl,
+    };
+  }
+
+  for (const lang of ["ko", "en"]) {
+    if (lang === preferred) continue;
+    const picked = await pull(lang);
+    if (picked) {
+      return {
+        text: picked.text,
+        langTried: lang,
+        sourceUrl: picked.sourceUrl,
+      };
     }
   }
 
