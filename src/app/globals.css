@@ -52,7 +52,7 @@ h3,
 }
 
 .report-body p,
-.report-body div,
+.report-body div:not(.ProseMirror):not(.ProseMirror-widget):not(.ProseMirror-gapcursor),
 .report-body li,
 .report-body ul,
 .report-body ol,
@@ -78,6 +78,24 @@ h3,
   transform: none !important;
 }
 
+/* 편집기 루트는 relative 여야 커서 좌표가 맞다. 글자 선택이 되어야 복사·잘라내기·붙여넣기가 된다. */
+.report-body.ProseMirror,
+.report-body .ProseMirror {
+  position: relative !important;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* 커서 옆 서식 바: 버튼만 클릭되고, 막대 아래 본문은 선택·복사·붙여넣기가 된다 */
+[data-format-bubble],
+[data-format-bubble] * {
+  pointer-events: none;
+}
+[data-format-bubble] button {
+  pointer-events: auto;
+}
+
 .report-body ul,
 .report-body ol {
   list-style: none !important;
@@ -96,6 +114,21 @@ h3,
 .report-body span[style*="background"] {
   border-radius: 0.15em;
   padding: 0 0.1em;
+}
+
+/* 편집 중 서식 패딩은 커서가 그 글자 안으로 들어가지 못하게 한다 */
+.report-body.ProseMirror mark,
+.report-body .ProseMirror mark,
+.report-body.ProseMirror u,
+.report-body .ProseMirror u,
+.report-body.ProseMirror span[style],
+.report-body .ProseMirror span[style],
+.report-body.ProseMirror mark[style*="background"],
+.report-body .ProseMirror mark[style*="background"],
+.report-body.ProseMirror span[style*="background"],
+.report-body .ProseMirror span[style*="background"] {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .report-body u {
@@ -228,6 +261,11 @@ h3,
 /* TipTap 편집기: 이미지 블록은 본문 흐름과 분리된 느낌으로 */
 .ProseMirror .report-s-image {
   cursor: default;
+  /* contenteditable=false + user-select:none 이면 본문 전체의 선택·복사·잘라내기가 막힌다 */
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  caret-color: auto;
 }
 
 .ProseMirror .report-s-image.ProseMirror-selectednode,
@@ -237,8 +275,7 @@ h3,
 }
 
 .ProseMirror .report-s-image:not(.report-s-slot-empty) {
-  /* 채워진 이미지는 텍스트 드래그 선택과 덜 섞이게 */
-  caret-color: transparent;
+  caret-color: auto;
 }
 
 /* 터치(아이폰): 편집기 안 이미지는 작게·고정감 있게 — 본문 타이핑과 덜 흔들림 */

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Bold, Minus, Plus, Underline } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import { getActiveReportEditor } from "@/lib/report-editor-registry";
@@ -19,7 +20,7 @@ const CIRCLED_NUMBERS = [
   "⑩",
 ] as const;
 
-type Pos = { top: number; left: number };
+type Pos = { anchorTop: number; anchorBottom: number; center: number };
 
 /** TipTap 커서/선택 좌표 (collapsed caret 포함 — iOS DOM rect 빈 값 보완) */
 function rectFromEditor(editor: Editor): DOMRect | null {
@@ -29,19 +30,10 @@ function rectFromEditor(editor: Editor): DOMRect | null {
       editor.view.hasFocus() ||
       editor.view.dom.contains(document.activeElement);
     if (!focused) return null;
-    const { from, to, empty } = editor.state.selection;
-    const a = editor.view.coordsAtPos(from);
-    const b = empty ? a : editor.view.coordsAtPos(to);
-    const top = Math.min(a.top, b.top);
-    const bottom = Math.max(a.bottom, b.bottom);
-    const left = Math.min(a.left, b.left);
-    const right = Math.max(a.right, b.right);
-    return new DOMRect(
-      left,
-      top,
-      Math.max(2, right - left),
-      Math.max(14, bottom - top)
-    );
+    // 선택 전체 박스가 아니라 캐럿 한 줄만. 여러 줄 선택 박스는 서식 바를 본문 한가운데 올린다.
+    const head = editor.state.selection.head;
+    const a = editor.view.coordsAtPos(head);
+    return new DOMRect(a.left, a.top, 2, Math.max(14, a.bottom - a.top));
   } catch {
     return null;
   }
@@ -80,26 +72,13 @@ function resolveAnchorRect(): DOMRect | null {
   return rectFromDomSelection();
 }
 
-/**
- * 아이폰 등: 커서/선택 바로 위에 붙는 글자 서식 바.
- */
-export function MobileFormatBubble({
-  active,
-  onBold,
-  onUnderline,
-  onFontSizeStep,
-  onInsertChar,
-  onColor,
-  onHighlight,
-}: {
-  active: boolean;
-  onBold: () => void;
-  onUnderline: () => void;
-  onFontSizeStep: (delta: number) => void;
-  onInsertChar: (ch: string) => void;
-  onColor: (c: string) => void;
-  onHighlight: (c: string) => void;
-}) {
+function formatBubbleWidth(maxBarWidth: number) {
+  if (typeof window === "undefined") return maxBarWidth;
+  return Math.min(maxBarWidth, window.innerWidth - 16);
+}
+
+/** 커서/선택 위에 서식 바를 고정 */
+function useFormatBubbleAnchor(active: boolean) {
   const [pos, setPos] = useState<Pos | null>(null);
   const [visible, setVisible] = useState(false);
 
@@ -112,30 +91,24 @@ export function MobileFormatBubble({
 
     let raf = 0;
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
+    let selecting = false;
 
     const place = (rect: DOMRect) => {
-      const barW = Math.min(360, window.innerWidth - 16);
-      const barH = 44;
-      const gap = 8;
-      let top = rect.top - barH - gap;
-      const vv = window.visualViewport;
-      const viewTop = vv?.offsetTop ?? 0;
-      const viewBottom = viewTop + (vv?.height ?? window.innerHeight);
-      if (top < viewTop + 8) {
-        top = rect.bottom + gap;
-      }
-      if (top + barH > viewBottom - 8) {
-        top = Math.max(viewTop + 8, viewBottom - barH - 8);
-      }
-      let left = rect.left + rect.width / 2 - barW / 2;
-      left = Math.max(8, Math.min(left, window.innerWidth - barW - 8));
-      setPos({ top, left });
+      setPos({
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom,
+        center: rect.left + rect.width / 2,
+      });
       setVisible(true);
     };
 
     const update = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        if (selecting) {
+          setVisible(false);
+          return;
+        }
         const rect = resolveAnchorRect();
         if (!rect) {
           // 서식 버튼 탭 순간 선택이 잠깐 비는 경우 — 바로 숨기지 않음
@@ -155,7 +128,22 @@ export function MobileFormatBubble({
       });
     };
 
+    const onPointerDown = (e: PointerEvent) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (el?.closest("[data-format-bubble]")) return;
+      selecting = true;
+      setVisible(false);
+    };
+    const onPointerUp = () => {
+      if (!selecting) return;
+      selecting = false;
+      update();
+    };
+
     update();
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", onPointerUp, true);
+    document.addEventListener("pointercancel", onPointerUp, true);
     document.addEventListener("selectionchange", update);
     document.addEventListener("focusin", update);
     document.addEventListener("touchend", update, { passive: true });
@@ -190,6 +178,9 @@ export function MobileFormatBubble({
       cancelAnimationFrame(raf);
       if (hideTimer) clearTimeout(hideTimer);
       window.clearInterval(poll);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointerup", onPointerUp, true);
+      document.removeEventListener("pointercancel", onPointerUp, true);
       document.removeEventListener("selectionchange", update);
       document.removeEventListener("focusin", update);
       document.removeEventListener("touchend", update);
@@ -204,21 +195,46 @@ export function MobileFormatBubble({
     };
   }, [active]);
 
+  return { pos, visible };
+}
+
+const MOBILE_BUBBLE_WIDTH = 360;
+
+/**
+ * 아이폰 등: 커서/선택 바로 위에 붙는 글자 서식 바.
+ */
+export function MobileFormatBubble({
+  active,
+  onBold,
+  onUnderline,
+  onFontSizeStep,
+  onInsertChar,
+  onColor,
+  onHighlight,
+}: {
+  active: boolean;
+  onBold: () => void;
+  onUnderline: () => void;
+  onFontSizeStep: (delta: number) => void;
+  onInsertChar: (ch: string) => void;
+  onColor: (c: string) => void;
+  onHighlight: (c: string) => void;
+}) {
+  const { pos, visible } = useFormatBubbleAnchor(active);
+
   if (!active || !visible || !pos) return null;
 
   const keep = (e: React.MouseEvent) => {
     e.preventDefault();
   };
 
-  const barW = Math.min(360, window.innerWidth - 16);
-
   return (
-    <div
-      className="md:hidden fixed z-[80] print:hidden"
-      style={{ top: pos.top, left: pos.left, width: barW }}
-      onMouseDown={keep}
+    <FormatBubbleFrame
+      pos={pos}
+      className="md:hidden"
+      width={formatBubbleWidth(MOBILE_BUBBLE_WIDTH)}
     >
-      <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-1.5 py-1 shadow-lg backdrop-blur-md">
+      <div className="pointer-events-none flex items-center gap-1 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-1.5 py-1 shadow-lg backdrop-blur-md [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&_button]:pointer-events-auto">
         <BubbleBtn onClick={onBold} title="굵게" onMouseDown={keep}>
           <Bold className="h-4 w-4" />
         </BubbleBtn>
@@ -279,7 +295,138 @@ export function MobileFormatBubble({
           />
         ))}
       </div>
-    </div>
+    </FormatBubbleFrame>
+  );
+}
+
+const YELLOW_HIGHLIGHT =
+  HIGHLIGHT_COLORS.find((c) => c.id === "yellow")?.bg ?? "#fef08a";
+
+/**
+ * 데스크톱: 커서/선택 바로 위에 붙는 서식. 굵게·번호·노란 형광만.
+ */
+export function DesktopFormatBubble({
+  active,
+  onBold,
+  onInsertChar,
+  onHighlight,
+}: {
+  active: boolean;
+  onBold: () => void;
+  onInsertChar: (ch: string) => void;
+  onHighlight: (c: string) => void;
+}) {
+  const { pos, visible } = useFormatBubbleAnchor(active);
+
+  if (!active || !visible || !pos) return null;
+
+  const keep = (e: React.MouseEvent) => {
+    e.preventDefault();
+  };
+
+  return (
+    <FormatBubbleFrame pos={pos} className="hidden md:block">
+      <div className="pointer-events-none flex items-center gap-1 overflow-x-auto rounded-xl border border-ink-200 bg-white/95 px-1.5 py-1 shadow-lg backdrop-blur-md [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&_button]:pointer-events-auto">
+        <BubbleBtn onClick={onBold} title="굵게" onMouseDown={keep}>
+          <Bold className="h-4 w-4" />
+        </BubbleBtn>
+        <span className="w-px h-5 bg-ink-200 shrink-0" aria-hidden />
+        <div className="flex items-center gap-0.5 shrink-0">
+          {CIRCLED_NUMBERS.map((ch) => (
+            <button
+              key={ch}
+              type="button"
+              title={`${ch} 삽입`}
+              onMouseDown={keep}
+              onClick={() => onInsertChar(ch)}
+              className="min-h-8 min-w-7 rounded-md px-0.5 text-[13px] font-medium text-ink-800 hover:bg-accent-muted"
+            >
+              {ch}
+            </button>
+          ))}
+        </div>
+        <span className="w-px h-5 bg-ink-200 shrink-0" aria-hidden />
+        <button
+          type="button"
+          title="노란 형광"
+          onMouseDown={keep}
+          onClick={() => onHighlight(YELLOW_HIGHLIGHT)}
+          className="h-7 w-7 shrink-0 rounded-md border border-ink-200"
+          style={{ background: YELLOW_HIGHLIGHT }}
+        />
+      </div>
+    </FormatBubbleFrame>
+  );
+}
+
+function FormatBubbleFrame({
+  pos,
+  className,
+  width,
+  children,
+}: {
+  pos: Pos;
+  className: string;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const [box, setBox] = useState({
+    top: 0,
+    left: 8,
+    ready: false,
+    clear: false,
+  });
+
+  useLayoutEffect(() => {
+    if (!node) return;
+    const h = node.offsetHeight;
+    const w = node.offsetWidth;
+    const gap = 8;
+    const vv = window.visualViewport;
+    const viewTop = (vv?.offsetTop ?? 0) + 8;
+    const viewLeft = vv?.offsetLeft ?? 0;
+    const viewWidth = vv?.width ?? window.innerWidth;
+    const viewBottom =
+      (vv?.offsetTop ?? 0) + (vv?.height ?? window.innerHeight) - 8;
+    const lineTop = pos.anchorTop;
+    const lineBottom = pos.anchorBottom;
+    const overlapsLine = (t: number) =>
+      t < lineBottom - 1 && t + h > lineTop + 1;
+    let top = lineTop - h - gap;
+    const below = lineBottom + gap;
+    if (top < viewTop || overlapsLine(top)) {
+      if (!overlapsLine(below) && below + h <= viewBottom) top = below;
+    }
+    const clear = !overlapsLine(top);
+    const left = Math.max(
+      viewLeft + 8,
+      Math.min(pos.center - w / 2, viewLeft + viewWidth - w - 8)
+    );
+    setBox({ top, left, ready: true, clear });
+  }, [node, pos]);
+
+  if (typeof document === "undefined") return null;
+
+  const shown = box.ready && box.clear;
+
+  return createPortal(
+    <div
+      ref={setNode}
+      data-format-bubble=""
+      className={`fixed z-[80] print:hidden !m-0 pointer-events-none [&_*]:pointer-events-none [&_button]:pointer-events-auto ${className}`}
+      style={{
+        top: box.top,
+        left: box.left,
+        width,
+        visibility: shown ? "visible" : "hidden",
+      }}
+      inert={shown ? undefined : true}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {children}
+    </div>,
+    document.body
   );
 }
 

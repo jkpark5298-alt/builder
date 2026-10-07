@@ -123,6 +123,13 @@ export function RichBody({
           text.replace(/\s+/g, " ").trim().length >= 40 &&
           !/^https?:\/\/\S+$/i.test(text.trim());
 
+        const insert = (content: string) => {
+          const ok = ed.chain().focus().insertContent(content).run();
+          if (!ok) return false;
+          event.preventDefault();
+          return true;
+        };
+
         if (files.length && !substantialText) {
           event.preventDefault();
           onPasteImagesRef.current?.(files);
@@ -131,39 +138,26 @@ export function RichBody({
 
         // iPhone: HTML charset/서식 깨짐 방지 — plain text 우선
         if (preferPlainPaste() && text.trim()) {
-          event.preventDefault();
-          ed.commands.insertContent(wrapPlainPasteText(text));
-          return true;
+          return insert(wrapPlainPasteText(text));
         }
 
         // Word/웹 HTML은 문장 중간 줄바꿈·레이아웃이 많아, 서식이 거의 없으면 plain 경로
         if (rawHtml?.trim()) {
           const plain = text.trim();
           if (plain && pastedHtmlLooksPlain(rawHtml)) {
-            event.preventDefault();
-            ed.commands.insertContent(wrapPlainPasteText(plain));
-            return true;
+            return insert(wrapPlainPasteText(plain));
           }
           const clean = sanitizePastedHtml(rawHtml);
           if (clean) {
-            event.preventDefault();
-            ed.commands.insertContent(clean);
-            return true;
+            const ok = insert(clean);
+            if (ok) return true;
           }
-          if (plain) {
-            event.preventDefault();
-            ed.commands.insertContent(wrapPlainPasteText(plain));
-            return true;
-          }
+          if (plain) return insert(wrapPlainPasteText(plain));
           // 읽은 내용이 비면 preventDefault 하지 않음 (아이폰 네이티브 경로)
           return false;
         }
 
-        if (text.trim()) {
-          event.preventDefault();
-          ed.commands.insertContent(wrapPlainPasteText(text));
-          return true;
-        }
+        if (text.trim()) return insert(wrapPlainPasteText(text));
 
         return false;
       },

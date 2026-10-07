@@ -89,7 +89,10 @@ import { FactCheckDetailPanel } from "@/components/FactCheckDetailPanel";
 import { FactCheckAppendix } from "@/components/FactCheckAppendix";
 import { ReportFactCheckResults } from "@/components/ReportFactCheckResults";
 import { FormatToolbar } from "@/components/ReportFormatToolbar";
-import { MobileFormatBubble } from "@/components/MobileFormatBubble";
+import {
+  DesktopFormatBubble,
+  MobileFormatBubble,
+} from "@/components/MobileFormatBubble";
 import { RichBody } from "@/components/ReportRichBody";
 import { HandwritingModal } from "@/components/HandwritingModal";
 import { ImageCropModal } from "@/components/ImageCropModal";
@@ -4002,6 +4005,7 @@ export function EditableReportPanel({
       />
       )}
       {editing && mode === "body" && !urlArticle && (
+        <>
         <MobileFormatBubble
           active
           onBold={() =>
@@ -4034,6 +4038,28 @@ export function EditableReportPanel({
             })
           }
         />
+        <DesktopFormatBubble
+          active
+          onBold={() =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().toggleBold().run();
+            })
+          }
+          onInsertChar={(ch) =>
+            runFormatCommand(
+              (ed) => {
+                ed.chain().focus().insertContent(ch).run();
+              },
+              { expandParagraph: false }
+            )
+          }
+          onHighlight={(c) =>
+            runFormatCommand((ed) => {
+              ed.chain().focus().setHighlight({ color: c }).run();
+            })
+          }
+        />
+        </>
       )}
       {manualCopy && (
         <div
